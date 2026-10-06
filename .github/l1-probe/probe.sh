@@ -129,7 +129,8 @@ bwrap_profile() {
 $ABI
 include <tunables/global>
 profile crot-probe-$v $P/$v/bwrap flags=(attach_disconnected,mediate_deleted) {
-  include <abstractions/base>
+  # no abstractions/base here: its "owner @{HOME}/.Private/** mrixwlk" (ix) conflicts with
+  # "px /** -> ..." and apparmor_parser rejects the profile (run 1 of this probe).
   /{,**} rwlkm,
   capability,
   mount, umount, pivot_root,
@@ -144,7 +145,13 @@ $inner
 }
 EOF
 }
-mkp() { echo "$2" | sudo tee "/etc/apparmor.d/crot-probe-$1" >/dev/null; printf '\n--- /etc/apparmor.d/crot-probe-%s\n%s\n' "$1" "$2"; run "sudo apparmor_parser -r -W /etc/apparmor.d/crot-probe-$1 && echo loaded-$1"; }
+mkp() {
+  echo "$2" | sudo tee "/etc/apparmor.d/crot-probe-$1" >/dev/null
+  printf '\n--- /etc/apparmor.d/crot-probe-%s\n%s\n' "$1" "$2"
+  run "sudo apparmor_parser -r -W /etc/apparmor.d/crot-probe-$1"
+  if sudo grep -q "^crot-probe-$1 " /sys/kernel/security/apparmor/profiles; then conc "profile crot-probe-$1: LOADED in kernel"
+  else conc "profile crot-probe-$1: NOT LOADED (see parser output above)"; fi
+}
 
 mkp plain "$(bwrap_profile plain 'px /** -> crot-probe-plain//payload,' "$(payload payload deny)")"
 mkp cx "$(bwrap_profile cx 'cx /** -> payload,' "$(payload payload deny)")"
@@ -162,6 +169,9 @@ for v in plain cx stack stackonly stackpeer; do
   out=$(bash -c "$P/$v/bwrap $BASIC -- sh -c 'printf \"label=\"; cat /proc/self/attr/current; echo; grep NoNewPrivs /proc/self/status'" 2>&1); rc=$?
   printf '$ %s/%s/bwrap %s -- <print label>\n%s\n[exit %s]\n' "$P" "$v" "$BASIC" "$out" "$rc"
   label=$(echo "$out" | sed -n 's/^label=//p' | head -1)
+  $P/$v/bwrap $BASIC -- sleep 3 & BP=$!; sleep 1
+  outer=$(cat /proc/$BP/attr/current 2>&1); wait $BP 2>/dev/null
+  conc "transition $v: bwrap's own label (outside view)=[$outer]"
   if [ $rc -eq 0 ]; then conc "transition $v: sandbox STARTED, label inside=[$label]"; else conc "transition $v: sandbox FAILED rc=$rc ($(echo "$out" | tail -1))"; fi
   [ $rc -eq 0 ] && case "$label" in *payload*) WORKING="$WORKING $v";; esac
   run "sudo dmesg 2>/dev/null | grep -i 'apparmor=' | grep crot-probe-$v | tail -3 || true"
@@ -221,13 +231,19 @@ for v in $BEST stackpeer; do
   r=$(bash -c "$P/$v/bwrap $NET -- python3 /tmp/crot-probe-intra.py" 2>&1)
   conc "[$v] abstract socket between two confined processes: $r"
   r=$(bash -c "$P/$v/bwrap $BASIC -- unshare --user true && echo NESTED-USERNS-ALLOWED || echo NESTED-USERNS-DENIED" 2>&1 | tail -1)
-  conc "[$v] nested user namespace from payload: $r"
+  conc "[$v] nested user namespace from payload: $r (AD-20 p.5: payload does not grant userns; where AppArmor has no userns mediation this behaves as unconfined)"
+  r=$(bash -c "$P/$v/bwrap $BASIC --disable-userns -- unshare --user true && echo NESTED-USERNS-ALLOWED || echo NESTED-USERNS-DENIED" 2>&1 | tail -1)
+  conc "[$v] nested user namespace with bwrap --disable-userns: $r"
   M=$(mktemp -d); mkdir -p $M/lower $M/up $M/wk; echo lower > $M/lower/f
   r=$(bash -c "$P/$v/bwrap --ro-bind / / --dev /dev --proc /proc --unshare-user --die-with-parent --overlay-src $M/lower --overlay $M/up $M/wk /mnt -- sh -c 'echo changed > /mnt/f && cat /mnt/f'" 2>&1)
   conc "[$v] bwrap --overlay (private home layer mechanism): $r ; lower after=$(cat $M/lower/f) upper=$(cat $M/up/f 2>/dev/null || echo none)"
-  r=$(bash -c "$P/$v/bwrap $BASIC -- sh -c 'setsid sh -c \"sleep 300\" & echo started'; sleep 1; pgrep -f \"sleep 300\" >/dev/null && echo SURVIVED-SANDBOX-EXIT || echo DIED-WITH-SANDBOX" 2>&1 | tail -1)
-  conc "[$v] setsid background child after the sandbox leader exits: $r"
-  pkill -f "sleep 300" 2>/dev/null
+  # run 1 used pgrep -f "sleep 300", which matched its own bash command line (false SURVIVED)
+  $P/$v/bwrap $BASIC -- sh -c 'setsid sleep 3017 & nohup sleep 3018 >/dev/null 2>&1 & echo started' >/dev/null 2>&1
+  sleep 1
+  r=$(pgrep -fa '^sleep 301[78]$' || echo none)
+  [ "$r" = none ] && r="DIED-WITH-SANDBOX" || r="SURVIVED-SANDBOX-EXIT ($r)"
+  conc "[$v] setsid/nohup background children after the sandbox leader exits: $r"
+  pkill -f '^sleep 301[78]$' 2>/dev/null
 done
 kill $LPID $OUTSIDE 2>/dev/null
 
@@ -266,6 +282,8 @@ profile crot-probe-container flags=(attach_disconnected,mediate_deleted) {
 }
 EOF
 run 'sudo apparmor_parser -r -W /etc/apparmor.d/crot-probe-container && echo loaded-container-profile'
+if sudo grep -q "^crot-probe-container " /sys/kernel/security/apparmor/profiles; then conc "profile crot-probe-container: LOADED in kernel"
+else conc "profile crot-probe-container: NOT LOADED (see parser output above)"; fi
 python3 - <<'PY' &
 import socket, threading
 s = socket.socket(socket.AF_UNIX); s.bind("\0crot-probe-host-abs"); s.listen(8)
