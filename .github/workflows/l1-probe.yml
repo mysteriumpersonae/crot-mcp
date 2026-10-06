@@ -1,31 +1,31 @@
-# WP-23a probe for decisions D3 and D4. Diagnostic only: no product code and
-# no architecture change. It measures the real user-namespace / AppArmor /
-# bubblewrap / Docker behaviour that AD-20 depends on, and which Ubuntu runner
-# labels this repository can actually schedule. The job logs are the evidence;
-# a green job is not.
-name: L1 probe (WP-23a D3/D4)
-​
+name: "L1 probe (WP-23a D3/D4)"
+
 on:
   workflow_dispatch:
   push:
-    branches: [probe/l1-mechanism]
-​
+    branches:
+      - probe/l1-mechanism
+
 permissions:
   contents: read
-​
+
 jobs:
   probe:
-    name: probe ${{ matrix.label }}
+    name: "probe ${{ matrix.label }}"
     runs-on: ${{ matrix.label }}
-    # Note: a label this repository cannot use never starts; the job then stays
-    # "Queued" (GitHub cancels it after 24 h). That state is the D4 evidence for
-    # the label. timeout-minutes only limits a job that did start.
     timeout-minutes: 25
+
     strategy:
       fail-fast: false
       matrix:
-        label: [ubuntu-22.04, ubuntu-24.04, ubuntu-22.04-arm, ubuntu-24.04-arm]
+        label:
+          - ubuntu-22.04
+          - ubuntu-24.04
+          - ubuntu-22.04-arm
+          - ubuntu-24.04-arm
+
     steps:
       - uses: actions/checkout@v4
+
       - name: Probe
         run: bash .github/l1-probe/probe.sh "${{ matrix.label }}"
