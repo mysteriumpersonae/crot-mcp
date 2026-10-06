@@ -64,7 +64,7 @@ sec "5. BUBBLEWRAP: distro package, and pinned $BWRAP_TAG built to probe-owned p
 run 'sudo apt-get update -qq && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq bubblewrap meson ninja-build libcap-dev pkg-config gcc python3 >/dev/null && echo deps-installed'
 run 'dpkg-query -W bubblewrap; /usr/bin/bwrap --version'
 run "sudo mkdir -p $P/src && sudo chown \$(id -u) $P/src && curl -fsSL https://github.com/containers/bubblewrap/archive/refs/tags/$BWRAP_TAG.tar.gz | tar -xz -C $P/src --strip-components=1 && cd $P/src && meson setup _b -Dman=disabled -Dtests=false -Dselinux=disabled >/dev/null && ninja -C _b >/dev/null && echo built"
-VARIANTS="none plain cx stack stackonly stackpeer"
+VARIANTS="none plain cx stack stackonly stackpeer stackchild stackcx ubu pcomplain bcomplain"
 for v in $VARIANTS; do sudo install -D -m 0755 -o root -g root "$P/src/_b/bwrap" "$P/$v/bwrap"; done
 run "$P/none/bwrap --version; ls -l $P/*/bwrap"
 run "$P/none/bwrap --help 2>&1 | grep -E 'overlay|disable-userns|assert-userns|die-with-parent|unshare-net|new-session' "
@@ -81,57 +81,72 @@ sec "7. PROFILE TRANSITIONS UNDER NO_NEW_PRIVS (D3)"
 cat <<'TXT'
 bubblewrap sets PR_SET_NO_NEW_PRIVS before it execs the payload. One profile is
 attached to each binary copy; they differ only in the exec transition into the
-payload profile:
-  plain     : px /** -> crot-probe-plain//payload                       (named child, px)
-  cx        : cx /** -> payload                                         (child, cx)
-  stack     : px /** -> &crot-probe-stack//&crot-probe-stack-payload    (form of Ubuntu's bwrap-userns-restrict)
-  stackonly : px /** -> &crot-probe-stackonly-payload                   (stack the payload onto the bwrap label)
-  stackpeer : as stack, but the payload allows abstract sockets only to its own label (allow-list form)
-Payload profiles: everything allowed except: no new userns (where mediated),
-connect/send to abstract unix sockets outside the sandbox denied, signals and
-ptrace only to the payload's own label (receive from unconfined allowed).
+payload profile (run 3 adds stackchild/stackcx/ubu and diagnostic variants):
+  plain      : px /** -> crot-probe-plain//payload                        (named child, no stack)
+  cx         : cx /** -> payload                                          (child, no stack)
+  stack      : px /** -> &crot-probe-stack//&crot-probe-stack-payload     (two top-level profiles stacked)
+  stackonly  : px /** -> &crot-probe-stackonly-payload                    (stack payload onto bwrap label)
+  stackpeer  : as stack, payload allows abstract sockets only to its own label
+  stackchild : px /** -> &crot-probe-stackchild//payload                  (stack the CHILD profile onto bwrap label)
+  stackcx    : cx /** -> &payload                                         (same, cx syntax)
+  ubu        : copy of Ubuntu bwrap-userns-restrict shape (pix, rwlkmix, no abstractions)
+  DIAG-pcomplain : as stack, payload profile in complain mode (logs what it would deny)
+  DIAG-bcomplain : as stack, bwrap profile in complain mode
+  DIAG-envnnp-*  : /usr/bin/env copy (not bwrap) with the stack / plain rule, run with and
+                   without setpriv --no-new-privs: separates NNP from bwrap/userns effects
 TXT
-if [ "$USERNS_FEATURE" = yes ]; then ABI='abi <abi/4.0>,'; ALLOWUSERNS='userns,'; DENYUSERNS='audit deny userns,'
-else ABI='abi <abi/3.0>,'; ALLOWUSERNS=''; DENYUSERNS=''; fi
+# printk/audit rate limits would silently drop AppArmor denials
+run 'sudo sysctl -w kernel.printk_ratelimit=0 kernel.printk_ratelimit_burst=10000 >/dev/null; sudo auditctl -r 0 2>/dev/null; echo ratelimits-off'
+run 'ls /etc/apparmor.d/abi/ 2>&1; ls /etc/apparmor/parser.conf && grep -vE "^\s*#|^\s*$" /etc/apparmor/parser.conf'
 
-# $1 profile name, $2 "deny"|"peer" abstract-socket form
+# Choose ABI by what the PARSER can compile, not only by the kernel feature.
+# (Run 2 chose abi 4.0 + userns rules from the kernel feature alone.)
+T=$(mktemp); printf 'abi <abi/4.0>,\nprofile crot-probe-abitest {\n  userns,\n}\n' > $T
+PARSER_USERNS=no; out=$(sudo apparmor_parser -Q -K $T 2>&1) && PARSER_USERNS=yes
+printf '$ apparmor_parser -Q -K <abi 4.0 + userns test>\n%s\n' "$out"
+conc "parser can compile 'abi <abi/4.0>' + 'userns,': $PARSER_USERNS ($(echo "$out" | grep -v '^$' | head -1 | cut -c1-160)); kernel userns_create=$USERNS_FEATURE"
+if [ "$USERNS_FEATURE" = yes ] && [ "$PARSER_USERNS" = yes ]; then ABI='abi <abi/4.0>,'; ALLOWUSERNS='userns,'; DENYUSERNS='audit deny userns,'
+else ABI='abi <abi/3.0>,'; ALLOWUSERNS=''; DENYUSERNS=''; fi
+conc "profiles generated with: $ABI userns-rules=$( [ -n "$ALLOWUSERNS" ] && echo yes || echo no)"
+
+# $1 name, $2 deny|peer|ubu, $3 extra flags (e.g. ",complain"), $4 full label for peer rules (child profiles)
 payload() {
-  local name="$1" form="$2" unixrules
-  if [ "$form" = peer ]; then
-    unixrules="  unix (create, bind, listen, accept, getattr, setattr, getopt, setopt, shutdown, receive),
-  unix (connect, send) peer=(label=$name),
-  unix (connect, send) peer=(addr=none),"
-  else
-    unixrules="  unix,
-  audit deny unix (connect, send) peer=(addr=@**),"
-  fi
-  cat <<EOF
-profile $name flags=(attach_disconnected,mediate_deleted) {
-  include <abstractions/base>
+  local name="$1" form="$2" fl="$3" peer="${4:-$1}" unixrules files
+  files="  include <abstractions/base>
   /{,**} rwlkm,
-  /** ix,
+  /** ix,"
+  case "$form" in
+    peer) unixrules="  unix (create, bind, listen, accept, getattr, setattr, getopt, setopt, shutdown, receive),
+  unix (connect, send) peer=(label=$peer),
+  unix (connect, send) peer=(addr=none),";;
+    ubu) files="  file rwlkmix /{**,},"; unixrules="  unix,
+  audit deny unix (connect, send) peer=(addr=@**),";;
+    *) unixrules="  unix,
+  audit deny unix (connect, send) peer=(addr=@**),";;
+  esac
+  cat <<EOF
+profile $name flags=(attach_disconnected,mediate_deleted$fl) {
+$files
   network,
   mount, umount, pivot_root,
   capability,
   dbus,
   $DENYUSERNS
 $unixrules
-  signal (send, receive) peer=$name,
+  signal (send, receive) peer=$peer,
   signal (receive) peer=unconfined,
-  ptrace (read, trace) peer=$name,
+  ptrace (read, trace) peer=$peer,
 }
 EOF
 }
-# $1 variant, $2 transition rule, $3 extra profile text (payload)
-bwrap_profile() {
-  local v="$1" rule="$2" inner="$3"
+# $1 name, $2 attach path, $3 transition rule, $4 inner text, $5 extra flags
+outer_profile() {
   cat <<EOF
 $ABI
 include <tunables/global>
-profile crot-probe-$v $P/$v/bwrap flags=(attach_disconnected,mediate_deleted) {
-  # no abstractions/base here: its "owner @{HOME}/.Private/** mrixwlk" (ix) conflicts with
-  # "px /** -> ..." and apparmor_parser rejects the profile (run 1 of this probe).
-  /{,**} rwlkm,
+profile $1 $2 flags=(attach_disconnected,mediate_deleted$5) {
+  # no abstractions/base: its "owner @{HOME}/.Private/** mrixwlk" (ix) conflicts with px (run 1)
+  file rwlkm /{,**},
   capability,
   mount, umount, pivot_root,
   network,
@@ -140,46 +155,78 @@ profile crot-probe-$v $P/$v/bwrap flags=(attach_disconnected,mediate_deleted) {
   ptrace,
   dbus,
   $ALLOWUSERNS
-  $rule
-$inner
+  $3
+$4
 }
 EOF
 }
-mkp() {
-  echo "$2" | sudo tee "/etc/apparmor.d/crot-probe-$1" >/dev/null
-  printf '\n--- /etc/apparmor.d/crot-probe-%s\n%s\n' "$1" "$2"
-  run "sudo apparmor_parser -r -W /etc/apparmor.d/crot-probe-$1"
-  if sudo grep -q "^crot-probe-$1 " /sys/kernel/security/apparmor/profiles; then conc "profile crot-probe-$1: LOADED in kernel"
-  else conc "profile crot-probe-$1: NOT LOADED (see parser output above)"; fi
+LOADED=""
+mkp() {   # $1 variant, $2 full policy text
+  local f=/etc/apparmor.d/crot-probe-$1 out
+  echo "$2" | sudo tee $f >/dev/null
+  printf '\n--- %s\n%s\n' "$f" "$2"
+  out=$(sudo apparmor_parser -r -W $f 2>&1); local rc=$?
+  printf '$ sudo apparmor_parser -r -W %s\n%s\n[exit %s]\n' "$f" "$out" "$rc"
+  if sudo grep -q "^crot-probe-$1 " /sys/kernel/security/apparmor/profiles; then conc "profile crot-probe-$1: LOADED"; LOADED="$LOADED $1"
+  else conc "profile crot-probe-$1: NOT LOADED rc=$rc parser said: $(echo "$out" | grep -v '^$' | head -3 | tr '\n' '|' | cut -c1-400)"; fi
 }
-
-mkp plain "$(bwrap_profile plain 'px /** -> crot-probe-plain//payload,' "$(payload payload deny)")"
-mkp cx "$(bwrap_profile cx 'cx /** -> payload,' "$(payload payload deny)")"
-mkp stack "$(bwrap_profile stack 'px /** -> &crot-probe-stack//&crot-probe-stack-payload,' '')
+B() { echo "$P/$1/bwrap"; }
+mkp plain      "$(outer_profile crot-probe-plain      $(B plain)      'px /** -> crot-probe-plain//payload,' "$(payload payload deny '' crot-probe-plain//payload)")"
+mkp cx         "$(outer_profile crot-probe-cx         $(B cx)         'cx /** -> payload,' "$(payload payload deny '' crot-probe-cx//payload)")"
+mkp stack      "$(outer_profile crot-probe-stack      $(B stack)      'px /** -> &crot-probe-stack//&crot-probe-stack-payload,' '')
 $(payload crot-probe-stack-payload deny)"
-mkp stackonly "$(bwrap_profile stackonly 'px /** -> &crot-probe-stackonly-payload,' '')
+mkp stackonly  "$(outer_profile crot-probe-stackonly  $(B stackonly)  'px /** -> &crot-probe-stackonly-payload,' '')
 $(payload crot-probe-stackonly-payload deny)"
-mkp stackpeer "$(bwrap_profile stackpeer 'px /** -> &crot-probe-stackpeer//&crot-probe-stackpeer-payload,' '')
+mkp stackpeer  "$(outer_profile crot-probe-stackpeer  $(B stackpeer)  'px /** -> &crot-probe-stackpeer//&crot-probe-stackpeer-payload,' '')
 $(payload crot-probe-stackpeer-payload peer)"
-run 'sudo aa-status 2>/dev/null | grep crot-probe'
+mkp stackchild "$(outer_profile crot-probe-stackchild $(B stackchild) 'px /** -> &crot-probe-stackchild//payload,' "$(payload payload deny '' crot-probe-stackchild//payload)")"
+mkp stackcx    "$(outer_profile crot-probe-stackcx    $(B stackcx)    'cx /** -> &payload,' "$(payload payload deny '' crot-probe-stackcx//payload)")"
+mkp ubu        "$(outer_profile crot-probe-ubu        $(B ubu)        'allow pix /** -> &crot-probe-ubu//&crot-probe-ubu-payload,' '')
+$(payload crot-probe-ubu-payload ubu)"
+mkp pcomplain  "$(outer_profile crot-probe-pcomplain  $(B pcomplain)  'px /** -> &crot-probe-pcomplain//&crot-probe-pcomplain-payload,' '')
+$(payload crot-probe-pcomplain-payload deny ',complain')"
+mkp bcomplain  "$(outer_profile crot-probe-bcomplain  $(B bcomplain)  'px /** -> &crot-probe-bcomplain//&crot-probe-bcomplain-payload,' '' ',complain')
+$(payload crot-probe-bcomplain-payload deny)"
+mkp envnnps    "$(outer_profile crot-probe-envnnps    $P/envnnps/env  'px /** -> &crot-probe-envnnps//&crot-probe-envnnps-payload,' '')
+$(payload crot-probe-envnnps-payload deny)"
+mkp envnnpp    "$(outer_profile crot-probe-envnnpp    $P/envnnpp/env  'px /** -> crot-probe-envnnpp//payload,' "$(payload payload deny '' crot-probe-envnnpp//payload)")"
+run 'sudo grep crot-probe /sys/kernel/security/apparmor/profiles'
 
+DMN=0
+dm_mark() { DMN=$(sudo dmesg 2>/dev/null | wc -l); }
+dm_new() {  # AppArmor audit lines since dm_mark, condensed to the decisive fields
+  sudo dmesg 2>/dev/null | tail -n +$((DMN+1)) | grep 'apparmor=' | grep -v 'STATUS' | head -8 |
+    grep -oE '(apparmor|operation|class|info|error|profile|label|peer|name|comm|requested_mask|denied_mask|requested|denied|target|addr|peer_addr)="[^"]*"|(apparmor|operation|class|info|error|profile|name|comm|requested_mask|denied_mask|target)=[^ "]+' |
+    paste -sd' ' | sed 's/apparmor=/\n   apparmor=/g' | cut -c1-600
+}
+LBL="sh -c 'printf \"label=\"; cat /proc/self/attr/current; echo; grep NoNewPrivs /proc/self/status; python3 -c \"print(\\\"python3-exec-ok\\\")\"'"
 WORKING=""
-for v in plain cx stack stackonly stackpeer; do
-  sec "7.$v transition: label and NoNewPrivs inside the sandbox"
-  out=$(bash -c "$P/$v/bwrap $BASIC -- sh -c 'printf \"label=\"; cat /proc/self/attr/current; echo; grep NoNewPrivs /proc/self/status'" 2>&1); rc=$?
-  printf '$ %s/%s/bwrap %s -- <print label>\n%s\n[exit %s]\n' "$P" "$v" "$BASIC" "$out" "$rc"
+for v in plain cx stack stackonly stackpeer stackchild stackcx ubu pcomplain bcomplain; do
+  sec "7.$v transition"
+  dm_mark
+  out=$(bash -c "$(B $v) $BASIC -- $LBL" 2>&1); rc=$?
+  printf '$ %s %s -- <print label, NoNewPrivs, exec python3>\n%s\n[exit %s]\n' "$(B $v)" "$BASIC" "$out" "$rc"
   label=$(echo "$out" | sed -n 's/^label=//p' | head -1)
-  $P/$v/bwrap $BASIC -- sleep 3 & BP=$!; sleep 1
-  outer=$(cat /proc/$BP/attr/current 2>&1); wait $BP 2>/dev/null
-  conc "transition $v: bwrap's own label (outside view)=[$outer]"
-  if [ $rc -eq 0 ]; then conc "transition $v: sandbox STARTED, label inside=[$label]"; else conc "transition $v: sandbox FAILED rc=$rc ($(echo "$out" | tail -1))"; fi
-  [ $rc -eq 0 ] && case "$label" in *payload*) WORKING="$WORKING $v";; esac
-  run "sudo dmesg 2>/dev/null | grep -i 'apparmor=' | grep crot-probe-$v | tail -3 || true"
+  $(B $v) $BASIC -- sleep 3 & BP=$!; sleep 1; outer=$(cat /proc/$BP/attr/current 2>&1); wait $BP 2>/dev/null
+  if [ $rc -eq 0 ]; then res="STARTED inside=[$label] $(echo "$out" | grep -c python3-exec-ok)x python3-exec-ok"
+  else res="FAILED rc=$rc ($(echo "$out" | tail -1))"; fi
+  conc "transition $v: outer=[$outer] $res; apparmor audit:$(dm_new)"
+  case "$v" in pcomplain|bcomplain) ;; *) [ $rc -eq 0 ] && case "$label" in *payload*) WORKING="$WORKING $v";; esac;; esac
 done
-conc "D3: transitions that reach the payload label under NNP:${WORKING:- NONE}"
+for v in envnnps envnnpp; do
+  sudo install -D -m 0755 -o root -g root /usr/bin/env $P/$v/env
+  for nnp in no yes; do
+    dm_mark
+    if [ $nnp = yes ]; then cmd="setpriv --no-new-privs $P/$v/env sh -c 'cat /proc/self/attr/current; echo'"; else cmd="$P/$v/env sh -c 'cat /proc/self/attr/current; echo'"; fi
+    out=$(bash -c "$cmd" 2>&1); rc=$?
+    printf '$ %s\n%s\n[exit %s]\n' "$cmd" "$out" "$rc"
+    conc "DIAG $v (env, not bwrap) nnp=$nnp: rc=$rc $(echo "$out" | tail -1 | cut -c1-120); apparmor audit:$(dm_new)"
+  done
+done
+conc "D3: enforcing transitions that reach the payload label under NNP:${WORKING:- NONE}"
 
 # --------------------------------------------------------------------------
-BEST=$(echo $WORKING | awk '{print $1}'); BEST=${BEST:-stack}
+BEST=$(for c in stack ubu stackonly stackchild stackcx; do case " $WORKING " in *" $c "*) echo $c; break;; esac; done); BEST=${BEST:-stack}
 sec "8. BOUNDARY TESTS inside the payload (variant: $BEST; also stackpeer)"
 # Outside listeners: an abstract socket and a pathname socket (both loopback-local).
 python3 - <<'PY' &
