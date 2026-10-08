@@ -121,8 +121,10 @@ shim, local control channel** (PR #16, `92cce3b`; AD-17,
 | Preset `autonomous-browser` (rule set not implemented yet) | WP-31 |
 | Any process of the same OS user can read the control credential and act like the tray | AD-19 residual risk; confined Linux children: WP-23a (in review); macOS, Windows: WP-23b/c |
 | Tray packaging, signing and autostart (Electron is a dev dependency today) | WP-34 |
-| Which token claims carry `clientId` and the device id | WP-28 (depends on the identity provider) |
-| Exact device resource URI form and PRM location | WP-29 |
+| Identity provider and the token claims carrying the subject, account, device and `clientId` | Decided by ARCHITECTURE.md §27 AD-21 (roadmap OD-2): WorkOS AuthKit; `sub` → principal id and `accountId`, device id in `aud`, `client_id` → `clientId`; implementation WP-28 |
+| Exact device resource URI form and PRM location | Decided by AD-21 points 5–6 (roadmap OD-3): `https://<relay-host>/d/<deviceId>/mcp`, PRM at `https://<relay-host>/.well-known/oauth-protected-resource/d/<deviceId>/mcp` (relay: WP-29) |
+| RFC 9207 (`iss` in authorization responses) not provided by the selected provider yet | AD-21 open condition: met before Gate G4 or accepted by a separate AD; does not block WP-28 |
+| Revocation at the identity provider reaches the device only through token expiry (≤ 5 min configured, ≤ 15 min device ceiling); device-side revocation is immediate | AD-21 point 4 (accepted bound) |
 | Transport matcher to gate loopback HTTP separately from stdio | ARCHITECTURE.md §26 question 12 (not required for v1) |
 | Relay/tunnel timeouts for gated requests and bounded browser waits | §26 question 13, WP-29 / WP-30 |
 | Approval policy in general (beyond presets) | §26 question 6 |
