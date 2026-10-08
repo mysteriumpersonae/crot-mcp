@@ -76,7 +76,7 @@ function hookTimer(test: string): { step(next: string): void; done(): void } {
   const elapsed = (from: number) => `${Math.round(performance.now() - from)}ms`;
   const watchdog = setTimeout(() => {
     console.warn(
-      `[git.test beforeEach > 9 s] still in ${current} (${elapsed(since)}); ${[...durations, `total=${elapsed(start)}`].join(" ")} | ${test}`,
+      `[git.test beforeEach > 9 s] at=${new Date(Date.now() - 9_000).toISOString()} still in ${current} (${elapsed(since)}); ${[...durations, `total=${elapsed(start)}`].join(" ")} | ${test}`,
     );
   }, 9_000);
   watchdog.unref();
@@ -90,7 +90,7 @@ function hookTimer(test: string): { step(next: string): void; done(): void } {
       clearTimeout(watchdog);
       if (performance.now() - start <= 2_000) return;
       console.warn(
-        `[git.test beforeEach > 2 s] ${[...durations, `${current}=${elapsed(since)}`, `total=${elapsed(start)}`].join(" ")} | ${test}`,
+        `[git.test beforeEach > 2 s] at=${new Date(Date.now() - (performance.now() - start)).toISOString()} ${[...durations, `${current}=${elapsed(since)}`, `total=${elapsed(start)}`].join(" ")} | ${test}`,
       );
     },
   };

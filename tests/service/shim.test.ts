@@ -424,8 +424,12 @@ async function probeAsOtherUser(endpoint: string): Promise<string> {
     // Files the other account can read and run (C:\Users\Public); PowerShell single-quoted strings.
     const base = path.join(process.env.PUBLIC ?? "C:\\Users\\Public", `crot-probe-${process.pid}`);
     await writeFile(`${base}.js`, probe);
+    // DIAGNOSTICS (diag/windows-ci, not for merge): phase timings of the probe.
+    const diagStart = performance.now();
+    const diagAt = new Date().toISOString();
     // A copy of Node the other account can certainly read and run.
     await copyFile(process.execPath, `${base}.exe`);
+    const diagCopy = Math.round(performance.now() - diagStart);
     const q = (v: string) => `'${v.replace(/'/g, "''")}'`;
     // Only .NET types and language constructs, no cmdlets: nothing depends on loading a PowerShell
     // module. Process.Start with a user name and password is CreateProcessWithLogonW, i.e. a real logon
@@ -444,20 +448,37 @@ async function probeAsOtherUser(endpoint: string): Promise<string> {
       "$info.LoadUserProfile = $true;",
       "$info.UseShellExecute = $false;",
       "$info.CreateNoWindow = $true;",
+      `$profileDir = [System.IO.Path]::Combine([System.IO.Path]::GetDirectoryName($env:USERPROFILE), ${q(otherUser!)});`,
+      "$before = [System.IO.Directory]::Exists($profileDir);",
+      "$sw = [System.Diagnostics.Stopwatch]::StartNew();",
       "$p = [System.Diagnostics.Process]::Start($info);",
+      "$started = $sw.ElapsedMilliseconds;",
       "if (-not $p.WaitForExit(20000)) { $p.Kill(); throw 'the probe did not finish' };",
-      "[Console]::Out.Write($p.ExitCode)",
+      "$waited = $sw.ElapsedMilliseconds - $started;",
+      "$after = [System.IO.Directory]::Exists($profileDir);",
+      '[Console]::Out.Write("$($p.ExitCode) start=$started wait=$waited profileBefore=$before profileAfter=$after")',
     ].join(" ");
     // Windows PowerShell must not inherit the module path of a PowerShell 7 parent (the GitHub Actions
     // default shell): with it, Windows PowerShell finds PowerShell 7's modules and cannot load them.
     const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => k.toUpperCase() !== "PSMODULEPATH"));
     try {
+      const psStart = performance.now();
       const code = await new Promise<number>((resolve, reject) =>
         execFile(
           "powershell.exe",
           ["-NoProfile", "-NonInteractive", "-Command", ps],
           { timeout: 30_000, env },
-          (e, stdout, stderr) => (e ? reject(new Error(`${e.message}\n${stderr}`)) : resolve(Number(stdout.trim()))),
+          (e, stdout, stderr) => {
+            const psTotal = Math.round(performance.now() - psStart);
+            console.warn(
+              `[shim other-user probe] at=${diagAt} copy=${diagCopy}ms powershell=${psTotal}ms out="${stdout.trim()}" ` +
+                (e
+                  ? `error killed=${String(e.killed)} signal=${String(e.signal)} code=${String(e.code)} stderr="${stderr.trim()}"`
+                  : "ok"),
+            );
+            if (e) reject(new Error(`${e.message}\n${stderr}`));
+            else resolve(Number(stdout.trim().split(" ")[0]));
+          },
         ),
       );
       return outcomes[code - 10] ?? `exit ${code}`;
