@@ -432,19 +432,24 @@ describe.skipIf(!run)("L1 on this host (network on)", () => {
   // started by the browser for each renderer (--renderer-cmd-prefix, a child of the browser process)
   // checks the CROT secrets and state, the control/runtime directory, the Docker daemon socket,
   // nested user namespaces, a host abstract socket and writes outside the workspace.
-  it.skipIf(!browser)(
-    "keeps the browser's process tree inside the L1 boundary (secrets, state, control, Docker, userns, writes)",
-    async () => {
-      const dir = path.join(f.workspace, "browser-probe");
+  it.skipIf(!browser).each([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])(
+    "keeps the browser's process tree inside the L1 boundary (secrets, state, control, Docker, userns, writes) — DIAG run %i",
+    async (iteration) => {
+      const stress = iteration <= 4;
+      const dir = path.join(f.workspace, `browser-probe-${iteration}`);
       await mkdir(dir, { recursive: true });
-      const escape = path.join(f.home, `.crot-browser-probe-${process.pid}`);
+      const escape = path.join(f.home, `.crot-browser-probe-${process.pid}-${iteration}`);
       const probe = path.join(dir, "probe.sh");
       const connect = `'${process.execPath}' -e "require('net').connect('\\0${abstractName}').on('connect',()=>{console.log('LEAK-abstract');process.exit(0)}).on('error',e=>{console.log('abstract-'+e.code);process.exit(0)})"`;
       await writeFile(
         probe,
         [
           "#!/bin/sh",
-          `out='${dir}'/probe-$$.txt`,
+          // The report is written under a temporary name and renamed when complete; the renderer is
+          // only started after that rename. A renderer the browser launches but no longer needs (a
+          // spare one) may still be in this script when the session ends, and the sandbox then ends
+          // it: its report stays a .partial file and is never taken as a complete one.
+          `out='${dir}'/probe-$$`,
           "{",
           '  read l </proc/self/attr/current; echo "label: $l"',
           "  grep NoNewPrivs /proc/self/status",
@@ -455,21 +460,38 @@ describe.skipIf(!run)("L1 on this host (network on)", () => {
           "  for s in /run/docker.sock /var/run/docker.sock; do [ -S $s ] && echo LEAK-docker; done; echo docker-hidden",
           "  unshare -U true 2>/dev/null && echo LEAK-userns || echo userns-refused",
           `  ${connect}`,
+          ...(stress ? ["  sleep $(( $$ % 3 ))"] : []),
           `  echo x > /usr/crot-browser-probe 2>/dev/null && echo LEAK-usr || echo usr-read-only`,
           `  echo x > '${escape}' && echo home-private-layer`,
-          '} > "$out" 2>&1',
-          'exec "$@"',
+          '} > "$out.partial" 2>&1',
+          'mv "$out.partial" "$out.txt" && exec "$@"',
+          "exit 1",
           "",
         ].join("\n"),
         { mode: 0o755 },
       );
-      const { session, processes, denials } = await driveBrowser("browser-probe-session", [
+      const { session, processes, denials } = await driveBrowser(`browser-probe-session-${iteration}`, [
         `--renderer-cmd-prefix=${probe}`,
       ]);
       expect(session.error, JSON.stringify(session)).toBeUndefined();
       expect(session.dom).toContain('<p id="x">crot-l1</p>');
-      const reports = (await readdir(dir)).filter((n) => n.startsWith("probe-"));
+      const files = (await readdir(dir)).filter((n) => n.startsWith("probe-"));
+      const reports = files.filter((n) => n.endsWith(".txt"));
+      const partial = files.filter((n) => n.endsWith(".partial"));
+      expect(files.length).toBe(reports.length + partial.length);
+      const partialText = await Promise.all(partial.map((n) => readFile(path.join(dir, n), "utf8")));
+      notice(`DIAG L1 renderer reports ${os.arch()} run ${iteration}${stress ? " (stress)" : ""}`, [
+        `complete=${reports.length} partial=${partial.length}`,
+        ...partialText.map((t) => `partial: ${t.replace(/\n/g, " | ")}`),
+      ]);
+      // Every renderer that ran started after its complete report (exec follows the rename).
       expect(reports.length).toBeGreaterThan(0);
+      // An unfinished report proves nothing complete, but what it did record is held to the same rules.
+      for (const name of partial) {
+        const report = await readFile(path.join(dir, name), "utf8");
+        expect(report).not.toMatch(/LEAK|CANARY-SECRET|KEYRING/);
+        if (apparmor && report.includes("\n")) expect(report.split("\n")[0]).toBe(`label: ${label} (enforce)`);
+      }
       for (const name of reports) {
         const report = await readFile(path.join(dir, name), "utf8");
         expect(report).not.toMatch(/LEAK|CANARY-SECRET|KEYRING/);
