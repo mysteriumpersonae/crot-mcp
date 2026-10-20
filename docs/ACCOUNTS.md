@@ -137,9 +137,10 @@ dropped, method/software fields are allowlisted. No hidden device telemetry or
 crash upload exists. Diagnostic export is an explicit local owner action, never
 a background upload.
 
-Tunnel published majors have a minimum 12-month support window. v1 was published
-in October 2026; its earliest retirement is October 2027, subject to actual
-release notices. Unsupported majors and configured minimum-device-software
+Tunnel published majors have a minimum 12-month support window. The window starts at the actual publication of a major; no production
+publication is claimed by repository tests. The current v1 is retained at least
+through October 2027, and longer if required by its publication date and release
+notices. Unsupported majors and configured minimum-device-software
 admission failures close 4426 / update required. The software string is only an
 update hint, never trusted identity or authorization. MCP clientInfo/header
 versions are not authenticated and are not an authorization policy. Bridge hello
@@ -159,3 +160,13 @@ clients execute filesystem tools with no account or subscription. Existing
 WP-32 TLS/Chromium acceptance now uses a real AccountService trial, not an
 always-entitled hook. Tests are offline/emulated provider evidence, not live
 WorkOS/Stripe or public-host acceptance.
+
+### Repository qualification (2026-10-20)
+
+On implementation commit `18baf004`, local `npm run check` passed: core
+**2083 passed / 218 platform-gated skipped**, extension **186 passed**. Real
+Chromium `npm run test:e2e:browser` passed **55 / 3 headed-only skipped**, including
+WP-32 all three protocol revisions × both presets against real AccountService.
+Skipped local native/headed cases are not counted as qualification; the PR CI
+contains six OS/Node jobs, four installed-L1 Linux x64/ARM64 jobs, and real Chromium.
+Final-head CI is the merge/review gate on PR #37.

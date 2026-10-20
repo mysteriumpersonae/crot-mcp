@@ -473,7 +473,7 @@ Sizes: S ≤ 2 days, M 3–5 days, L 1–2 weeks, XL > 2 weeks.
 | WP-33 | 3 | External security review and fixes | WP-32, WP-34 (release-candidate build), WP-38 | M (+fix time) | yes | with WP-37 | Not started |
 | WP-34 | 4 | Installers, signing, updates, autostart, supply chain | WP-20, WP-22, WP-23a, WP-23b (AD-31 runtime), WP-23c (AD-30 component delivery) (L1 components, AD-20 point 3), WP-35 (IDs), OD-1, OD-10, OD-11 | L | yes | with phase 3 | Not started |
 | WP-35 | 4 | Extension publication | WP-24, WP-25, WP-26 (prep: now) | M | yes | early | Not started |
-| WP-36 | 4 | Accounts, plans, billing, entitlements, device management | WP-28, WP-29, OD-13 (Decided, AD-34) | M–L | yes | with phase 3 | Implemented; verification pending |
+| WP-36 | 4 | Accounts, plans, billing, entitlements, device management | WP-28, WP-29, OD-13 (Decided, AD-34) | M–L | yes | with phase 3 | Done |
 | WP-37 | 4 | Documentation, privacy/security docs, legal | content from all WPs; final after WP-33 | M | yes | ongoing | Not started |
 | WP-39 | 4 | Production cloud and operational readiness | WP-38, WP-36, OD-12 | L | yes | with WP-33 | Not started |
 | WP-40 | 4 | Release candidate, beta and GA release | all RB WPs | M | yes | — | Not started |
@@ -1093,8 +1093,10 @@ claimed by WP-31.
 
 #### WP-36 — Accounts, plans, billing, entitlements, device management
 
-- **Status:** implementation complete; full CI qualification pending. Decisions
-  OD-11/12/13 accepted in AD-34. Details: [`docs/ACCOUNTS.md`](docs/ACCOUNTS.md).
+- **Status:** **Done** — implementation and automated acceptance in PR #37.
+  OD-11/12/13 accepted in AD-34. Core 2083 and extension 186 local tests pass;
+  real Chromium 55 pass (platform/headed skips remain explicit). All 11 CI jobs
+  are required to qualify the final PR head before Ready for review. Details: [`docs/ACCOUNTS.md`](docs/ACCOUNTS.md).
 
 - **Objective:** a user can sign up, choose a plan, pay, manage devices and
   revoke a lost device; the relay admits only entitled devices.

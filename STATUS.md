@@ -5,7 +5,7 @@ order are in [`CROT_IMPLEMENTATION_ROADMAP.md`](CROT_IMPLEMENTATION_ROADMAP.md);
 architecture and decisions in [`ARCHITECTURE.md`](ARCHITECTURE.md). Every work
 package PR updates this file.
 
-## WP-36 — implementation complete; CI qualification pending
+## WP-36 — Done (PR #37)
 
 Based on merged PR #35, main `20d0ea9`. OD-11/12/13 are Decided in AD-34.
 Cloud-only AccountService implements Local/Free, trial (14d/2), pro (5), team
@@ -17,9 +17,14 @@ purpose-bound proofs for status and best-effort WorkOS revocation; provider
 secrets remain only on the server. Bridge/version admission and metadata-only
 logging are covered by regressions. [Configuration and API](docs/ACCOUNTS.md).
 
-Full `check`, Chromium E2E and all 11 CI jobs must qualify the final head before
-Ready for review. Public DNS/host, live WorkOS/Stripe, legal entity/residency and
-merchant setup remain owner release gates, not claimed by repository tests.
+Qualification on implementation `18baf004`: `npm run check` passed (core 2083
+passed / 218 platform-gated skips; extension 186 passed), real Chromium E2E
+55 passed / 3 headed-only skips. CI gate: six OS/Node jobs, four
+installed-L1 Linux x64/ARM64 jobs and real Chromium. The final documentation head
+must pass all 11 checks before Ready for review. PR #37 is not auto-merged.
+
+Public DNS/host, live WorkOS/Stripe, legal entity/residency and merchant setup
+remain owner release gates, not claimed by repository tests.
 
 ## WP-32 automatic acceptance / WP-38 repository delivery
 
