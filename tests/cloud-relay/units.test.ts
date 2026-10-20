@@ -82,7 +82,7 @@ describe("frame codec", () => {
     expect(offeredMajors("crot-tunnel.v1, crot-tunnel.v12, chat, crot-tunnel.v0")).toEqual(["v1", "v12"]);
     expect(selectMajor(["v1", "v3", "v2"], ["v1", "v2"])).toBe("v2");
     expect(selectMajor(["v3"], ["v1"])).toBeUndefined();
-    expect(unsupportedVersionReason(["v1", "v2"])).toBe("unsupported_version;supported=v1,v2");
+    expect(unsupportedVersionReason(["v1", "v2"])).toBe("update required;supported=v1,v2");
   });
 });
 
@@ -166,5 +166,19 @@ describe("log records", () => {
     const lines: string[] = [];
     jsonLineLogger((l) => lines.push(l))({ event: "x", code: "a b" });
     expect(JSON.parse(lines[0]!)).toMatchObject({ event: "x", code: "invalid" });
+  });
+  it("never logs paths/URLs disguised as operational method or software fields", () => {
+    const record = sanitizeRecord({
+      event: "exchange",
+      method: "/private/project",
+      mcpMethod: "https://private.example/tab",
+      software: "/home/user/project",
+      code: "/private/path",
+    });
+    expect(record).toMatchObject({ method: "invalid", mcpMethod: "invalid", software: "invalid", code: "invalid" });
+    expect(sanitizeRecord({ event: "exchange", mcpMethod: "tools/call", software: "crot/0.1.0" })).toMatchObject({
+      mcpMethod: "tools/call",
+      software: "crot/0.1.0",
+    });
   });
 });

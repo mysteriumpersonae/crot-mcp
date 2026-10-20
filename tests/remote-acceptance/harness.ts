@@ -8,7 +8,7 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import type { ServeCommand } from "../../src/cli/options.js";
 import { CloudRelay } from "../../src/cloud-relay/server.js";
-import { MemoryDeviceRegistry } from "../../src/cloud-relay/registry.js";
+import { AccountService } from "../../src/account-service/service.js";
 import { createPrivateFileProtection } from "../../src/core/platform/private-files.js";
 import { createIdentityHttp } from "../../src/identity/http.js";
 import { IssuerKeySet } from "../../src/identity/jwks.js";
@@ -30,7 +30,7 @@ export async function eventually(
 }
 export class RemoteAcceptance {
   readonly as = new TestAuthorizationServer();
-  readonly registry = new MemoryDeviceRegistry();
+  registry!: AccountService;
   readonly logs: unknown[] = [];
   readonly wireVersions = new Set<string>();
   readonly approvals: Extract<ControlEvent, { event: "approval.requested" }>[] = [];
@@ -107,7 +107,10 @@ export class RemoteAcceptance {
     });
     await new Promise<void>((r) => this.server.listen(0, "127.0.0.1", r));
     this.authPort = (this.server.address() as { port: number }).port;
+    this.registry = await AccountService.open();
+    await this.registry.startTrial("user_01");
     this.relay = new CloudRelay({
+      accounts: this.registry,
       relayHost: TEST_RELAY,
       issuer: this.as.issuer,
       pairingClientId: PAIRING_CLIENT,

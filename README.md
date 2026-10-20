@@ -7,6 +7,16 @@ standard MCP interface.
 **`ARCHITECTURE.md` is the source of truth for the product architecture.** This
 README describes the current implementation and how to run it.
 
+## Accounts and cloud plans — WP-36
+
+Local mode is free, offline and requires no account. Cloud-only AccountService
+provides trial/pro/team plans, signed Stripe billing and hosted checkout,
+account/device API, lost-device revocation and real Relay entitlement admission.
+The tray reports plan/limits and requests WorkOS revocation through the cloud;
+no provider secret or licensing logic enters Core. See [accounts and API](docs/ACCOUNTS.md)
+for setup, the separate first-party account audience, durable state, migration
+from the pre-commercial registry and live-provider release gates.
+
 ## Remote acceptance and staging deliverables — WP-32 / WP-38
 
 The automatic SDK → HTTPS relay → WSS device tunnel → CrotService → project +

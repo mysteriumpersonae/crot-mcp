@@ -196,6 +196,7 @@ export interface PairingView {
 
 /** Result of `overview` and payload of `state.changed` (AD-19 point 10). */
 export interface ControlOverview {
+  readonly commercial?: import("../account-service/service.js").AccountView & { checkedAt: string };
   readonly service: {
     readonly state: ServiceStatus["state"];
     readonly pid: number;

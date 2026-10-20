@@ -26,6 +26,16 @@ WP-29 tests use a protocol-level test device
 (`tests/cloud-relay/test-device.ts`) that proxies to a real
 `CrotHttpServer` relay entry; the WP-30 tests use the real device side.
 
+## Commercial admission — WP-36
+
+The deployed binary co-hosts AccountService and fails closed for free/inactive
+plans. Registration counts and device limits commit atomically; signed billing
+updates/expiry close ineligible tunnels with 4403. Lost-device revocation deletes
+the public key/PRM and creates a durable tombstone. Device plan/provider actions
+use domain-separated signed challenges; owner APIs require a separate account
+audience and first-party client. See [ACCOUNTS](ACCOUNTS.md) for endpoints,
+server-only secrets, hosted checkout, migration and minimum-version policy.
+
 ## Running
 
 ```sh
@@ -53,7 +63,7 @@ node dist/bin/crot-cloud-relay.js --config relay.json
 | `pairingClientId` | Required. `client_id` of the environment's pairing client (the same value as the device's identity environment); only its tokens register devices |
 | `environment` | Short name stored with each registration (default `development`) |
 | `host`, `port` | Listen address (default `0.0.0.0:8443`) |
-| `registryFile` | Device registry (JSON, written atomically, mode 0600) |
+| `registryFile` | Commercial state is `<registryFile>.accounts` (atomic JSON, mode 0600); old pre-WP-36 registry is not licensed/imported automatically |
 | `tls` | Optional; without it the relay speaks plain HTTP and TLS must terminate in front of it |
 | `limits` | Optional admission settings; defaults and effective fairness bounds below |
 | `exchangeDeadlineMs` | Absolute exchange deadline, 60 000…900 000 ms (AD-22 point 12, default 15 min); the device ends a request 5 s before it (OD-5) |
@@ -154,8 +164,8 @@ possible. Pending-handshake HTTP refusals carry 503/Retry-After/not_executed.
 
 For `/d/<id>/mcp` the relay checks, before touching the tunnel: exactly one
 bearer token, signature and `iss`, `aud` = `https://<relay-host>/d/<id>/mcp`,
-validity times, `sub` = registered owner, and the entitlement hook (default:
-every registered device is entitled; WP-36 replaces it). Failures produce
+validity times, `sub` = registered owner, and real AccountService entitlement
+admission (WP-36; no service or explicit test seam means fail closed). Failures produce
 `401` (with `WWW-Authenticate: Bearer resource_metadata=…`) or `403`; the
 request is never forwarded. Identity headers sent by the client are forwarded
 as ordinary headers and have no meaning to the device; the device validates
@@ -258,9 +268,10 @@ other clients; this does **not** claim production throughput or RSS capacity.
 - Re-pair rotates to a new id/key (AD-21); no in-place key replacement.
 - Offline local unpair remains immediate but best-effort remote removal can fail,
   leaving a stale relay record. It cannot re-enable the locally revoked device.
-  Account-side management/revocation is WP-36.
+  Account-side management/revocation is implemented by WP-36.
 - No CORS/OPTIONS for browser-based clients (AD-22 question 7).
-- Entitlement is still an allow-all hook until WP-36; relay is not an authorizer.
+- Entitlements are cloud admission through AccountService (WP-36); the relay
+  is never a local authorizer.
 - Binary packaging is WP-34/38; public staging and real-client/timeouts acceptance
   remain WP-38/32, not implied by green component tests.
 

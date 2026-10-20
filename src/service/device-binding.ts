@@ -31,6 +31,8 @@ import {
   devicePublicKey,
   deviceKeyFromSeed,
   signTunnelProof,
+  signCommercialProof,
+  type CommercialAction,
   signDeregistrationProof,
   type DevicePublicKey,
 } from "../identity/device-credential.js";
@@ -308,6 +310,27 @@ export class DeviceBindingStore {
    * identity environment of its pairing. An unpaired device, a device whose
    * state is unavailable, or one paired in another environment has none.
    */
+  commercialCredential(environment: IdentityEnvironment | undefined):
+    | {
+        deviceId: string;
+        relayHost: string;
+        prove(challenge: Uint8Array, action: CommercialAction, clientId?: string): Buffer;
+      }
+    | undefined {
+    const credential = this.tunnelCredential(environment);
+    if (!credential.ok || !this.key) return undefined;
+    const key = this.key;
+    const { deviceId, relayHost } = credential.credential;
+    return {
+      deviceId,
+      relayHost,
+      prove: (challenge, action, clientId) => {
+        if (this.key !== key || this.paired?.deviceId !== deviceId) throw new Error("the device is no longer paired");
+        return signCommercialProof(key, deviceId, relayHost, challenge, action, clientId);
+      },
+    };
+  }
+
   tunnelCredential(environment: IdentityEnvironment | undefined): TunnelCredentialResult {
     if (this.failure !== undefined) return { ok: false, reason: "state_unavailable" };
     const paired = this.paired;

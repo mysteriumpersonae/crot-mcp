@@ -10,7 +10,9 @@
 import { readFile } from "node:fs/promises";
 import { parseRelayConfig } from "../cloud-relay/config.js";
 import { jsonLineLogger } from "../cloud-relay/log.js";
-import { FileDeviceRegistry } from "../cloud-relay/registry.js";
+import { AccountService } from "../account-service/service.js";
+import { StripeBillingProvider } from "../account-service/billing.js";
+import { WorkOSAuthorizationProvider } from "../account-service/provider.js";
 import { CloudRelay } from "../cloud-relay/server.js";
 import { createIdentityHttp } from "../identity/http.js";
 import { IssuerKeySet } from "../identity/jwks.js";
@@ -22,14 +24,27 @@ async function main(): Promise<void> {
   const config = parseRelayConfig(JSON.parse(await readFile(args[i + 1]!, "utf8")));
   const log = jsonLineLogger();
   const keys = new IssuerKeySet({ issuer: config.issuer, http: createIdentityHttp() });
+  const accounts = await AccountService.open(config.registryFile + ".accounts");
+  const webhookSecret = process.env.CROT_STRIPE_WEBHOOK_SECRET;
+  if (config.commercial && !webhookSecret)
+    throw new Error("CROT_STRIPE_WEBHOOK_SECRET is required when commercial billing is configured");
   const relay = new CloudRelay({
+    accounts,
+    billing:
+      config.commercial && webhookSecret
+        ? new StripeBillingProvider({ ...config.commercial, webhookSecret, apiKey: process.env.CROT_STRIPE_API_KEY })
+        : undefined,
+    provider: process.env.CROT_WORKOS_API_KEY
+      ? new WorkOSAuthorizationProvider(process.env.CROT_WORKOS_API_KEY)
+      : undefined,
+    minimumDeviceVersion: config.minimumDeviceVersion,
     limits: config.limits,
     relayHost: config.relayHost,
     issuer: config.issuer,
     pairingClientId: config.pairingClientId,
     environment: config.environment,
     keys,
-    registry: await FileDeviceRegistry.open(config.registryFile),
+    registry: accounts,
     exchangeDeadlineMs: config.exchangeDeadlineMs,
     log,
   });
@@ -47,7 +62,7 @@ async function main(): Promise<void> {
   process.once("SIGINT", stop);
 }
 
-main().catch((error: unknown) => {
-  process.stderr.write(`crot-cloud-relay: ${error instanceof Error ? error.message : String(error)}\n`);
+main().catch(() => {
+  process.stderr.write('{"event":"relay.startup_failed"}\n');
   process.exit(1);
 });

@@ -276,6 +276,9 @@ export function trayView(state: TrayState): TrayView {
   const remoteNotes = o
     ? [
         o.remote.tunnel,
+        o.commercial
+          ? `Cloud plan: ${o.commercial.plan} (${o.commercial.status}); entitled: ${o.commercial.entitled}; devices: ${o.commercial.deviceCount}/${o.commercial.maxDevices}; checked ${o.commercial.checkedAt}`
+          : "Cloud plan: unavailable/offline. Local mode is always free and unaffected.",
         ...(o.preset.source === "fail-closed"
           ? ["The device settings cannot be read: the most restrictive settings apply."]
           : []),

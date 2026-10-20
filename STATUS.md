@@ -5,6 +5,22 @@ order are in [`CROT_IMPLEMENTATION_ROADMAP.md`](CROT_IMPLEMENTATION_ROADMAP.md);
 architecture and decisions in [`ARCHITECTURE.md`](ARCHITECTURE.md). Every work
 package PR updates this file.
 
+## WP-36 — implementation complete; CI qualification pending
+
+Based on merged PR #35, main `20d0ea9`. OD-11/12/13 are Decided in AD-34.
+Cloud-only AccountService implements Local/Free, trial (14d/2), pro (5), team
+(20), atomic persistent registration limits, signed Stripe subscription events,
+hosted checkout and first-party owner account/device APIs. Lost-device tombstones
+remove registration/public keys and close tunnels; billing downgrade/expiry
+ends remote admission, never local authorization. The device/tray uses fresh
+purpose-bound proofs for status and best-effort WorkOS revocation; provider
+secrets remain only on the server. Bridge/version admission and metadata-only
+logging are covered by regressions. [Configuration and API](docs/ACCOUNTS.md).
+
+Full `check`, Chromium E2E and all 11 CI jobs must qualify the final head before
+Ready for review. Public DNS/host, live WorkOS/Stripe, legal entity/residency and
+merchant setup remain owner release gates, not claimed by repository tests.
+
 ## WP-32 automatic acceptance / WP-38 repository delivery
 
 Implemented the three-revision × two-preset remote SDK project/browser suite,

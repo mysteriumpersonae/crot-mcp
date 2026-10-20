@@ -458,6 +458,7 @@ export class CrotService {
         clients,
         binding,
         identity,
+        providerRevocation: (client) => identity.revokeAtProvider(client),
         remoteExposure,
         configuredPreset,
         buildCore: (preset, remote) => build(preset, holder.composition.exposure, remote),

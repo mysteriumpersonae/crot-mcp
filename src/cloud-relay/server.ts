@@ -16,6 +16,10 @@
  * pairing (AD-22 point 4), the tunnel endpoint (AD-22 points 2–3) and a
  * minimal health check.
  */
+import { CommercialError, type CommercialService } from "../account-service/service.js";
+import { AccountHttpApi } from "../account-service/http.js";
+import type { BillingProvider } from "../account-service/billing.js";
+import type { AuthorizationProvider } from "../account-service/provider.js";
 import { randomBytes } from "node:crypto";
 import { WindowCounter, relayLimits, type RelayLimits, type RateLimit } from "./limits.js";
 export type { RateLimit } from "./limits.js";
@@ -52,7 +56,7 @@ import {
   type RequestOutcome,
 } from "../tunnel/protocol.js";
 import { acceptWebSocket } from "../tunnel/websocket.js";
-import { jsonLineLogger, safeToken, type RelayLogger, type RelayLogRecord } from "./log.js";
+import { jsonLineLogger, safeToken, sanitizeRecord, type RelayLogger, type RelayLogRecord } from "./log.js";
 import { isDevicePublicKey, type DeviceRecord, type DeviceRegistry } from "./registry.js";
 import {
   DEFAULT_TUNNEL_TIMING,
@@ -77,7 +81,7 @@ const MAX_PENDING_HANDSHAKES = 256;
 /** Default for `discardBodyMs`. */
 const DISCARD_BODY_MS = 10_000;
 
-export type Entitlement = "entitled" | "not_entitled" | "blocked";
+export type Entitlement = "entitled" | "not_entitled" | "blocked" | "device_revoked";
 
 export interface CloudRelayOptions {
   /** The relay host of the canonical device URI (AD-21 point 5). */
@@ -95,7 +99,13 @@ export interface CloudRelayOptions {
   /** The issuer's signing keys, fetched directly from the issuer (AD-21 point 7). */
   readonly keys: SigningKeySource;
   readonly registry: DeviceRegistry;
-  /** Entitlement hook (WP-36); default: every registered device is entitled. */
+  /** Cloud-only commercial service. Absent service/hook: fail closed. */
+  readonly accounts?: CommercialService;
+  readonly billing?: BillingProvider;
+  readonly provider?: AuthorizationProvider;
+  /** Optional minimum device crot/x.y.z; admission only (AD-34). */
+  readonly minimumDeviceVersion?: string;
+  /** Explicit entitlement test/integration seam; never used by the deployed binary. */
   readonly entitlement?: (record: DeviceRecord) => Entitlement | Promise<Entitlement>;
   readonly log?: RelayLogger;
   readonly now?: () => number;
@@ -237,6 +247,9 @@ function bearerToken(req: IncomingMessage): string | undefined | null {
 }
 
 export class CloudRelay {
+  private readonly accountApi: AccountHttpApi | undefined;
+  private readonly unsubscribeAccounts: (() => void) | undefined;
+  private expiryTimer: NodeJS.Timeout | undefined;
   private readonly log: RelayLogger;
   private readonly now: () => number;
   private readonly timing: TunnelTiming;
@@ -281,7 +294,27 @@ export class CloudRelay {
       options.now ?? Date.now,
       this.limits.counterKeys,
     );
-    this.log = options.log ?? jsonLineLogger();
+    if (options.accounts && options.registry !== options.accounts)
+      throw new Error("commercial service must own the device registry");
+    this.accountApi = options.accounts
+      ? new AccountHttpApi({
+          service: options.accounts,
+          relayHost: options.relayHost,
+          issuer: options.issuer,
+          pairingClientId: options.pairingClientId,
+          keys: options.keys,
+          billing: options.billing,
+          provider: options.provider,
+          online: (id) => this.isOnline(id),
+          now: options.now,
+        })
+      : undefined;
+    this.unsubscribeAccounts = options.accounts?.subscribe((accountId, deviceId) => {
+      if (deviceId && options.accounts!.isRevoked(deviceId)) this.endDevice(deviceId, "device_revoked");
+      return this.recheckAccount(accountId);
+    });
+    const logger = options.log ?? jsonLineLogger();
+    this.log = (record) => logger(sanitizeRecord(record));
     this.now = options.now ?? Date.now;
     this.timing = { ...DEFAULT_TUNNEL_TIMING, ...options.timing };
     this.deadlineMs = options.exchangeDeadlineMs ?? DEFAULT_EXCHANGE_DEADLINE_MS;
@@ -337,6 +370,10 @@ export class CloudRelay {
       });
     });
     this.server = server;
+    if (this.options.accounts) {
+      this.expiryTimer = setInterval(() => void this.recheckAll(), 250);
+      this.expiryTimer.unref();
+    }
     this.log({ event: "relay.listening", count: (server.address() as AddressInfo).port });
   }
 
@@ -373,6 +410,8 @@ export class CloudRelay {
   /** GOAWAY `shutting_down` to every tunnel, drain up to the drain limit, then stop. */
   async close(): Promise<void> {
     this.closing = true;
+    clearInterval(this.expiryTimer);
+    this.unsubscribeAccounts?.();
     const server = this.server;
     server?.close();
     for (const t of [...this.tunnels]) t.goAway("shutting_down");
@@ -400,6 +439,7 @@ export class CloudRelay {
     const target = req.url ?? "";
     const q = target.indexOf("?");
     const pathname = q === -1 ? target : target.slice(0, q);
+    if (this.accountApi?.matches(pathname)) return this.accountApi.handle(req, res, pathname);
     let m: RegExpExecArray | null;
     if ((m = MCP_PATH.exec(pathname))) return this.exchange(req, res, m[1]!);
     if ((m = PRM_PATH.exec(pathname))) return this.metadata(req, res, m[1]!);
@@ -475,7 +515,11 @@ export class CloudRelay {
   }
 
   private async entitled(record: DeviceRecord): Promise<Entitlement> {
-    return this.options.entitlement ? this.options.entitlement(record) : "entitled";
+    return this.options.accounts
+      ? this.options.accounts.entitlement(record)
+      : this.options.entitlement
+        ? this.options.entitlement(record)
+        : "not_entitled";
   }
 
   /** Device registration at pairing (AD-22 point 4). */
@@ -533,7 +577,15 @@ export class CloudRelay {
       environment: this.options.environment,
       registeredAt: new Date(this.now()).toISOString(),
     };
-    const result = await this.options.registry.register(record);
+    if (!this.options.accounts && !this.options.entitlement)
+      return respond(403, "entitlement_required", { error: "entitlement_required" });
+    let result;
+    try {
+      result = await this.options.registry.register(record);
+    } catch (error) {
+      if (error instanceof CommercialError) return respond(403, error.code, { error: error.code });
+      throw error;
+    }
     if (result === "conflict") return respond(409, "conflict", { error: "already_registered" });
     const stored = (await this.options.registry.get(deviceId))!;
     return respond(result === "created" ? 201 : 200, result, { deviceId, registeredAt: stored.registeredAt });
@@ -666,6 +718,8 @@ export class CloudRelay {
     if (req.destroyed || res.destroyed) return;
     const admissionTunnel = this.routes.get(deviceId);
     if (!admissionTunnel?.routable || this.revokedRecords.has(record)) return refuse(REFUSALS.device_offline);
+    await this.options.accounts?.noteClient(record.accountId, deviceId, checked.token.clientId);
+    if (!admissionTunnel.routable || this.options.accounts?.isRevoked(deviceId)) return refuse(REFUSALS.not_entitled);
     const clientKey = JSON.stringify([deviceId, checked.token.clientId]);
     if (this.clientRates.take(clientKey) !== undefined || this.deviceRates.take(deviceId) !== undefined)
       return refuse({ ...REFUSALS.busy, status: 429, code: "request_rate_limited" });
@@ -834,6 +888,8 @@ export class CloudRelay {
     const refuse = (closeCode: number, reason: string): HandshakeDecision => ({ ok: false, closeCode, reason });
     if (!isDeviceId(hello.deviceId)) return refuse(CloseCode.UNAUTHORIZED, "unauthorized");
     const record = await this.options.registry.get(hello.deviceId);
+    if (!record && this.options.accounts?.isRevoked(hello.deviceId))
+      return refuse(CloseCode.FORBIDDEN, "device_revoked");
     if (!record || !verifyTunnelProof(record.publicKey, hello.deviceId, this.options.relayHost, challenge, hello.proof))
       return refuse(CloseCode.UNAUTHORIZED, "unauthorized");
     // Counted only after the proof: the device id in HELLO is public (it is in every client's URI), so
@@ -842,7 +898,11 @@ export class CloudRelay {
     // connection (one HELLO) and by the concurrent-handshake limit.
     const wait = this.handshakes.take(hello.deviceId);
     if (wait !== undefined) return refuse(CloseCode.RATE_LIMITED, `rate_limited;retryAfterMs=${wait}`);
-    if ((await this.entitled(record)) !== "entitled") return refuse(CloseCode.FORBIDDEN, "forbidden");
+    if (this.options.minimumDeviceVersion && !supportedSoftware(hello.software, this.options.minimumDeviceVersion))
+      return refuse(CloseCode.UNSUPPORTED_VERSION, "update required");
+    const entitlement = await this.entitled(record);
+    if (entitlement !== "entitled")
+      return refuse(CloseCode.FORBIDDEN, entitlement === "device_revoked" ? "device_revoked" : "not_entitled");
     if (this.closing) return refuse(CloseCode.GOING_AWAY, "shutting_down");
     const current = this.routes.get(hello.deviceId);
     if (current && current.routable && this.supersessions.full(hello.deviceId)) {
@@ -853,12 +913,48 @@ export class CloudRelay {
     return { ok: true, features: [] };
   }
 
+  private endDevice(deviceId: string, reason: "not_entitled" | "device_revoked"): void {
+    for (const tunnel of this.tunnels) if (tunnel.deviceId === deviceId) tunnel.terminate(CloseCode.FORBIDDEN, reason);
+    this.routes.delete(deviceId);
+  }
+
+  private async recheckAccount(accountId: string): Promise<void> {
+    for (const t of [...this.tunnels]) {
+      const record = this.authenticatedRecords.get(t);
+      if (!record || record.accountId !== accountId) continue;
+      const entitlement = await this.entitled(record);
+      if (entitlement !== "entitled")
+        this.endDevice(record.deviceId, entitlement === "device_revoked" ? "device_revoked" : "not_entitled");
+    }
+  }
+  private async recheckAll(): Promise<void> {
+    const accounts = new Set(
+      [...this.tunnels]
+        .map((t) => this.authenticatedRecords.get(t)?.accountId)
+        .filter((id): id is string => id !== undefined),
+    );
+    for (const id of accounts) await this.recheckAccount(id);
+  }
+
   private onReady(tunnel: RelayTunnel): void {
     const deviceId = tunnel.deviceId!;
     // A deregistration can finish while asynchronous entitlement/proof admission is pending.
     if (this.revokedRecords.has(this.authenticatedRecords.get(tunnel)!)) {
       tunnel.terminate(CloseCode.UNAUTHORIZED, "unpaired");
       return;
+    }
+    const accountRecord = this.authenticatedRecords.get(tunnel);
+    if (this.options.accounts && accountRecord) {
+      const a = this.options.accounts;
+      const view = a.view(accountRecord.accountId);
+      const eligible = a
+        .deviceList(accountRecord.accountId)
+        .sort((x, y) => x.registeredAt.localeCompare(y.registeredAt) || x.deviceId.localeCompare(y.deviceId))
+        .slice(0, view.maxDevices);
+      if (a.isRevoked(deviceId) || !view.entitled || !eligible.some((d) => d.deviceId === deviceId)) {
+        tunnel.terminate(CloseCode.FORBIDDEN, a.isRevoked(deviceId) ? "device_revoked" : "not_entitled");
+        return;
+      }
     }
     const previous = this.routes.get(deviceId);
     this.routes.set(deviceId, tunnel);
@@ -1082,4 +1178,16 @@ class Exchange {
       durationMs: this.now() - this.started,
     });
   }
+}
+
+/** Self-reported software is an update-admission hint, never an authentication fact. */
+function supportedSoftware(software: string, minimum: string): boolean {
+  const parsed = /^crot\/(\d+)\.(\d+)\.(\d+)$/.exec(software);
+  if (!parsed) return false;
+  const required = minimum.split(".").map(Number);
+  for (let i = 0; i < 3; i++) {
+    const n = Number(parsed[i + 1]);
+    if (n !== required[i]) return n > required[i]!;
+  }
+  return true;
 }

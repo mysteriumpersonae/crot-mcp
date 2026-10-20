@@ -108,3 +108,60 @@ export function verifyDeregistrationProof(
     return false;
   }
 }
+
+export type CommercialAction = "status" | "revoke_client";
+function commercialMessage(
+  deviceId: string,
+  host: string,
+  challenge: Uint8Array,
+  action: CommercialAction,
+  clientId: string,
+): Buffer {
+  if (
+    challenge.byteLength !== 32 ||
+    !["status", "revoke_client"].includes(action) ||
+    clientId.includes("\0") ||
+    clientId.length > 512
+  )
+    throw new Error("invalid commercial proof");
+  return Buffer.from(
+    JSON.stringify([
+      "crot-commercial-v1",
+      deviceId,
+      host,
+      Buffer.from(challenge).toString("base64url"),
+      action,
+      clientId,
+    ]),
+  );
+}
+export function signCommercialProof(
+  key: KeyObject,
+  deviceId: string,
+  host: string,
+  challenge: Uint8Array,
+  action: CommercialAction,
+  clientId = "",
+): Buffer {
+  return sign(null, commercialMessage(deviceId, host, challenge, action, clientId), key);
+}
+export function verifyCommercialProof(
+  key: DevicePublicKey,
+  deviceId: string,
+  host: string,
+  challenge: Uint8Array,
+  action: CommercialAction,
+  clientId: string,
+  proof: Uint8Array,
+): boolean {
+  try {
+    return verify(
+      null,
+      commercialMessage(deviceId, host, challenge, action, clientId),
+      createPublicKey({ key: { ...key }, format: "jwk" }),
+      proof,
+    );
+  } catch {
+    return false;
+  }
+}

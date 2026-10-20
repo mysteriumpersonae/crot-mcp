@@ -13,6 +13,8 @@
  * device key and an inactive rollback intent are durably verified before
  * registration; failures compensate with a fresh signed removal request.
  */
+import type { AccountView } from "../account-service/service.js";
+import type { RemoteClientKey } from "../adapters/http/server.js";
 import type { AccessTokenVerifier } from "../adapters/http/auth.js";
 import { canonicalDeviceUri, generateDeviceId, protectedResourceMetadataUrl } from "../identity/device-id.js";
 import type { IdentityEnvironment } from "../identity/environment.js";
@@ -88,6 +90,95 @@ export class DeviceIdentity {
       },
     });
     this.recovery = this.rollbackPairing();
+  }
+
+  commercialStatus: (AccountView & { checkedAt: string }) | undefined;
+  private commercialChecked = 0;
+  private commercialDeviceId: string | undefined;
+  private commercialPending: Promise<void> | undefined;
+
+  /** Explicit owner overview request; no background diagnostics or payload uploads. */
+  refreshCommercialStatus(): Promise<void> {
+    if (this.commercialPending) return this.commercialPending;
+    const binding = this.options.binding.view();
+    if (binding.state !== "paired" || binding.deviceId !== this.commercialDeviceId) {
+      this.commercialStatus = undefined;
+      this.commercialChecked = 0;
+      this.commercialDeviceId = binding.state === "paired" ? binding.deviceId : undefined;
+    }
+    if (binding.state !== "paired") return Promise.resolve();
+    const requestedDeviceId = binding.deviceId;
+    const now = (this.options.now ?? Date.now)();
+    if (now - this.commercialChecked < 30_000) return Promise.resolve();
+    this.commercialChecked = now;
+    this.commercialPending = this.commercialRequest("status")
+      .then((result) => {
+        const current = this.options.binding.view();
+        if (current.state !== "paired" || current.deviceId !== requestedDeviceId) {
+          this.commercialStatus = undefined;
+          return;
+        }
+        const v = result as AccountView;
+        if (
+          !v ||
+          !["free", "trial", "pro", "team"].includes(v.plan) ||
+          !["active", "past_due", "canceled", "expired"].includes(v.status) ||
+          typeof v.entitled !== "boolean" ||
+          typeof v.remoteEnabled !== "boolean" ||
+          !Number.isSafeInteger(v.deviceCount) ||
+          !Number.isSafeInteger(v.maxDevices) ||
+          !Number.isFinite(v.expiresAt)
+        )
+          throw new Error("invalid commercial status");
+        this.commercialStatus = {
+          plan: v.plan,
+          status: v.status,
+          entitled: v.entitled,
+          remoteEnabled: v.remoteEnabled,
+          deviceCount: v.deviceCount,
+          maxDevices: v.maxDevices,
+          expiresAt: v.expiresAt,
+          checkedAt: new Date(now).toISOString(),
+        };
+      })
+      .catch(() => {
+        this.commercialStatus = undefined;
+      })
+      .finally(() => {
+        this.commercialPending = undefined;
+      });
+    return this.commercialPending;
+  }
+
+  async revokeAtProvider(client: RemoteClientKey): Promise<"requested" | "not_available" | "failed"> {
+    try {
+      const { accountId, deviceId, clientId } = client;
+      const binding = this.options.binding.view();
+      if (binding.state !== "paired" || binding.accountId !== accountId || binding.deviceId !== deviceId)
+        return "not_available";
+      const result = (await this.commercialRequest("revoke_client", clientId)) as { provider?: string };
+      return result?.provider === "requested"
+        ? "requested"
+        : result?.provider === "not_available"
+          ? "not_available"
+          : "failed";
+    } catch {
+      return "failed";
+    }
+  }
+
+  private async commercialRequest(action: "status" | "revoke_client", clientId = ""): Promise<unknown> {
+    const credential = this.options.binding.commercialCredential(this.environment);
+    if (!credential || !this.http.postJsonResult) throw new Error("commercial_unavailable");
+    const base = `https://${credential.relayHost}/d/${credential.deviceId}/account`;
+    const c = await this.http.postJsonResult(base + "/challenge", { action, clientId });
+    const challenge = (c.body as { challenge?: string })?.challenge;
+    if (c.status !== 200 || typeof challenge !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(challenge))
+      throw new Error("commercial_unavailable");
+    const proof = credential.prove(Buffer.from(challenge, "base64url"), action, clientId).toString("base64url");
+    const r = await this.http.postJsonResult(base, { action, clientId, challenge, proof });
+    if (r.status !== 200) throw new Error("commercial_unavailable");
+    return r.body;
   }
 
   /** Token rejections since start, by reason (diagnostics). */

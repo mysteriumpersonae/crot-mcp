@@ -33,6 +33,7 @@ export class RelayHarness {
       environment: "test",
       keys: new IssuerKeySet({ issuer: this.as.issuer, http: this.as.http() }),
       registry: this.registry,
+      entitlement: () => "entitled",
       log: (r) => this.logs.push(r),
       ...options,
     });

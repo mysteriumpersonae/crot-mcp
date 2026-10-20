@@ -9,6 +9,11 @@ import { isClientId, isIssuer } from "../identity/environment.js";
 import { DEFAULT_EXCHANGE_DEADLINE_MS, MIN_EXCHANGE_DEADLINE_MS } from "../tunnel/protocol.js";
 
 export interface RelayConfig {
+  readonly minimumDeviceVersion?: string;
+  readonly commercial?: {
+    readonly prices: { readonly pro: string; readonly team: string };
+    readonly returnUrl: string;
+  };
   readonly relayHost: string;
   readonly limits: RelayLimits;
   readonly issuer: string;
@@ -23,6 +28,8 @@ export interface RelayConfig {
 }
 
 const FIELDS = [
+  "minimumDeviceVersion",
+  "commercial",
   "limits",
   "relayHost",
   "issuer",
@@ -68,7 +75,32 @@ export function parseRelayConfig(value: unknown): RelayConfig {
     deadline > DEFAULT_EXCHANGE_DEADLINE_MS
   )
     throw new Error("exchangeDeadlineMs must be between 60000 and 900000 (AD-22 point 12)");
+  if (
+    v.minimumDeviceVersion !== undefined &&
+    (typeof v.minimumDeviceVersion !== "string" || !/^\d+\.\d+\.\d+$/.test(v.minimumDeviceVersion))
+  )
+    throw new Error("invalid minimumDeviceVersion");
+  let commercial: RelayConfig["commercial"];
+  if (v.commercial !== undefined) {
+    const c = v.commercial as Record<string, unknown>;
+    const prices = c?.prices as Record<string, unknown>;
+    if (
+      !c ||
+      typeof c.returnUrl !== "string" ||
+      !c.returnUrl.startsWith("https://") ||
+      !prices ||
+      typeof prices.pro !== "string" ||
+      typeof prices.team !== "string" ||
+      !/^price_[A-Za-z0-9]+$/.test(prices.pro) ||
+      !/^price_[A-Za-z0-9]+$/.test(prices.team) ||
+      prices.pro === prices.team
+    )
+      throw new Error("invalid commercial configuration");
+    commercial = { prices: { pro: prices.pro, team: prices.team }, returnUrl: c.returnUrl };
+  }
   return {
+    minimumDeviceVersion: v.minimumDeviceVersion as string | undefined,
+    commercial,
     limits: relayLimits(v.limits),
     relayHost: v.relayHost,
     issuer: v.issuer,
