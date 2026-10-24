@@ -57,7 +57,7 @@ export async function nativePickerDriver(electron, output, until) {
   if (process.platform === "darwin") {
     // AppKit in this test's Electron main process. No System Events/TCC bypass,
     // external accessibility privileges, synthetic dialog or canned filePaths.
-    let lastObservation;
+    let lastObservation, lastMutation;
     const action = (operation, selected) =>
       electron
         .evaluate(
@@ -104,6 +104,9 @@ export async function nativePickerDriver(electron, output, until) {
             }
             if (!panel) return { visible: false, found, mainThread };
             const directory = text(id0(id0(panel, selector("directoryURL")), selector("path")), selector("UTF8String"));
+            const keyWindow = boolean(panel, selector("isKeyWindow"));
+            const applicationActive = boolean(app, selector("isActive"));
+            const nativeWindowNumber = count(panel, selector("windowNumber"));
             const defaultCell = id0(panel, selector("defaultButtonCell"));
             const defaultButton = defaultCell ? id0(defaultCell, selector("controlView")) : null;
             const defaultIsButton = defaultButton && kind(defaultButton, selector("isKindOfClass:"), cls("NSButton"));
@@ -112,12 +115,17 @@ export async function nativePickerDriver(electron, output, until) {
               : null;
             if (input.operation === "cancel") schedule(panel, "cancel:", null);
             else if (input.operation === "navigate") {
+              if (!mainThread) throw Error("AppKit activation must run on the main thread");
+              // Playwright DOM clicks do not establish native WindowServer focus.
+              // Activate only this test application and focus its actual panel.
+              objc.func("void objc_msgSend(void *, void *, bool)")(app, selector("activateIgnoringOtherApps:"), true);
+              schedule(panel, "makeKeyAndOrderFront:", null);
               const name = string(cls("NSString"), selector("stringWithUTF8String:"), input.selected);
               const url = id1(cls("NSURL"), selector("fileURLWithPath:"), name);
               schedule(panel, "setDirectoryURL:", url);
             } else if (input.operation === "choose") {
-              if (directory !== input.selected)
-                throw Error("Native folder chooser has not navigated to the selected directory");
+              if (directory !== input.selected || !keyWindow || !applicationActive)
+                throw Error("Native folder chooser must be navigated, active and key before Return");
               if (defaultIsButton && boolean(defaultButton, selector("isEnabled"))) {
                 schedule(defaultButton, "performClick:", null);
               } else {
@@ -141,7 +149,10 @@ export async function nativePickerDriver(electron, output, until) {
                   "unsigned short",
                 ]);
                 const characters = string(cls("NSString"), selector("stringWithUTF8String:"), "\r");
-                const windowNumber = count(panel, selector("windowNumber"));
+                const windowNumber = nativeWindowNumber;
+                if (!mainThread || !(Number(windowNumber) > 0))
+                  throw Error("Native Return requires a live main-thread window");
+                const postEvent = objc.func("void objc_msgSend(void *, void *, void *, bool)");
                 const timestamp = objc.func("double objc_msgSend(void *, void *)")(
                   id0(cls("NSProcessInfo"), selector("processInfo")),
                   selector("systemUptime"),
@@ -164,16 +175,28 @@ export async function nativePickerDriver(electron, output, until) {
                     36,
                   );
                   if (!event) throw Error("AppKit did not create the native Return event");
-                  schedule(app, "sendEvent:", event);
+                  // Let the actual native event loop deliver the keyboard input;
+                  // do not dispatch directly inside an inspector evaluation.
+                  postEvent(app, selector("postEvent:atStart:"), event, false);
                 }
               }
             }
-            return { visible: true, found, directory, mainThread, defaultTitle };
+            return {
+              visible: true,
+              found,
+              directory,
+              mainThread,
+              defaultTitle,
+              keyWindow,
+              applicationActive,
+              windowNumber: Number(nativeWindowNumber),
+            };
           },
           { operation, selected },
         )
         .then((result) => {
           lastObservation = { operation, ...result };
+          if (operation !== "inspect") lastMutation = lastObservation;
           return result;
         });
     return {
@@ -184,14 +207,17 @@ export async function nativePickerDriver(electron, output, until) {
       },
       async choose(selected) {
         if (!(await action("navigate", selected)).visible) throw Error("Native NSOpenPanel disappeared");
-        await until(async () => (await action("inspect")).directory === selected, "AppKit directory navigation");
+        await until(async () => {
+          const state = await action("inspect");
+          return state.directory === selected && state.keyWindow && state.applicationActive;
+        }, "AppKit directory navigation and actual native focus");
         if (!(await action("choose", selected)).visible) throw Error("Native NSOpenPanel disappeared");
       },
       async diagnostics() {
         try {
-          return await action("inspect");
+          return { current: await action("inspect"), lastMutation };
         } catch (error) {
-          return { lastObservation, error: String(error) };
+          return { lastObservation, lastMutation, error: String(error) };
         }
       },
     };

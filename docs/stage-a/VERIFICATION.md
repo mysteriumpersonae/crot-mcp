@@ -614,3 +614,13 @@ is recorded if native controls are unavailable. No Windows Pass is claimed.
 The Windows fixture also waits for the actual enabled Cancel control, not
 merely an initially visible dialog whose shell view may still be loading.
 The original 20-second readiness bound and all service assertions remain.
+
+
+`d3f3055` actual macOS now creates NSEvents without ABI errors, but Return did
+not dismiss the real panel; exact service registration correctly timed out.
+The follow-up explicitly activates only the test NSApplication, focuses its
+actual NSOpenPanel, requires native active/key state before confirmation and
+posts Return down/up through the real native event queue rather than directly
+dispatching from the inspector. Failure evidence includes actual native focus,
+window number and last mutation. No external Accessibility permission change,
+synthetic modal result, timeout extension or skipped assertion is introduced.
