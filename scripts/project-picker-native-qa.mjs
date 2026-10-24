@@ -115,12 +115,30 @@ try {
   }, "service registration and workspace switch after OS folder choice");
   assert.equal(service.core.workspace.root, selected);
   await page.getByText(selected, { exact: true }).first().waitFor();
+  // Registry/Core publication precedes durable product persistence/audit on
+  // Windows. Observe the real completed owner action before checking its receipt.
+  // An intermediate active project is not a successful operation acknowledgement.
+  await until(
+    async () => (await page.locator("#notice").textContent())?.trim() === "Changes applied.",
+    "native folder action completed after persistence and audit",
+  );
+  const active = (await list()).active;
   const journal = (await readFile(auditFile, "utf8"))
     .trim()
     .split("\n")
     .map((line) => JSON.parse(line));
-  assert.ok(journal.some((event) => event.operation === "projects.open"));
-  assert.ok(journal.some((event) => event.operation === "projects.select"));
+  assert.ok(
+    journal.some(
+      (event) =>
+        event.operation === "projects.open" && event.outcome === "success" && event.details?.project === active,
+    ),
+  );
+  assert.ok(
+    journal.some(
+      (event) =>
+        event.operation === "projects.select" && event.outcome === "success" && event.details?.project === active,
+    ),
+  );
   report.checks.push("Native choice (including spaces) registers, selects, changes real Core and refreshes shipped UI");
   report.checks.push("Real audit records projects.open and projects.select");
   assert.deepEqual(report.errors, []);

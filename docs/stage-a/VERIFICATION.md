@@ -624,3 +624,29 @@ posts Return down/up through the real native event queue rather than directly
 dispatching from the inspector. Failure evidence includes actual native focus,
 window number and last mutation. No external Accessibility permission change,
 synthetic modal result, timeout extension or skipped assertion is introduced.
+
+
+Actual `d3f3055` Windows Node20/22 native cancellation AND exact Core/UI folder
+selection succeeded. Qualification still FAILED because the fixture inspected
+the journal while the async projects.select persistence/audit was still in
+flight: registry/Core state becomes visible before its owner action returns.
+The follow-up waits for the shipped UI's real "Changes applied." response and
+then requires success audit records for BOTH operations tied to that exact
+active project ID. It does not drop audit checks or reinterpret intermediate
+state as acknowledgement.
+
+`642f3dc` actual macOS reported active/key before posting own-process NSEvents,
+but the remote panel still did not confirm selection. Apple's explicit
+NSSavePanel.ok discussion forbids programmatically triggering OK on macOS
+10.15+ (https://developer.apple.com/documentation/appkit/nssavepanel/ok(_:)).
+The next test driver uses native CoreGraphics Return ONLY after
+CGPreflightPostEventAccess confirms existing OS permission, while the exact
+test panel is active/key. It does not request, edit, grant or bypass TCC, replace
+an OS response, or skip acceptance. Missing permission is an explicit failure
+requiring an authorized UI-test desktop, not a fabricated Pass.
+
+Local follow-up full check passed: main 2313 tests (including two new delayed
+selection acknowledgement/audit-failure regressions), 222 host-inapplicable
+skips; extension 196 passed. The actual Linux GTK fixture also passed all
+three checks with the stronger successful exact-project audit assertions.
+This does not establish that macOS native input permission is available.

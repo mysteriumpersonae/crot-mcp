@@ -129,55 +129,29 @@ export async function nativePickerDriver(electron, output, until) {
               if (defaultIsButton && boolean(defaultButton, selector("isEnabled"))) {
                 schedule(defaultButton, "performClick:", null);
               } else {
-                // Since macOS 10.15 NSOpenPanel draws controls in an XPC service;
-                // its proxy window need not have a local defaultButtonCell.
-                // Deliver native Return to this panel's real window, not a
-                // guessed private selector or a synthesized modal return value.
-                const point = koffi.struct({ x: "double", y: "double" });
-                const keyEvent = objc.func("objc_msgSend", "void *", [
-                  "void *",
-                  "void *",
-                  "unsigned long",
-                  point,
-                  "unsigned long",
-                  "double",
-                  "long",
-                  "void *",
-                  "void *",
-                  "void *",
-                  "bool",
-                  "unsigned short",
-                ]);
-                const characters = string(cls("NSString"), selector("stringWithUTF8String:"), "\r");
-                const windowNumber = nativeWindowNumber;
-                if (!mainThread || !(Number(windowNumber) > 0))
-                  throw Error("Native Return requires a live main-thread window");
-                const postEvent = objc.func("void objc_msgSend(void *, void *, void *, bool)");
-                const timestamp = objc.func("double objc_msgSend(void *, void *)")(
-                  id0(cls("NSProcessInfo"), selector("processInfo")),
-                  selector("systemUptime"),
-                );
-                for (const type of [10, 11]) {
-                  const event = keyEvent(
-                    cls("NSEvent"),
-                    selector(
-                      "keyEventWithType:location:modifierFlags:timestamp:windowNumber:context:characters:charactersIgnoringModifiers:isARepeat:keyCode:",
-                    ),
-                    type,
-                    { x: 0, y: 0 },
-                    0,
-                    timestamp,
-                    windowNumber,
-                    null,
-                    characters,
-                    characters,
-                    false,
-                    36,
+                // Modern panel controls live in an XPC service. Apple forbids
+                // programmatic NSSavePanel.ok; own-process NSEvents do not
+                // establish real WindowServer input to those remote controls.
+                // Use supported native input only if the OS already allows it.
+                const cg = koffi.load("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics");
+                const permitted = cg.func("bool CGPreflightPostEventAccess(void)")();
+                if (!permitted)
+                  throw Error(
+                    "Native macOS UI input permission unavailable: trusted test desktop required; TCC is not changed or bypassed",
                   );
-                  if (!event) throw Error("AppKit did not create the native Return event");
-                  // Let the actual native event loop deliver the keyboard input;
-                  // do not dispatch directly inside an inspector evaluation.
-                  postEvent(app, selector("postEvent:atStart:"), event, false);
+                const createKey = cg.func("void *CGEventCreateKeyboardEvent(void *, unsigned short, bool)");
+                const post = cg.func("void CGEventPost(unsigned int, void *)");
+                const release = koffi
+                  .load("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation")
+                  .func("void CFRelease(void *)");
+                for (const down of [true, false]) {
+                  const event = createKey(null, 36, down);
+                  if (!event) throw Error("CoreGraphics did not create native Return");
+                  try {
+                    post(0, event);
+                  } finally {
+                    release(event);
+                  }
                 }
               }
             }

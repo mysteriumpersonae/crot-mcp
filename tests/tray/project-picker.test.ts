@@ -52,6 +52,42 @@ describe("native owner project folder workflow", () => {
     expect(await first).toBe(false);
     expect(await picker.open({ choose: choice, product: vi.fn().mockResolvedValue(success) })).toBe(true);
   });
+  it("does not acknowledge an intermediate workspace publication before selection persistence/audit finishes", async () => {
+    const picker = new ProjectFolderPicker();
+    let finish!: (result: typeof success) => void;
+    const selected = new Promise<typeof success>((resolve) => (finish = resolve));
+    const product = vi
+      .fn()
+      .mockResolvedValueOnce(success)
+      .mockImplementationOnce(() => selected);
+    let acknowledged = false;
+    const first = picker.open({ choose: choice, product }).then((result) => {
+      acknowledged = true;
+      return result;
+    });
+    await vi.waitFor(() => expect(product).toHaveBeenCalledTimes(2));
+    expect(acknowledged).toBe(false);
+    const competingChoice = vi.fn(choice);
+    expect(await picker.open({ choose: competingChoice, product })).toBe(false);
+    expect(competingChoice).not.toHaveBeenCalled();
+    finish(success);
+    expect(await first).toBe(true);
+    expect(acknowledged).toBe(true);
+  });
+  it("does not acknowledge success when post-switch persistence or audit later fails", async () => {
+    const picker = new ProjectFolderPicker();
+    let refuse!: (error: Error) => void;
+    const selected = new Promise<never>((_resolve, reject) => (refuse = reject));
+    const product = vi
+      .fn()
+      .mockResolvedValueOnce(success)
+      .mockImplementationOnce(() => selected);
+    const result = expect(picker.open({ choose: choice, product })).rejects.toThrow("selection audit refused");
+    await vi.waitFor(() => expect(product).toHaveBeenCalledTimes(2));
+    refuse(new Error("selection audit refused"));
+    await result;
+    expect(await picker.open({ choose: choice, product: vi.fn().mockResolvedValue(success) })).toBe(true);
+  });
   it("propagates real service errors and releases the dialog lock", async () => {
     const picker = new ProjectFolderPicker();
     const product = vi.fn().mockRejectedValue(new Error("workspace is busy"));
