@@ -650,3 +650,22 @@ selection acknowledgement/audit-failure regressions), 222 host-inapplicable
 skips; extension 196 passed. The actual Linux GTK fixture also passed all
 three checks with the stronger successful exact-project audit assertions.
 This does not establish that macOS native input permission is available.
+
+
+`95b6d12` actual macOS had existing CoreGraphics post-event permission and a
+key/active panel, but native Return still did not trigger selection. It is NOT
+reported as a missing permission or a successful native selection. The next
+driver uses an external, bounded native Accessibility helper: exact Electron
+PID, exact titled panel, a single enabled Open/Choose button and AXPress. The
+helper must already be AX-trusted, never grants/edits TCC, and runs outside the
+Electron main thread so querying its AX server cannot self-deadlock. Unknown,
+ambiguous or untrusted states fail explicitly; real service/UI/audit checks
+remain the only acceptance result.
+
+
+Actual `95b6d12` Windows Node20 AND Node22 jobs completed SUCCESS, including
+the real native chooser and the stronger completed acknowledgement/exact-project
+success audit assertions. This qualifies that native Windows workflow, NOT the
+still-missing Windows future-secret L1 policy.
+- https://github.com/crotMcp/crot/actions/runs/40143009644/job/121018491618
+- https://github.com/crotMcp/crot/actions/runs/40143009644/job/121018491598

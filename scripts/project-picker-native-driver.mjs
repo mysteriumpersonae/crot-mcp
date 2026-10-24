@@ -5,6 +5,7 @@ import path from "node:path";
 import process from "node:process";
 import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
+import { fileURLToPath, URL } from "node:url";
 const exec = promisify(execFile);
 export async function nativePickerDriver(electron, output, until) {
   if (process.platform === "linux") {
@@ -57,7 +58,8 @@ export async function nativePickerDriver(electron, output, until) {
   if (process.platform === "darwin") {
     // AppKit in this test's Electron main process. No System Events/TCC bypass,
     // external accessibility privileges, synthetic dialog or canned filePaths.
-    let lastObservation, lastMutation;
+    const mainPid = await electron.evaluate(() => process.pid);
+    let lastObservation, lastMutation, nativeAccessibility;
     const action = (operation, selected) =>
       electron
         .evaluate(
@@ -129,30 +131,10 @@ export async function nativePickerDriver(electron, output, until) {
               if (defaultIsButton && boolean(defaultButton, selector("isEnabled"))) {
                 schedule(defaultButton, "performClick:", null);
               } else {
-                // Modern panel controls live in an XPC service. Apple forbids
-                // programmatic NSSavePanel.ok; own-process NSEvents do not
-                // establish real WindowServer input to those remote controls.
-                // Use supported native input only if the OS already allows it.
-                const cg = koffi.load("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics");
-                const permitted = cg.func("bool CGPreflightPostEventAccess(void)")();
-                if (!permitted)
-                  throw Error(
-                    "Native macOS UI input permission unavailable: trusted test desktop required; TCC is not changed or bypassed",
-                  );
-                const createKey = cg.func("void *CGEventCreateKeyboardEvent(void *, unsigned short, bool)");
-                const post = cg.func("void CGEventPost(unsigned int, void *)");
-                const release = koffi
-                  .load("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation")
-                  .func("void CFRelease(void *)");
-                for (const down of [true, false]) {
-                  const event = createKey(null, 36, down);
-                  if (!event) throw Error("CoreGraphics did not create native Return");
-                  try {
-                    post(0, event);
-                  } finally {
-                    release(event);
-                  }
-                }
+                // The remote XPC controls require real supported Accessibility
+                // input from an external process, never forbidden panel.ok or
+                // same-process AX calls that could deadlock this main thread.
+                return { visible: true, needsAccessibility: true, directory, keyWindow, applicationActive };
               }
             }
             return {
@@ -185,13 +167,39 @@ export async function nativePickerDriver(electron, output, until) {
           const state = await action("inspect");
           return state.directory === selected && state.keyWindow && state.applicationActive;
         }, "AppKit directory navigation and actual native focus");
-        if (!(await action("choose", selected)).visible) throw Error("Native NSOpenPanel disappeared");
+        const result = await action("choose", selected);
+        if (!result.visible) throw Error("Native NSOpenPanel disappeared");
+        if (result.needsAccessibility) {
+          try {
+            const { stdout } = await exec(
+              process.execPath,
+              [fileURLToPath(new URL("./project-picker-native-macos.mjs", import.meta.url)), String(mainPid)],
+              { timeout: 10000, maxBuffer: 32768 },
+            );
+            nativeAccessibility = JSON.parse(stdout);
+            if (nativeAccessibility.status !== "pressed") throw Error("Native AX chooser was not pressed");
+          } catch (error) {
+            if (error.stdout) {
+              try {
+                nativeAccessibility = JSON.parse(error.stdout);
+              } catch {
+                /* bounded helper output only */
+              }
+            }
+            throw Error(
+              "Native chooser Accessibility: " +
+                JSON.stringify(
+                  nativeAccessibility ?? { error: String(error), stderr: String(error.stderr || "").slice(-1200) },
+                ),
+            );
+          }
+        }
       },
       async diagnostics() {
         try {
-          return { current: await action("inspect"), lastMutation };
+          return { current: await action("inspect"), lastMutation, nativeAccessibility };
         } catch (error) {
-          return { lastObservation, lastMutation, error: String(error) };
+          return { lastObservation, lastMutation, nativeAccessibility, error: String(error) };
         }
       },
     };
