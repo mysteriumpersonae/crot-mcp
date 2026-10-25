@@ -72,8 +72,6 @@ export async function nativePickerDriver(electron, output, until) {
             const cls = objc.func("void *objc_getClass(const char *)");
             const selector = objc.func("void *sel_registerName(const char *)");
             const id0 = objc.func("void *objc_msgSend(void *, void *)");
-            const id1 = objc.func("void *objc_msgSend(void *, void *, void *)");
-            const string = objc.func("void *objc_msgSend(void *, void *, const char *)");
             const text = objc.func("const char *objc_msgSend(void *, void *)");
             const boolean = objc.func("bool objc_msgSend(void *, void *)");
             const kind = objc.func("bool objc_msgSend(void *, void *, void *)");
@@ -116,26 +114,12 @@ export async function nativePickerDriver(electron, output, until) {
               ? text(id0(defaultButton, selector("title")), selector("UTF8String"))
               : null;
             if (input.operation === "cancel") schedule(panel, "cancel:", null);
-            else if (input.operation === "navigate") {
+            else if (input.operation === "focus") {
               if (!mainThread) throw Error("AppKit activation must run on the main thread");
               // Playwright DOM clicks do not establish native WindowServer focus.
               // Activate only this test application and focus its actual panel.
               objc.func("void objc_msgSend(void *, void *, bool)")(app, selector("activateIgnoringOtherApps:"), true);
               schedule(panel, "makeKeyAndOrderFront:", null);
-              const name = string(cls("NSString"), selector("stringWithUTF8String:"), input.selected);
-              const url = id1(cls("NSURL"), selector("fileURLWithPath:"), name);
-              schedule(panel, "setDirectoryURL:", url);
-            } else if (input.operation === "choose") {
-              if (directory !== input.selected || !keyWindow || !applicationActive)
-                throw Error("Native folder chooser must be navigated, active and key before Return");
-              if (defaultIsButton && boolean(defaultButton, selector("isEnabled"))) {
-                schedule(defaultButton, "performClick:", null);
-              } else {
-                // The remote XPC controls require real supported Accessibility
-                // input from an external process, never forbidden panel.ok or
-                // same-process AX calls that could deadlock this main thread.
-                return { visible: true, needsAccessibility: true, directory, keyWindow, applicationActive };
-              }
             }
             return {
               visible: true,
@@ -162,18 +146,16 @@ export async function nativePickerDriver(electron, output, until) {
         await until(async () => !(await action("inspect")).visible, "AppKit cancellation");
       },
       async choose(selected) {
-        if (!(await action("navigate", selected)).visible) throw Error("Native NSOpenPanel disappeared");
+        if (!(await action("focus")).visible) throw Error("Native NSOpenPanel disappeared");
         await until(async () => {
           const state = await action("inspect");
-          return state.directory === selected && state.keyWindow && state.applicationActive;
-        }, "AppKit directory navigation and actual native focus");
-        const result = await action("choose", selected);
-        if (!result.visible) throw Error("Native NSOpenPanel disappeared");
-        if (result.needsAccessibility) {
+          return state.keyWindow && state.applicationActive;
+        }, "AppKit actual native chooser focus");
+        {
           try {
             const { stdout } = await exec(
               process.execPath,
-              [fileURLToPath(new URL("./project-picker-native-macos.mjs", import.meta.url)), String(mainPid)],
+              [fileURLToPath(new URL("./project-picker-native-macos.mjs", import.meta.url)), String(mainPid), selected],
               { timeout: 10000, maxBuffer: 32768 },
             );
             nativeAccessibility = JSON.parse(stdout);

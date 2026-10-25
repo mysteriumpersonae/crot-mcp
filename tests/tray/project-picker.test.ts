@@ -113,3 +113,16 @@ describe("native Accessibility panel identity", () => {
     expect(isProjectChooser(String(role), String(title), String(description))).toBe(expected);
   });
 });
+
+it.each([
+  ["AXSheet", "", "go to the folder:", true],
+  ["AXWindow", "Go to Folder", "", true],
+  ["AXDialog", "Go to the folder", "", true],
+  ["AXTextField", "", "go to folder", false],
+  ["AXSheet", "", "go to folder extra", false],
+  ["AXSheet", "Another dialog", "go to folder", false],
+])("requires exact native Go to Folder dialog identity: %s %s %s", async (role, title, description, expected) => {
+  const { isGoToFolder }: { isGoToFolder: (role: string, title: string, description: string) => boolean } =
+    await import(pathToFileURL(path.resolve("scripts/project-picker-native-scope.mjs")).href);
+  expect(isGoToFolder(String(role), String(title), String(description))).toBe(expected);
+});

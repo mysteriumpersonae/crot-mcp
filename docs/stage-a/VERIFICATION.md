@@ -680,3 +680,22 @@ when title is empty; arbitrary buttons, other windows, conflicting titles and
 substring labels remain rejected. Eight host-independent regressions cover
 this exact identity rule. The exact-PID, single enabled button, AX trust and
 real Core/UI/audit requirements are unchanged. Native CI remains required.
+
+
+Actual `14f3c49` macOS AXPress reached the real OS callback, but correctly FAILED
+exact-path acceptance: the OS still displayed Downloads although its in-process
+proxy directoryURL had been set to the fixture folder. The strict Core assertion
+caught the mismatch; this was never reported as Pass. The follow-up removes
+that proxy-based navigation and uses native Go to Folder (authorized AX keyboard
+shortcut), edits only the focused field whose ancestry identifies that exact
+native dialog, confirms navigation and presses the actual Open button. It keeps
+exact Core/UI/acknowledgement/audit assertions and adds six Go to Folder identity
+regressions. No injected filePaths or OS response is introduced.
+
+Local follow-up: `npm run check` passed (main 2327 passed / 222 skipped;
+extension 196 passed), followed by real GTK native chooser 3 checks / 0 errors.
+The key-stroke cleanup attempts every held key release even if another release
+fails. Lint and real GTK were repeated successfully after that cleanup change.
+macOS Go to Folder and head-specific Windows results still require actual CI;
+Linux GTK success does not qualify them or the missing general Linux/Windows
+future-secret L1 barrier. Stage A remains WIP.

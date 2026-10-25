@@ -2,11 +2,22 @@
 import process from "node:process";
 import { Buffer } from "node:buffer";
 import koffi from "koffi";
-import { isProjectChooser } from "./project-picker-native-scope.mjs";
+import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
+import { isProjectChooser, isGoToFolder } from "./project-picker-native-scope.mjs";
 const pid = Number(process.argv[2]);
+const selected = process.argv[3];
 const report = { status: "failed", nodes: [] };
 try {
-  if (process.platform !== "darwin" || !Number.isSafeInteger(pid) || pid <= 0)
+  if (
+    process.platform !== "darwin" ||
+    !Number.isSafeInteger(pid) ||
+    pid <= 0 ||
+    typeof selected !== "string" ||
+    !path.isAbsolute(selected) ||
+    selected.includes("\0") ||
+    selected.length > 4096
+  )
     throw Error("Expected a live test Electron PID on macOS");
   const ax = koffi.load("/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices");
   if (!ax.func("bool AXIsProcessTrusted(void)")())
@@ -91,33 +102,115 @@ try {
   try {
     if (ax.func("int AXUIElementSetMessagingTimeout(void *, float)")(app, 1) !== 0)
       throw Error("Native AX messaging bound unavailable");
-    const queue = children(app, "AXWindows").map((node) => ({ node, inside: false }));
-    for (let cursor = 0; cursor < queue.length; cursor++) {
-      if (queue.length > 512) throw Error("Native AX traversal bound exceeded");
-      const { node, inside } = queue[cursor],
-        identity = String(node);
-      if (seen.has(identity)) continue;
-      seen.add(identity);
-      const role = label(node, "AXRole"),
-        title = label(node, "AXTitle"),
-        description = label(node, "AXDescription");
-      const scope = inside || isProjectChooser(role, title, description);
-      if (report.nodes.length < 48)
-        report.nodes.push({ role, title: title.slice(0, 100), description: description.slice(0, 100), scope });
-      if (
-        scope &&
-        role === "AXButton" &&
-        ["Open", "Choose", "Select Folder"].includes(title || description) &&
-        enabled(node)
-      )
-        buttons.push(node);
-      for (const name of ["AXChildren", "AXSheets"])
-        for (const child of children(node, name)) queue.push({ node: child, inside: scope });
+    const scan = () => {
+      seen.clear();
+      buttons.length = 0;
+      report.nodes = [];
+      const queue = children(app, "AXWindows").map((node) => ({ node, inside: false }));
+      for (let cursor = 0; cursor < queue.length; cursor++) {
+        if (queue.length > 512) throw Error("Native AX traversal bound exceeded");
+        const { node, inside } = queue[cursor],
+          identity = String(node);
+        if (seen.has(identity)) continue;
+        seen.add(identity);
+        const role = label(node, "AXRole"),
+          title = label(node, "AXTitle"),
+          description = label(node, "AXDescription");
+        const scope = inside || isProjectChooser(role, title, description);
+        if (report.nodes.length < 48)
+          report.nodes.push({ role, title: title.slice(0, 100), description: description.slice(0, 100), scope });
+        if (
+          scope &&
+          role === "AXButton" &&
+          ["Open", "Choose", "Select Folder"].includes(title || description) &&
+          enabled(node)
+        )
+          buttons.push(node);
+        for (const name of ["AXChildren", "AXSheets"])
+          for (const child of children(node, name)) queue.push({ node: child, inside: scope });
+      }
+      return buttons;
+    };
+    const postKey = ax.func("int AXUIElementPostKeyboardEvent(void *, unsigned short, unsigned short, bool)");
+    const keyboard = (code, down, character = 0) => {
+      const result = postKey(app, character, code, down);
+      if (result !== 0) throw Error("Native AX keyboard event refused: " + result);
+    };
+    const focusedGoField = () => {
+      const field = value(app, "AXFocusedUIElement");
+      if (!field) return null;
+      owned.push(field);
+      const role = label(field, "AXRole");
+      if (!["AXTextField", "AXComboBox"].includes(role)) return null;
+      let parent = field;
+      const ancestry = [];
+      for (let depth = 0; depth < 16; depth++) {
+        const role = label(parent, "AXRole"),
+          title = label(parent, "AXTitle"),
+          description = label(parent, "AXDescription");
+        ancestry.push({ role, title, description });
+        if (isGoToFolder(role, title, description)) {
+          report.goFieldAncestry = ancestry;
+          return field;
+        }
+        const next = value(parent, "AXParent");
+        if (!next) break;
+        owned.push(next);
+        parent = next;
+      }
+      report.focusedAncestry = ancestry;
+      return null;
+    };
+    report.phase = "open native Go to Folder";
+    scan();
+    if (buttons.length !== 1) throw Error("Expected one enabled Open button in the exact chooser before navigation");
+    const stroke = (events) => {
+      const held = [],
+        errors = [];
+      try {
+        for (const [code, character = 0] of events) {
+          keyboard(code, true, character);
+          held.push([code, character]);
+        }
+      } catch (error) {
+        errors.push(error);
+      } finally {
+        // A refused release must not leave the remaining modifiers held down.
+        for (const [code, character] of held.reverse()) {
+          try {
+            keyboard(code, false, character);
+          } catch (error) {
+            errors.push(error);
+          }
+        }
+      }
+      if (errors.length)
+        throw new AggregateError(errors, "Native AX keyboard stroke failed: " + errors.map(String).join("; "));
+    };
+    stroke([[55], [56], [5, 71]]);
+    let field;
+    const goDeadline = Date.now() + 3500;
+    while (Date.now() < goDeadline && !(field = focusedGoField())) await delay(100);
+    if (!field) throw Error("Native Go to Folder input unavailable inside its exact dialog");
+    report.phase = "enter exact folder in native Go to Folder";
+    const setValue = ax.func("int AXUIElementSetAttributeValue(void *, void *, void *)");
+    const result = setValue(field, key("AXValue"), key(selected));
+    if (result !== 0 || label(field, "AXValue") !== selected)
+      throw Error("Native Go to Folder edit refused the exact fixture path: " + result);
+    stroke([[36, 13]]);
+    report.phase = "confirm native folder selection";
+    const openDeadline = Date.now() + 3500;
+    let ready = false;
+    while (Date.now() < openDeadline) {
+      await delay(100);
+      if (!focusedGoField() && scan().length === 1) {
+        ready = true;
+        break;
+      }
     }
-    if (buttons.length !== 1)
-      throw Error("Expected one enabled confirmation button inside the exact native chooser; found " + buttons.length);
-    const result = press(buttons[0], key("AXPress"));
-    if (result !== 0) throw Error("Native AXPress refused: " + result);
+    if (!ready) throw Error("Native Go to Folder did not finish navigation before Open");
+    const pressed = press(buttons[0], key("AXPress"));
+    if (pressed !== 0) throw Error("Native AXPress refused: " + pressed);
     report.status = "pressed";
     report.pid = pid;
   } finally {
