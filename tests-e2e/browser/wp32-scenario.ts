@@ -83,15 +83,18 @@ export async function remoteBrowserScenario(requireL1 = false): Promise<void> {
         await call("fs_write_file", { path: "remote-output.txt", content: "WP32_FILE_CANARY" });
         expect(h.approvals.length).toBe(count + 1);
         await call("fs_read_file", { path: "remote-output.txt" });
-        for (const name of ["git_status", "git_diff", "git_log"]) await call(name);
-        await call("git_add", { paths: ["remote-output.txt"] });
-        // A distinct commit per matrix row, with the mutation itself sent through remote MCP.
+        // AD-58: broad permissions/approval do not authorize host Git hooks
+        // against live source. Core file writes remain the positive project route.
+        for (const [name, args] of [
+          ["git_status", {}],
+          ["git_diff", {}],
+          ["git_log", {}],
+          ["git_add", { paths: ["remote-output.txt"] }],
+          ["git_commit", { message: "must-not-run-host-hook" }],
+          ["git_branch_create", { name: "must-not-create" }],
+        ] as const)
+          expect(JSON.stringify(await c.call(name, args))).toContain("PERMISSION_DENIED");
         await call("fs_write_file", { path: "remote-output.txt", content: "WP32_FILE_CANARY:" + version + preset });
-        await call("git_add", { paths: ["remote-output.txt"] });
-        count = h.approvals.length;
-        await call("git_commit", { message: "remote " + version + " " + preset });
-        expect(h.approvals.length).toBe(count + 1);
-        await call("git_branch_create", { name: "wp32-" + version + "-" + preset });
         count = h.approvals.length;
         const shell = await c.call("shell_run", { script: "printf WP32_L1_CANARY" });
         expect(h.approvals.length).toBe(count + 1);

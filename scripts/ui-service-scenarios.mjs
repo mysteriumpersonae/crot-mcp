@@ -1,3 +1,4 @@
+import { URL } from "node:url";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
@@ -126,13 +127,14 @@ export async function runServiceScenarios({ real, evaluate, until, size, screens
     throw Error("Workspace write failed");
   await click("Read file");
   await section("Terminal");
-  await fill("Command", "git init");
+  await fill("Command", `"${process.execPath}" -e "console.log('AD58 scratch command')"`);
   await click("Run");
-  await until("document.body.textContent.includes('stdout')");
+  if (state.confinement.available) await until("document.body.textContent.includes('AD58 scratch command')");
+  else await until("document.body.textContent.includes('no unconfined fallback')");
   await delay(1600);
   await section("Git");
   await click("Status");
-  await until("document.querySelector('main pre')?.textContent.includes('proof.txt')");
+  await until("document.body.textContent.includes('Project or agent policy refuses the operation')");
   await screenshot("04-git-real-service");
   await section("Connectors");
   await until(
@@ -155,8 +157,10 @@ export async function runServiceScenarios({ real, evaluate, until, size, screens
   await section("MCP Servers");
   await click("Add server");
   await fill("Server name", "Real fixture MCP");
-  await fill("Command", process.execPath);
-  await fill("Arguments (JSON array)", JSON.stringify([path.resolve("tests/fixtures/product-mcp.mjs")]));
+  await evaluate(
+    "(()=>{const s=document.querySelector('select[aria-label=Transport]');s.value='http';s.dispatchEvent(new Event('change'));})()",
+  );
+  await fill("Server URL", new URL("/mcp-fixture", state.endpoint).href);
   await click("Add server", "dialog button");
   await until("!document.getElementById('action-dialog').open");
   await click("Connect");
@@ -191,13 +195,18 @@ export async function runServiceScenarios({ real, evaluate, until, size, screens
   await section("Terminal");
   await fill("Command", `"${process.execPath}" -e "setInterval(()=>{},1000)"`);
   await click("Run");
-  await until("document.querySelector('main pre')?.textContent.includes('id')");
-  await section("Tasks");
-  await until("document.body.textContent.includes('Running')");
-  await click("Cancel");
-  await confirm();
-  await until("document.body.textContent.includes('Cancelled')");
-  await screenshot("07-task-cancel-real-service");
+  if (state.confinement.available) {
+    await until("document.querySelector('main pre')?.textContent.includes('id')");
+    await section("Tasks");
+    await until("document.body.textContent.includes('Running')");
+    await click("Cancel");
+    await confirm();
+    await until("document.body.textContent.includes('Cancelled')");
+    await screenshot("07-task-cancel-real-service");
+  } else {
+    await until("document.body.textContent.includes('no unconfined fallback')");
+    await screenshot("07-terminal-fail-closed-real-service");
+  }
   await section("Monitoring");
   await fill("Event type", "filesystem.write_file");
   await click("Apply filters");
@@ -264,10 +273,12 @@ export async function runServiceScenarios({ real, evaluate, until, size, screens
       {
         status: "passed",
         scope:
-          "Shipped Chromium UI → test-only IPC bridge → real isolated CrotService; projects/files/git/terminal/connector HTTP/MCP stdio/tasks cancellation/real audit/streamed chat with guarded tool approval",
+          "Shipped Chromium UI → test-only IPC bridge → real isolated CrotService; projects/checked files/Git refusal/terminal native-or-fail-closed/connector HTTP/MCP HTTP/real audit/streamed chat with guarded tool approval",
         ...(await real.verify()),
         ...chatEvidence,
         ownerSecretConfirmationAndRevocation: true,
+        nativeTerminalCancellationExecuted: state.confinement.available,
+        terminalMissingNativeRefusal: !state.confinement.available,
       },
       null,
       2,

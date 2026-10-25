@@ -73,14 +73,16 @@ it(
     let pid: number | undefined;
     const start = () => call("process_start", { command: process.execPath, args: ["-e", "setInterval(()=>{},1000)"] });
     if (status.confinement.available) {
-      const probe = await call("process_exec", {
+      const probe = await call("process_start", {
         command: process.execPath,
         args: [
           "-e",
-          `try{require('fs').readFileSync(${JSON.stringify(path.join(dirs.workspace, ".env"))});process.exit(9)}catch(e){if(!['EACCES','EPERM','ENOENT'].includes(e.code))throw e;console.log('denied')}`,
+          `try{require('fs').readFileSync(${JSON.stringify(path.join(dirs.workspace, ".env"))});process.exit(9)}catch(e){if(!['EACCES','EPERM','ENOENT'].includes(e.code))throw e;console.log('AD58-DENIED')}`,
         ],
       });
-      expect(probe.exitCode).toBe(0);
+      await waitFor(async () =>
+        JSON.stringify(await call("process_read_output", { id: probe.id })).includes("AD58-DENIED"),
+      );
       const started = await start();
       pid = started.pid as number;
       expect(isAlive(pid)).toBe(true);

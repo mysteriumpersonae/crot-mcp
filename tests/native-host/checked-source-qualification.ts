@@ -47,10 +47,14 @@ export async function qualifyCheckedSource(): Promise<void> {
       {
         checkedCommands: true,
         platform: native.platform,
-        protectedPaths: [state],
+        protectedPaths: [path.join(state, "control-canary")],
         secretPaths: [path.join(state, "control-canary")],
       },
     );
+    if (!core.confinementStatus().available)
+      throw new Error(
+        "AD58 native preparation unavailable: " + JSON.stringify({ status: core.confinementStatus(), logs }),
+      );
     expect(core.confinementStatus(), logs.join("\n")).toMatchObject({
       available: true,
       sourceAccess: "core-only",
@@ -80,7 +84,18 @@ export async function qualifyCheckedSource(): Promise<void> {
     // The SAME actor is already running when the owner creates/reclassifies secrets.
     await writeFile(path.join(d.workspace, ".ENVbackup"), "FUTURE-CANARY");
     await writeFile(path.join(d.workspace, "future.KEY"), "KEY-CANARY");
-    await rename(path.join(d.workspace, "public.txt"), path.join(d.workspace, ".env.atomic"));
+    // Windows may pin an existing protected identity against OWNER rename.
+    // A safe sharing refusal is not an actor bypass. Core commits drain that
+    // lease below; Linux/macOS also exercise an actual live reclassification.
+    try {
+      await rename(path.join(d.workspace, "public.txt"), path.join(d.workspace, ".env.atomic"));
+    } catch (cause) {
+      if (
+        process.platform !== "win32" ||
+        !["EBUSY", "EPERM", "EACCES"].includes((cause as NodeJS.ErrnoException).code ?? "")
+      )
+        throw cause;
+    }
     await writeFile(path.join(d.workspace, ".env.atomic"), "RECLASSIFIED-CANARY");
     await writeFile(path.join(d.workspace, "public.txt"), "host-public-replacement");
     child.stdin!.write("go\n");
@@ -119,6 +134,16 @@ export async function qualifyCheckedSource(): Promise<void> {
     await core.filesystem.move(testContext, { from: "atomic.tmp", to: "public.txt", overwrite: true });
     expect(await readFile(path.join(d.workspace, "public.txt"), "utf8")).toBe("checked-after");
     expect(await readFile(path.join(state, "control-canary"), "utf8")).toBe("CONTROL-CANARY");
+    const next = await core.processes.exec(testContext, {
+      command: process.platform === "win32" ? "node" : process.execPath,
+      args: [
+        "-e",
+        "const f=require('fs');if(f.existsSync('private-only.txt'))process.exit(8);f.writeFileSync('fresh.txt','ok');console.log('AD58-FRESH')",
+      ],
+    });
+    expect(next.exitCode).toBe(0);
+    expect(next.stdout).toContain("AD58-FRESH");
+    await expect(access(path.join(d.workspace, "fresh.txt"))).rejects.toMatchObject({ code: "ENOENT" });
   } finally {
     await child?.terminate("force");
     await core?.shutdown();

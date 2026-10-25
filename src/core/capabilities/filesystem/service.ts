@@ -51,6 +51,7 @@ export interface FileSystemServiceDeps {
   readonly guard: Pick<ExecutionGuard, "run">;
   /** AD-58 service-only checked source semantics; no child can mutate this tree. */
   readonly checkedSource?: ProjectSecretPolicy;
+  readonly sourceMutation?: <T>(execute: () => Promise<T>) => Promise<T>;
   readonly limits: Pick<Limits, "maxReadBytes">;
   /** Serialises writes into Git directories with git.read operations on them (ARCHITECTURE.md §27, AD-1). */
   readonly gitLock?: GitMetadataLock;
@@ -84,7 +85,14 @@ export class FileSystemService {
                     )
                       throw new CrotError("PERMISSION_DENIED", "AD-58 source identity or secret boundary changed");
                   }
-                  return execute();
+                  const capabilities = Array.isArray(op.capability) ? op.capability : [op.capability];
+                  return capabilities.includes("filesystem.write") && deps.sourceMutation
+                    ? deps.sourceMutation(async () => {
+                        if (context.signal?.aborted)
+                          throw new CrotError("OPERATION_FAILED", "Source operation cancelled during actor drain");
+                        return execute();
+                      })
+                    : execute();
                 });
                 this.sourceTail = next.catch(() => undefined);
                 return next;

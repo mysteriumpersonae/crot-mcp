@@ -336,7 +336,16 @@ export class CrotCore {
       guard,
       limits: config.limits,
       gitLock,
-      ...(options.checkedCommands ? { checkedSource: projectSecrets } : {}),
+      ...(options.checkedCommands
+        ? {
+            checkedSource: projectSecrets,
+            sourceMutation: <T>(execute: () => Promise<T>): Promise<T> => {
+              if (!confinement.withSourceMutation)
+                throw new CrotError("CONFINEMENT_FAILED", "AD-58 source transaction is unavailable");
+              return confinement.withSourceMutation(execute);
+            },
+          }
+        : {}),
     });
     // Children of process tools and Git start from the allowlisted environment (AD-18); Docker keeps its own list (AD-3).
     const childEnvironment = createChildEnvironment(
@@ -383,6 +392,7 @@ export class CrotCore {
       modeFor: (context) => permissions.modeFor(context),
     });
     const git = new GitService({
+      refuseUncheckedSource: options.checkedCommands ?? false,
       workspace,
       guard,
       platform,
@@ -399,7 +409,22 @@ export class CrotCore {
       secretPaths,
     });
     const browser = new BrowserService({
-      files: new BrowserFiles(workspace, uploadRoot, downloadRoot, platform.privateFiles),
+      files: new BrowserFiles(
+        workspace,
+        uploadRoot,
+        downloadRoot,
+        platform.privateFiles,
+        options.checkedCommands
+          ? {
+              policy: projectSecrets,
+              mutate: <T>(execute: () => Promise<T>): Promise<T> => {
+                if (!confinement.withSourceMutation)
+                  throw new CrotError("CONFINEMENT_FAILED", "AD-58 source transaction unavailable");
+                return confinement.withSourceMutation(execute);
+              },
+            }
+          : undefined,
+      ),
       onDialogDismissed: (event) => {
         void audit
           .record({

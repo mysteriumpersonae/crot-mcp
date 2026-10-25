@@ -1,3 +1,6 @@
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { z } from "zod";
 /** Test-only HTTP replacement for Electron IPC. All data/actions use an isolated real CrotService. */
 import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises";
 import { execFile } from "node:child_process";
@@ -111,6 +114,23 @@ export async function serviceHarness() {
       return { approvedChatWrite: true, registeredChatAgent: true };
     },
     async handle(req, res, pathname) {
+      if (pathname === "/mcp-fixture") {
+        const server = new McpServer({ name: "ui-http-fixture", version: "1" });
+        server.registerTool("echo", { inputSchema: { text: z.string() } }, async ({ text }) => ({
+          content: [{ type: "text", text }],
+        }));
+        const transport = new StreamableHTTPServerTransport({
+          sessionIdGenerator: undefined,
+          enableJsonResponse: true,
+        });
+        res.on("close", () => {
+          void transport.close();
+          void server.close();
+        });
+        await server.connect(transport);
+        await transport.handleRequest(req, res);
+        return true;
+      }
       if (pathname.startsWith("/chat-provider/")) {
         if (pathname.endsWith("/models")) {
           res
@@ -173,7 +193,9 @@ export async function serviceHarness() {
     },
     async verify() {
       const r = await control.request("projects.list");
-      return { projects: r.projects.length, active: r.active, endpoint };
+      const result = await tool.call("crot_status", {});
+      const status = JSON.parse(result.content[0].text);
+      return { projects: r.projects.length, active: r.active, endpoint, confinement: status.confinement };
     },
     async close() {
       releaseInspection?.();

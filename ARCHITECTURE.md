@@ -6013,3 +6013,24 @@ remains unchanged after private command writes. Missing/failed L1 refuses
 before any process, in all modes. Run actual Linux/macOS/Windows cases and all
 11 existing CI jobs; do not promote PR #5 until observed green results and the
 new gates pass. No merge by the agent; B/C remain after Stage A.
+
+AD-58 transaction detail: checked filesystem mutations serialize with command
+admission. Before source I/O the native command generation is drained and
+closed (including Windows source-identity sharing guards), then its private
+scratch is removed. Any drain/restore/cleanup failure refuses the source write
+and further commands. A later command receives a fresh empty generation; a
+resolved executable from an older generation is refused. Reads do not require
+this rotation. This deliberately interrupts running commands on a checked file
+mutation; scratch artifacts are discarded, never imported. On Windows trusted
+owner rename of a pinned source identity during an active lease may safely fail
+with a sharing error; Core rename/atomic replacement occurs after verified drain,
+not by relaxing the actor ACL. Native tests must prove post-commit fresh command
+admission as well as the negative source/control probes.
+
+Browser file import uses the same checked source-mutation barrier, including
+identity/secret revalidation after actor drain. Protected-service uploads refuse
+multiple-link source descriptors so a public hardlink alias cannot bypass the
+source file policy. Legacy raw BrowserFiles component fixtures are not protected
+service acceptance. Windows scratch provisioning creates a new private child
+through the native ACL provider rather than asking it to adopt/re-ACL mkdtemp's
+already-existing container; readiness verifies that new child's owner-only ACL.

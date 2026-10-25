@@ -346,6 +346,10 @@ export interface ConfinementScope {
  * operation.
  */
 export interface CoreConfinement {
+  /** AD-58 composition only: serialize source writes with launch admission,
+   * drain actors and release native source guards before executing checked I/O.
+   * Failure must prevent I/O. Native backend interfaces do not grant this hook. */
+  withSourceMutation?<T>(execute: () => Promise<T>): Promise<T>;
   /** Optional sticky post-admission failure guard. Does not run readiness checks. */
   assertAdmission?(): void;
   /** Last reported state (no checks run). */
