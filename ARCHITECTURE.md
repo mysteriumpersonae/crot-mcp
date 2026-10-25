@@ -6034,3 +6034,62 @@ source file policy. Legacy raw BrowserFiles component fixtures are not protected
 service acceptance. Windows scratch provisioning creates a new private child
 through the native ACL provider rather than asking it to adopt/re-ACL mkdtemp's
 already-existing container; readiness verifies that new child's owner-only ACL.
+
+### AD-59. Explicit checked command artifact export and Stage B composition
+
+Owner-approved extension of AD-58: `syncWorkspaceArtifacts` is an explicit owner
+RPC with selected portable relative file paths. No automatic source import,
+mirroring, shell execution, deletion synchronization or overwrite by default.
+AD-58's entire-source native denial remains mandatory. Core authorizes/audits
+all destination paths, serializes checked source operations with command
+admission, drains native actors, then reads a bounded selection (64 files,
+256 MiB total) through descriptor-checked regular single-link handles. Secret
+masks apply to every path component without owner opt-in exceptions for export;
+`.git`, `.crot`, traversal/ADS/ambiguous Windows paths and links are refused.
+Destination ancestors may not be symlinks. Each destination is revalidated,
+created exclusively unless replacement was explicitly requested, and validated
+before truncation. Binary bytes are preserved. This is not an atomic multi-file
+transaction: partial completed files remain visible and audited. On failure,
+scratch is retained and command/source-write admission is blocked; retry export
+with remaining files or explicit replacement. Native drain failure remains
+sticky fail-closed. Pending failed-export directories are not removed by orderly
+shutdown; automatic resume after a new service process is not yet implemented.
+A successful export ends the scratch generation, including unselected files;
+the UI must warn users to export useful results before other Core writes.
+
+Stage B connector manifests are typed data owned by CROT, not dynamic code
+plugins. Fixed provider endpoints use Core network guards, bounded responses
+and encrypted credentials. Local probes and Custom Skill commands use Core
+process guards/native L1 with literal argv substitution; nested working dirs
+remain explicitly unsupported by AD-58. Remotion detection requires Node and a
+`remotion` dependency declaration in the active project's checked package.json;
+this alone does not prove dependencies have been installed or a video rendered.
+LLM configuration verification uses the actual guarded model inventory APIs;
+OpenAI-compatible Local HTTP includes Ollama's `/v1` endpoint, not an unverified
+claim of native OpenCode server API compatibility. Streaming/tools/ask/cancel
+continue to use the Stage A ChatRuntime, never a second unguarded client.
+
+Browser modes are mutually exclusive: active tab of last-focused window,
+target-domain background, or unrestricted background (subject to existing Core
+permissions). The extension verifies real tab facts, exact/subdomain host matches
+and explicit blocklist/preset before tab actions. Policy is owner-only,
+persisted/audited before publishing, restored on project/Core replacement and
+attached by Core to requests; agent tool schemas cannot set it. The preset is a
+small explicit sign-in/payment domain list, not classification of every bank.
+These are top-level tab policies, not a network firewall for all page subresources.
+Existing profiles retain the previous background behavior until owner selection.
+
+System check reports actual Node runtime, native L1 readiness, browser bridge
+state, guarded project stack/listeners and an actual ephemeral loopback bind /
+release. It does not infer fixed-port availability from absent project listeners.
+The four-step resumable owner wizard uses native folder selection, real agent
+config copying, an existing approval profile and an audited Core filesystem ping.
+It does not claim the external agent has connected just because Core responds.
+
+Domain migration is opt-in via matched `*.networking.example.json` production
+profiles (`mcp.crot.networking`, `auth.crot.networking`). Existing `crot.network`
+profiles remain supported. Issuer/audience pins are not widened; DNS/TLS/provider
+provisioning and deliberate re-pairing are operator actions, not fabricated CI.
+Stage B remains unqualified until its new native tests, UI/service tests and all
+11 exact-head checks actually pass. PR #5 was merged with explicit owner approval;
+PR #6 must not be merged without further instruction.

@@ -1,3 +1,6 @@
+import { checkLoopbackPort } from "./system-check.js";
+import { parseTabPolicy, type BrowserTabPolicy } from "../core/capabilities/browser/tab-policy.js";
+import { CONNECTOR_MANIFESTS, SkillSchema, type CustomSkill } from "./connector-manifests.js";
 /** AD-40: service-owned product state. Metadata and encrypted request/credential vault are separate. */
 import { ChatRuntime, CHAT_ENDPOINTS, chatEndpoint, type ChatProviderConfig } from "./chat-runtime.js";
 import type { ChatProvider } from "./chat-protocol.js";
@@ -24,18 +27,7 @@ import type { SecretStore } from "./secrets/store.js";
 import { writePrivateFileAtomic } from "./secrets/backends.js";
 import { parseProduct, type ProductMethod } from "./product-protocol.js";
 
-export const CONNECTOR_IDS = [
-  "GitHub",
-  "GitLab",
-  "ElevenLabs",
-  "YouTube",
-  "TikTok",
-  "Notion",
-  "Google Drive",
-  "Slack",
-  "Custom HTTP API",
-  "FFmpeg Media Pipeline",
-] as const;
+export const CONNECTOR_IDS = CONNECTOR_MANIFESTS.map((m) => m.id);
 interface Project {
   id: string;
   name: string;
@@ -108,6 +100,10 @@ interface State {
   connectors: Connector[];
   servers: McpServer[];
   tasks: Task[];
+  onboarding?: { completedStep: number; updatedAt: string };
+  browserPolicy?: BrowserTabPolicy;
+  browserPolicyPrevious?: BrowserTabPolicy;
+  skills?: CustomSkill[];
   chatProviders?: Partial<Record<ChatProvider, ChatProviderConfig>>;
   security?: RuntimePolicy;
   /** Uncommitted policy transaction: restart must restore this prior policy. */
@@ -189,6 +185,7 @@ class PipeTransport implements Transport {
 
 export class ProductRuntime {
   private state!: State;
+  private appliedTabPolicy: BrowserTabPolicy | undefined;
   private vault: Vault = { credentials: {}, replays: {} };
   private key!: Buffer;
   private writes: Promise<void> = Promise.resolve();
@@ -239,6 +236,11 @@ export class ProductRuntime {
       : { version: 1, active: "", projects: [], agents: [], connectors: [], servers: [], tasks: [] };
     if (r.state.version !== 1 || !Array.isArray(r.state.projects) || !Array.isArray(r.state.tasks))
       fail("Invalid product state; restore service state");
+    if (r.state.browserPolicyPrevious) {
+      r.state.browserPolicy = r.state.browserPolicyPrevious;
+      delete r.state.browserPolicyPrevious;
+    }
+    r.appliedTabPolicy = r.state.browserPolicy;
     if (r.state.securityPrevious) {
       host.core().permissions.runtime.replace(r.state.securityPrevious);
       r.state.security = host.core().permissions.runtime.policy;
@@ -273,6 +275,7 @@ export class ProductRuntime {
     const active = r.state.projects.find((p) => p.id === r.state.active);
     if (!active) fail("Active project is missing from the registry");
     if (active && active.path !== root) await host.selectWorkspace(active.path);
+    if (r.state.browserPolicy) host.core().browser.setTabPolicy(r.state.browserPolicy);
     await r.persist();
     r.poller = setInterval(() => void r.pollProcesses().catch(() => undefined), 1200);
     r.poller.unref();
@@ -351,13 +354,27 @@ export class ProductRuntime {
       return this.host.emergencyStop!();
     }
     const run = () =>
-      ["connectors.testConnection", "mcpServers.connect", "mcpServers.callTool"].includes(method)
+      [
+        "projects.syncWorkspaceArtifacts",
+        "skills.test",
+        "skills.run",
+        "system.check",
+        "onboarding.advance",
+        "connectors.testConnection",
+        "mcpServers.connect",
+        "mcpServers.callTool",
+      ].includes(method)
         ? (this.execute("$product", method, [this.context(), params], (a) =>
             this.operationContext.run(a[0] as AuthContext, () => this.dispatch(method, params!)),
           ) as Promise<Record<string, unknown>>)
         : this.dispatch(method, params!);
     // Reads and long operations must not hold up cancellations/approval traffic.
     if (
+      method === "onboarding.advance" ||
+      method === "skills.test" ||
+      method === "skills.run" ||
+      method === "system.check" ||
+      method === "projects.syncWorkspaceArtifacts" ||
       method === "projects.inspect" ||
       method === "security.status" ||
       (method.startsWith("chat.") && method !== "chat.configure") ||
@@ -447,6 +464,102 @@ export class ProductRuntime {
   private async dispatch(method: ProductMethod, p: Record<string, unknown>): Promise<Record<string, unknown>> {
     const id = String(p.id ?? "");
     switch (method) {
+      case "browser.policy.get":
+        return { ok: true, policy: this.appliedTabPolicy ?? this.host.core().browser.getTabPolicy() };
+      case "browser.policy.set": {
+        const next = parseTabPolicy(p),
+          previous = this.appliedTabPolicy ?? this.host.core().browser.getTabPolicy();
+        this.state.browserPolicyPrevious = previous;
+        this.state.browserPolicy = next;
+        try {
+          await this.persist();
+          await this.event(method);
+          delete this.state.browserPolicyPrevious;
+          await this.persist();
+        } catch (error) {
+          this.state.browserPolicy = previous;
+          delete this.state.browserPolicyPrevious;
+          await this.persist();
+          throw error;
+        }
+        this.host.core().browser.setTabPolicy(next);
+        this.appliedTabPolicy = next;
+        return { ok: true, policy: next };
+      }
+      case "chat.testConnection":
+        return this.chat.models(p.provider as ChatProvider);
+      case "skills.list":
+        return { ok: true, skills: this.state.skills ?? [] };
+      case "skills.create": {
+        const skill = SkillSchema.parse(p);
+        if ((this.state.skills ?? []).length >= 64 && !(this.state.skills ?? []).some((s) => s.id === skill.id))
+          fail("Skill limit reached");
+        this.state.skills = [...(this.state.skills ?? []).filter((s) => s.id !== skill.id), skill];
+        await this.persist();
+        await this.event(method, undefined, skill.id);
+        return { ok: true, skill };
+      }
+      case "skills.remove":
+        this.state.skills = (this.state.skills ?? []).filter((s) => s.id !== p.id);
+        await this.persist();
+        await this.event(method, undefined, String(p.id));
+        return { ok: true };
+      case "skills.test":
+      case "skills.run": {
+        const skill = (this.state.skills ?? []).find((s) => s.id === p.id) ?? fail("Unknown skill");
+        // No shell interpolation. Each placeholder stays one literal argv entry.
+        const values = object(p.values);
+        const args =
+          method === "skills.test"
+            ? ["--version"]
+            : skill.args.map((a) =>
+                a.replace(/\{\{([a-zA-Z0-9_]+)\}\}/g, (_m, k: string) =>
+                  typeof values[k] === "string" ? String(values[k]) : fail("Missing skill argument: " + k),
+                ),
+              );
+        const result = await this.host
+          .core()
+          .processes.exec(this.context(), { command: skill.command, args, cwd: this.activeProject.path });
+        return { ok: result.exitCode === 0, result };
+      }
+      case "onboarding.status":
+        return { ok: true, onboarding: this.state.onboarding ?? { completedStep: 0 }, project: this.activeProject };
+      case "onboarding.advance": {
+        const step = Number(p.step),
+          previous = this.state.onboarding?.completedStep ?? 0;
+        if (step !== previous + 1 || step > 4) fail("Complete first-run steps in order");
+        if (step === 4)
+          await this.host
+            .core()
+            .guard.run(this.context(), { operation: "onboarding.ping", capability: [] }, async () =>
+              this.host.core().filesystem.stat(this.context(), { path: "." }),
+            );
+        this.state.onboarding = { completedStep: step, updatedAt: now() };
+        await this.persist();
+        await this.event(method);
+        return { ok: true, onboarding: this.state.onboarding };
+      }
+      case "system.check": {
+        const core = this.host.core();
+        const l1 = await core.refreshConfinement().catch(() => core.confinementStatus());
+        const ports = await checkLoopbackPort();
+        const inspection = await core.inspectProject(this.context());
+        return {
+          ok: true,
+          report: {
+            generatedAt: now(),
+            node: { version: process.version, platform: process.platform, arch: process.arch },
+            l1,
+            ports,
+            bridge: core.status().browser,
+            project: inspection,
+            commandsAllowed: l1.available,
+            detail: l1.available
+              ? "Native L1 ready"
+              : "Commands refused: install/repair native L1; no unconfined retry",
+          },
+        };
+      }
       case "chat.providers":
         return { ok: true, providers: this.chat.providers(), current: this.chat.current };
       case "chat.configure": {
@@ -552,6 +665,7 @@ export class ProductRuntime {
       case "projects.select": {
         const project = this.state.projects.find((v) => v.id === id) ?? fail("Unknown project");
         await this.host.selectWorkspace(await realpath(project.path));
+        if (this.appliedTabPolicy) this.host.core().browser.setTabPolicy(this.appliedTabPolicy);
         this.state.active = id;
         project.lastOpened = now();
         await this.persist();
@@ -611,9 +725,14 @@ export class ProductRuntime {
         await this.event(method, undefined, id);
         return { ok: true };
       }
+      case "projects.artifactStatus":
+        return { ok: true, ...this.host.core().artifactStatus() };
+      case "projects.syncWorkspaceArtifacts":
+        return this.host.core().syncWorkspaceArtifacts(this.context(), p);
       case "connectors.list":
         return {
           ok: true,
+          manifests: CONNECTOR_MANIFESTS,
           connectors: CONNECTOR_IDS.map(
             (id) =>
               this.state.connectors.find((c) => c.id === id) ?? {
@@ -638,7 +757,7 @@ export class ProductRuntime {
         if (p.credential) this.vault.credentials[id] = String(p.credential);
         const c: Connector = {
           id,
-          configured: id === "FFmpeg Media Pipeline" || !!this.vault.credentials[id],
+          configured: CONNECTOR_MANIFESTS.find((m) => m.id === id)?.kind === "local" || !!this.vault.credentials[id],
           enabled: true,
           scopes: strings(p.scopes),
           projects: strings(p.projects),
@@ -818,39 +937,55 @@ export class ProductRuntime {
       fail("Connector is not enabled in project settings");
     if (c.projects.length && !c.projects.includes(this.state.active)) fail("Connector is not allowed for this project");
     const started = Date.now();
-    const endpoints: Record<string, [string, string]> = {
-      GitHub: ["https://api.github.com/user", "Bearer"],
-      GitLab: ["https://gitlab.com/api/v4/user", "Bearer"],
-      ElevenLabs: ["https://api.elevenlabs.io/v1/user", "xi-api-key"],
-      YouTube: ["https://www.googleapis.com/youtube/v3/channels?part=id&mine=true", "Bearer"],
-      TikTok: ["https://open.tiktokapis.com/v2/user/info/?fields=open_id", "Bearer"],
-      Notion: ["https://api.notion.com/v1/users/me", "Bearer"],
-      "Google Drive": ["https://www.googleapis.com/drive/v3/about?fields=user", "Bearer"],
-      Slack: ["https://slack.com/api/auth.test", "Bearer"],
-      "Custom HTTP API": [c.endpoint ?? "", "Bearer"],
-    };
+    const manifest = CONNECTOR_MANIFESTS.find((m) => m.id === id) ?? fail("Unknown connector");
     try {
-      if (id === "FFmpeg Media Pipeline") {
-        const result = await this.host
-          .core()
-          .processes.exec(this.context(), { command: "ffmpeg", args: ["-version"], cwd: this.activeProject.path });
+      if (manifest.kind === "local") {
+        if (id === "Remotion") {
+          const file = await this.host.core().filesystem.readFile(this.context(), { path: "package.json" });
+          if (file.truncated) fail("package.json exceeds inspection limit");
+          const pkg = object(JSON.parse(file.content));
+          if (
+            !Object.hasOwn(object(pkg.dependencies), "remotion") &&
+            !Object.hasOwn(object(pkg.devDependencies), "remotion")
+          )
+            fail("Active project does not declare remotion");
+        }
+        const result = await this.host.core().processes.exec(this.context(), {
+          command: manifest.command!,
+          args: manifest.args ?? [],
+          cwd: this.activeProject.path,
+        });
         c.status = result.exitCode === 0 ? "Connected" : "Failed";
       } else {
-        const [url, auth] = endpoints[id] ?? fail("Unknown connector");
+        const url = id === "Custom HTTP API" ? c.endpoint : manifest.probe;
+        const auth = manifest.auth;
         if (!url) fail("Endpoint required");
         const credential = this.vault.credentials[id] ?? fail("Credential unavailable");
         const headers: Record<string, string> =
-          auth === "xi-api-key" ? { "xi-api-key": credential } : { Authorization: `Bearer ${credential}` };
+          auth === "xi-api-key"
+            ? { "xi-api-key": credential }
+            : auth === "anthropic"
+              ? { "x-api-key": credential, "anthropic-version": "2023-06-01" }
+              : { Authorization: `Bearer ${credential}` };
         const r = await this.host.core().network.request(this.context(), {
-          url,
+          url: url!,
           method: "GET",
-          headers: { ...headers, ...(id === "Notion" ? { "Notion-Version": "2022-06-28" } : {}) },
+          headers: {
+            ...headers,
+            ...(id === "Notion" ? { "Notion-Version": "2022-06-28" } : {}),
+            ...(id === "Runway" ? { "X-Runway-Version": "2024-11-06" } : {}),
+          },
           followRedirects: false,
           timeoutMs: 8000,
           maxResponseBytes: 65536,
         });
         c.httpStatus = r.status;
         let providerOk = true;
+        if (r.truncated) fail("Provider probe response exceeded limit");
+        if (id !== "Custom HTTP API" && r.status >= 200 && r.status < 300) {
+          const body = JSON.parse(r.body);
+          if (!body || typeof body !== "object" || Array.isArray(body)) fail("Invalid provider response");
+        }
         if (id === "Slack" || id === "TikTok") {
           const data = JSON.parse(r.body) as Record<string, unknown>;
           providerOk = id === "Slack" ? data.ok === true : object(data.error).code === "ok";
@@ -997,6 +1132,13 @@ export class ProductRuntime {
   }
   /** Narrowing authorization hook inside ExecutionGuard; never grants a Core capability. */
   authorize(context: AuthContext, operation: string): void {
+    if (
+      this.appliedTabPolicy &&
+      operation.startsWith("browser.") &&
+      !operation.startsWith("browser.policy.") &&
+      JSON.stringify(this.host.core().browser.getTabPolicy()) !== JSON.stringify(this.appliedTabPolicy)
+    )
+      this.host.core().browser.setTabPolicy(this.appliedTabPolicy);
     if (context.principal.transport === "owner-product") return;
     const id = this.agentId(context),
       a = this.state.agents.find((a) => a.id === id),

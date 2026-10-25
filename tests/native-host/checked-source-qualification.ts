@@ -131,6 +131,10 @@ export async function qualifyCheckedSource(): Promise<void> {
     expect(await readFile(path.join(d.workspace, "public.txt"), "utf8")).toBe("host-public-replacement");
     await expect(access(path.join(d.workspace, "private-only.txt"))).rejects.toMatchObject({ code: "ENOENT" });
     await expect(access(path.join(d.workspace, ".env.created"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(core.syncWorkspaceArtifacts(testContext, { files: [".env.generated"] })).rejects.toThrow();
+    const exported = await core.syncWorkspaceArtifacts(testContext, { files: ["private-only.txt"] });
+    expect(exported.written).toEqual([{ path: "private-only.txt", bytesWritten: 7 }]);
+    expect(await readFile(path.join(d.workspace, "private-only.txt"), "utf8")).toBe("private");
     await core.filesystem.writeFile(testContext, { path: "atomic.tmp", content: "checked-after" });
     await core.filesystem.move(testContext, { from: "atomic.tmp", to: "public.txt", overwrite: true });
     expect(await readFile(path.join(d.workspace, "public.txt"), "utf8")).toBe("checked-after");
@@ -167,6 +171,7 @@ export async function qualifyCheckedSource(): Promise<void> {
         "existing-and-future-secrets-denied",
         "scratch-write",
         "checked-core-commit",
+        "checked-artifact-export",
         "fresh-generation",
         "teardown",
       ],

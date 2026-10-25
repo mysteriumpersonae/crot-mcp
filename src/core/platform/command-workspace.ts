@@ -2,6 +2,7 @@
 import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { rmSync } from "node:fs";
 import os from "node:os";
+import { readWorkspaceArtifacts, ArtifactPathSchema } from "./workspace-artifacts.js";
 import path from "node:path";
 import { CrotError } from "../errors.js";
 import type { Workspace } from "../workspace/workspace.js";
@@ -25,14 +26,17 @@ export async function openCommandWorkspace(
   const annotate = (s: ConfinementStatus): ConfinementStatus => ({
     ...s,
     sourceAccess: "core-only",
+    ...(current?.exportPending ? { available: false, reason: "artifact_export_pending" as const } : {}),
     detail: [
-      s.detail,
+      ...(current?.exportPending
+        ? ["Artifact export pending: retry export before commands/source writes; scratch is retained"]
+        : [s.detail]),
       "AD-58: commands use empty private scratch; source files are accessed only by checked Core operations; writes drain actors; no automatic import",
     ]
       .filter(Boolean)
       .join("; "),
   });
-  type Generation = { root: string; scratch: string; native: CoreConfinement };
+  type Generation = { root: string; scratch: string; native: CoreConfinement; exportPending?: boolean };
   let current: Generation | undefined,
     closing = false,
     fault: unknown,
@@ -86,6 +90,7 @@ export async function openCommandWorkspace(
     }
   };
   const ensure = async () => {
+    if (current?.exportPending) throw blocked("artifact export is pending; retry export before launching commands");
     assert();
     if (!current) {
       try {
@@ -109,6 +114,7 @@ export async function openCommandWorkspace(
   const retire = async () => {
     const owned = current;
     if (!owned) return;
+    if (owned.exportPending) throw blocked("artifact export pending; source mutation must not discard results");
     try {
       // Native close drains/verifies every owned actor BEFORE ACL restore.
       // Do not remove scratch or permit a source mutation if this fails.
@@ -182,8 +188,45 @@ export async function openCommandWorkspace(
             : last;
         return annotate(last);
       }),
+    artifactState: () => ({
+      pending: current?.exportPending === true,
+      ...(current?.exportPending ? { recoveryDirectory: current.scratch } : {}),
+    }),
+    exportArtifacts: <T>(
+      files: readonly string[],
+      commit: (files: import("./workspace-artifacts.js").ArtifactSnapshot[]) => Promise<T>,
+    ) =>
+      serial(async () => {
+        if (closing || fault) throw blocked("workspace is closing or native teardown failed");
+        for (const file of files) ArtifactPathSchema.parse(file);
+        const owned = current;
+        if (!owned) throw blocked("no command workspace is available for export");
+        if (!owned.exportPending) {
+          try {
+            await owned.native.close();
+          } catch (cause) {
+            fault = cause;
+            last = {
+              ...last,
+              available: false,
+              reason: "self_test_failed",
+              detail: "Artifact export could not drain native actors",
+            };
+            throw cause;
+          }
+          owned.exportPending = true;
+        }
+        // Retain all scratch on any validation/authorization/commit failure.
+        // Retry can choose remaining files or explicitly permit replacement.
+        const snapshots = await readWorkspaceArtifacts(owned.scratch, files);
+        const result = await commit(snapshots);
+        await rm(owned.root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+        current = undefined;
+        return result;
+      }),
     withSourceMutation: <T>(execute: () => Promise<T>) =>
       serial(async () => {
+        if (current?.exportPending) throw blocked("artifact export pending; retry export before source writes");
         assert();
         await retire();
         assert();
@@ -192,6 +235,11 @@ export async function openCommandWorkspace(
     close: () => {
       closing = true;
       return (closed ??= serial(async () => {
+        if (current?.exportPending) {
+          await current.native.close();
+          current = undefined;
+          return;
+        }
         await retire();
       }));
     },
@@ -199,7 +247,8 @@ export async function openCommandWorkspace(
       closing = true;
       if (current) {
         current.native.closeSync();
-        rmSync(current.root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+        if (!current.exportPending)
+          rmSync(current.root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
         current = undefined;
       }
     },

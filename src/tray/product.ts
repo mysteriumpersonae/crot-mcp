@@ -1,3 +1,4 @@
+import { CONNECTOR_MANIFESTS } from "../service/connector-manifests.js";
 /** Product information architecture. Labels are canonical offline translation keys. */
 export const SECTIONS = [
   "Home",
@@ -31,18 +32,7 @@ export const SETTINGS = [
   "Updates & Diagnostics",
   "About",
 ] as const;
-export const CONNECTORS = [
-  ["GitHub", "Development"],
-  ["GitLab", "Development"],
-  ["YouTube", "Video & Social"],
-  ["TikTok", "Video & Social"],
-  ["ElevenLabs", "AI & Media"],
-  ["FFmpeg Media Pipeline", "AI & Media"],
-  ["Notion", "Productivity"],
-  ["Google Drive", "Productivity"],
-  ["Slack", "Productivity"],
-  ["Custom HTTP API", "Custom API"],
-] as const;
+export const CONNECTORS = CONNECTOR_MANIFESTS.map((m) => [m.id, m.category, m.kind] as const);
 
 /** Ten owner-requested destinations. Existing guarded tools remain contextual. */
 export const PRIMARY_SECTIONS = [

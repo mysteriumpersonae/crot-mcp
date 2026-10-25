@@ -111,6 +111,7 @@ export class ChatRuntime {
       } catch {
         return bad("Invalid provider model inventory");
       }
+      if (!Array.isArray(body.data)) return bad("Provider returned no valid model inventory");
       for (const item of array(body.data)) {
         const id = text(record(item).id);
         if (id && id.length <= 256) models.add(id);
