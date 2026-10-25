@@ -299,12 +299,13 @@ try {
           );
         if (section === "Settings") {
           assert(
-            await evaluate("document.querySelectorAll('[data-setting]').length===11"),
-            "settings must have eleven sections",
+            await evaluate("document.querySelectorAll('[data-setting]').length===12"),
+            "settings must have twelve sections including Subscription",
           );
           for (const setting of [
             "General",
             "Device & Account",
+            "Subscription",
             "Remote Access",
             "Security",
             "Permissions",
@@ -322,6 +323,30 @@ try {
               ),
               "settings navigation failed: " + setting,
             );
+            if (setting === "Subscription") {
+              assert(
+                await evaluate("document.querySelector('.settings-body').innerText.includes('$5')"),
+                "subscription must show approved pricing",
+              );
+              assert(
+                await evaluate(
+                  "!document.querySelector('.settings-body').innerText.includes('Verified paid-through date:')",
+                ),
+                "Free must not invent a renewal date",
+              );
+              await evaluate(
+                "fixture.commercial={state:'current',plan:'pro',status:'active',entitled:true,expiresAt:1900000000000};render(fixture)",
+              );
+              assert(
+                await evaluate(
+                  "document.querySelector('.settings-body').innerText.includes('Verified paid-through date:')",
+                ),
+                "verified subscription expiry must be shown",
+              );
+              await evaluate(
+                "fixture.commercial={state:'current',plan:'free',status:'active',entitled:false,maxDevices:0,deviceCount:0};render(fixture)",
+              );
+            }
           }
           await evaluate("document.querySelector('[data-setting=General]').click()");
         }
