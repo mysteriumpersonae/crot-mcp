@@ -308,6 +308,8 @@ export type ConfinementNetwork = (typeof CONFINEMENT_NETWORK_MODES)[number];
  * paths.
  */
 export interface ConfinementStatus {
+  /** AD-58 service composition; absent for raw native/legacy embedding contracts. */
+  readonly sourceAccess?: "core-only";
   readonly mechanism: "linux-bubblewrap" | "windows-appcontainer" | "macos-seatbelt" | "none";
   readonly available: boolean;
   readonly network: ConfinementNetwork;

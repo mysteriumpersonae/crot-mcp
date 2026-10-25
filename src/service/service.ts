@@ -440,6 +440,7 @@ export class CrotService {
           })
         : undefined;
       const coreOptions: CrotCoreOptions = {
+        checkedCommands: true,
         runtimePermissions: this.runtimePermissions,
         protectedPaths,
         secretPaths,
@@ -648,7 +649,9 @@ export class CrotService {
     }
     if (startupPath.note) log(`warning: PATH: ${startupPath.note}; using the inherited PATH`);
     if (status.mode === "full_control") {
-      log("WARNING: FULL CONTROL mode — the connected agent can access everything this process can.");
+      log(
+        "WARNING: FULL CONTROL capabilities — checked source guards still apply; commands require native L1 and use private scratch (AD-58).",
+      );
     }
     log(`audit: ${status.audit.sink}${status.audit.path ? ` (${status.audit.path})` : ""}`);
     const protection = status.audit.protection;

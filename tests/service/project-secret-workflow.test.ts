@@ -4,7 +4,15 @@ import { afterEach, expect, inject, it } from "vitest";
 import { TrayToolClient } from "../../src/tray/tool-client.js";
 import { ControlClient } from "../../src/service/control-client.js";
 import { createPrivateFileProtection } from "../../src/core/platform/private-files.js";
-import { makeTempDirs, makeServiceHost, type ServiceHost, type TempDirs, waitFor, stopService } from "../helpers.js";
+import {
+  makeTempDirs,
+  makeServiceHost,
+  type ServiceHost,
+  type TempDirs,
+  waitFor,
+  isAlive,
+  stopService,
+} from "../helpers.js";
 const bin = inject("crotMcpBin");
 let dirs: TempDirs, host: ServiceHost, client: TrayToolClient, control: ControlClient | undefined;
 afterEach(async () => {
@@ -14,7 +22,7 @@ afterEach(async () => {
   await dirs?.cleanup();
 });
 it(
-  "real owner grant/revoke drains an actor holding an open secret fd, preserves exact scope across restart and audits without secret content",
+  "AD-58 owner grant stays Core-only; revoke drains private actors or preserves fail-closed launch refusal across restart",
   { timeout: 90000 },
   async () => {
     dirs = await makeTempDirs();
@@ -60,21 +68,26 @@ it(
     ).toBe(true);
     expect((await call("fs_read_file", { path: ".env" })).content).toBe("UNLOGGED_SECRET_VALUE");
     await expect(call("fs_read_file", { path: "other.pem" })).rejects.toThrow("PERMISSION_DENIED");
-    const heartbeat = path.join(dirs.workspace, "heartbeat.txt");
-    const started = await call("process_start", {
-      command: process.execPath,
-      args: [
-        "-e",
-        `const fs=require('fs');const fd=fs.openSync('.env','r');setInterval(()=>{const b=Buffer.alloc(32);fs.readSync(fd,b,0,32,0);fs.appendFileSync('heartbeat.txt','x');},20)`,
-      ],
-    });
-    await waitFor(async () => (await readFile(heartbeat, "utf8").catch(() => "")).length > 2);
+    const status = (await call("crot_status")) as { confinement: { available: boolean; sourceAccess: string } };
+    expect(status.confinement.sourceAccess).toBe("core-only");
+    let pid: number | undefined;
+    const start = () => call("process_start", { command: process.execPath, args: ["-e", "setInterval(()=>{},1000)"] });
+    if (status.confinement.available) {
+      const probe = await call("process_exec", {
+        command: process.execPath,
+        args: [
+          "-e",
+          `try{require('fs').readFileSync(${JSON.stringify(path.join(dirs.workspace, ".env"))});process.exit(9)}catch(e){if(!['EACCES','EPERM','ENOENT'].includes(e.code))throw e;console.log('denied')}`,
+        ],
+      });
+      expect(probe.exitCode).toBe(0);
+      const started = await start();
+      pid = started.pid as number;
+      expect(isAlive(pid)).toBe(true);
+    } else await expect(start()).rejects.toThrow("CONFINEMENT_UNAVAILABLE");
     const result = await rpc("security.secretFiles.set", { workspace: dirs.workspace, path: ".env", allow: false });
     expect(result.drained).toBe(true);
-    const stopped = await readFile(heartbeat, "utf8");
-    await new Promise((r) => setTimeout(r, 120));
-    expect(await readFile(heartbeat, "utf8")).toBe(stopped);
-    expect(typeof started.id).toBe("string");
+    if (pid !== undefined) await waitFor(() => !isAlive(pid!));
     await expect(call("fs_read_file", { path: ".env" })).rejects.toThrow("PERMISSION_DENIED");
     // The same transport continues through the new Core; revocation is not a permanent emergency stop.
     expect(

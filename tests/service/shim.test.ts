@@ -37,7 +37,11 @@ interface Shim {
   readonly client: Client;
   readonly pid: number;
   stderr(): string;
-  status(): Promise<{ service: ServiceStatus; workspace: { root: string } }>;
+  status(): Promise<{
+    service: ServiceStatus;
+    workspace: { root: string };
+    confinement: { available: boolean; sourceAccess?: string };
+  }>;
   call(name: string, args?: Record<string, unknown>): Promise<CallToolResult>;
   close(): Promise<void>;
   closed: Promise<void>;
@@ -177,10 +181,19 @@ describe("stdio shim and CROT service (built, WP-20)", () => {
           }),
         ]),
       );
-      for (const r of results) expect(r.isError).toBeFalsy();
+      const confinement = statuses[0]!.confinement;
+      expect(confinement.sourceAccess).toBe("core-only");
+      for (let i = 0; i < 4; i++) {
+        expect(results[i * 2]!.isError).toBeFalsy();
+        if (confinement.available) expect(results[i * 2 + 1]!.isError).toBeFalsy();
+        else {
+          expect(results[i * 2 + 1]!.isError).toBe(true);
+          expect(text(results[i * 2 + 1]!)).toContain("CONFINEMENT_UNAVAILABLE");
+        }
+      }
       for (let i = 0; i < 4; i++) {
         expect(await readFile(path.join(dirs.workspace, `client-${i}.txt`), "utf8")).toBe(`c${i}`);
-        expect(text(results[i * 2 + 1]!)).toContain(`done ${i}`);
+        if (confinement.available) expect(text(results[i * 2 + 1]!)).toContain(`done ${i}`);
       }
       // Credentials never reach child processes (environment or arguments) or client output.
       const env = await shims[0]!.call("process_exec", {

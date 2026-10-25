@@ -5942,3 +5942,74 @@ AD-57 primary native references: [Microsoft hard links](https://learn.microsoft.
 [inotify event/race limitations](https://man7.org/linux/man-pages/man7/inotify.7.html).
 The local counterexamples use real Linux filesystem operations, not simulated
 Win32 access checks; the new Windows DACL case must run on actual Windows CI.
+
+### AD-58 — protected service commands; source mutations only through checked Core
+
+**Owner-approved contract, recorded before implementation.** Supersedes AD-57's
+requirement for transparent command writes/hardlink projection. CrotService
+always enables a protected command composition on every OS and in every
+permission preset, including Full Control. The live workspace remains the
+boundary for authorized Core file operations; process/shell/MCP child transports
+receive a separate, empty, per-Core owner-private workspace. No source files,
+hardlinks, secret opt-ins, Git metadata, tokens or control context are copied
+there, and there is no automatic commit/copy-back/import. It is an isolated
+command scratch space, not a transparent project worktree or a driver mount.
+An actor may produce its own scratch files, but these are not source files and
+never become project changes implicitly. Project changes must use the ordinary
+Core file tools with the same authorization, approvals, secret guard and audit.
+
+The underlying native backend must deny the entire canonical source_root as
+well as the existing private control/state paths. Future source entries,
+rename/atomic replacements inside that denied tree do not enter the scratch
+space. Launch and executable resolution map only the authorized source-root cwd
+to the private root; non-root cwd is explicitly refused in this first contract,
+not guessed, mirrored by a watcher or created by privileged code in an
+actor-writable tree. Absolute source paths in argv get no special exemption.
+No source writable Docker bind is allowed. There is no third-party driver.
+
+Protected-service process launch ALWAYS requires available native L1. Neither
+local principal, Full Control, missing components, failed preparation nor a
+post-admission native error permits an unconfined retry. No provider or MCP
+adapter can disable this composition. The embedding-only CrotCore API retains
+its existing low-level contract when the host does not enable protected
+commands; it is not the protected CrotService or AD-58 qualification. Native
+backend component tests can still exercise their raw platform contracts; new
+AD-58 acceptance must exercise the new Core composition and service wiring.
+
+Core file mutations stay on source_root and reject secret names before I/O,
+including both endpoints of moves/atomic replacements. AD-53's exact,
+authenticated owner secret-file opt-ins remain distinct from agent runtime
+allow/ask rules; they do not expose any source files to child commands. Checked
+source file operations additionally serialize agent-controlled filesystem
+changes, reject symlink/special/multiple-link objects where their semantics
+cannot be proved, and avoid truncation before descriptor validation. Directory
+moves/deletes must not silently move/delete denied secret descendants. Unsafe
+host-command helpers such as generic Git/Docker operations must refuse in the
+protected service until they have a separately checked source-operation
+contract; a broad permission grant is not that proof. Read-only project
+inspection must not execute workspace-controlled hooks/plugins.
+
+Core is trusted, and an adversarial host process with the owner's privileges
+is outside the sandbox threat model. The owner must not deliberately inject
+secret bytes into a previously public file or create external public hardlink
+aliases to secrets while exposing those aliases to an actor. No pathname
+sandbox can recover bytes already disclosed before reclassification. This
+residual host boundary does not permit an agent-controlled source bypass.
+
+Lifecycle: allocate fresh private scratch only, no path adoption; unavailable
+or overlapping source/scratch storage refuses. Native actor drain precedes ACL
+restoration and scratch cleanup; failed cleanup closes admission and is not
+success. Existing kill-switch, scoped-token revocation and AD-53 immutable Core
+retirement/drain include these actors. Status explicitly labels core-only source
+access; the old 'Full Control commands unconfined' note must not describe this
+service composition.
+
+The abandoned AD-55 driver-positive fixture may now be retired/replaced by
+mandatory AD-58 native acceptance, not skipped to hide a failed replacement.
+Acceptance: actual native child scratch writes succeed; Core checked public
+writes modify the original; existing/future source secrets, absolute source
+reads/writes, rename/atomic replacements and control paths are denied; source
+remains unchanged after private command writes. Missing/failed L1 refuses
+before any process, in all modes. Run actual Linux/macOS/Windows cases and all
+11 existing CI jobs; do not promote PR #5 until observed green results and the
+new gates pass. No merge by the agent; B/C remain after Stage A.

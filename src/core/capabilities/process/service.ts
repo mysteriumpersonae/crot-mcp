@@ -34,6 +34,8 @@ import {
 } from "./schemas.js";
 
 export interface ProcessServiceDeps {
+  /** Protected service commands never bypass L1, including local Full Control. */
+  readonly requireConfinement?: boolean;
   readonly workspace: Workspace;
   readonly guard: ExecutionGuard;
   readonly platform: Pick<Platform, "launcher" | "shells" | "environment" | "encodings" | "baseEnvironment">;
@@ -419,6 +421,14 @@ export class ProcessService {
     const confinement = this.deps.confinement;
     const status = confinement?.status();
     const mode = this.deps.modeFor?.(context) ?? (confinement ? "sandbox" : "full_control");
+    if (this.deps.requireConfinement) {
+      confinement?.assertAdmission?.();
+      if (!status?.available || !confinement)
+        throw status
+          ? confinementUnavailableError(status)
+          : new CrotError("CONFINEMENT_UNAVAILABLE", "AD-58 requires native command isolation; no unconfined fallback");
+      return confinement.launcher;
+    }
     // Status can honestly become unavailable after a native failure. That is
     // not permission to fall back after this Core was admitted into L1.
     if (context.principal.kind === "remote" || mode !== "full_control") confinement?.assertAdmission?.();
