@@ -126,3 +126,22 @@ it.each([
     await import(pathToFileURL(path.resolve("scripts/project-picker-native-scope.mjs")).href);
   expect(isGoToFolder(String(role), String(title), String(description))).toBe(expected);
 });
+
+it.each([
+  ["AXSheet", "", "", ["Go to the folder:"], true],
+  ["AXDialog", "", "", ["Go to Folder"], true],
+  ["AXSheet", "Another dialog", "", ["Go to the folder:"], false],
+  ["AXTextField", "", "", ["Go to the folder:"], false],
+  ["AXSheet", "", "", ["Go to Folder extra"], false],
+  ["AXSheet", "", "", ["Search"], false],
+])(
+  "requires an exact own static label for an untitled native Go sheet: %s %s",
+  async (role, title, description, labels, expected) => {
+    const {
+      isGoToFolder,
+    }: { isGoToFolder: (role: string, title: string, description: string, labels: string[]) => boolean } = await import(
+      pathToFileURL(path.resolve("scripts/project-picker-native-scope.mjs")).href
+    );
+    expect(isGoToFolder(String(role), String(title), String(description), labels as string[])).toBe(expected);
+  },
+);

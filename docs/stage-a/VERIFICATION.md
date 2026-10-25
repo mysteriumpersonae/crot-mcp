@@ -699,3 +699,22 @@ fails. Lint and real GTK were repeated successfully after that cleanup change.
 macOS Go to Folder and head-specific Windows results still require actual CI;
 Linux GTK success does not qualify them or the missing general Linux/Windows
 future-secret L1 barrier. Stage A remains WIP.
+
+Actual `63b1ac7` macOS opened the native Go to Folder nested sheet, but the
+sheet itself exposes no AXTitle/AXDescription, so the exact identity gate
+correctly refused input rather than guessing. The follow-up recognizes an
+untitled sheet only by its own exact static Go to Folder label, and additionally
+requires its focused input's ancestry to reach the original exact project
+chooser in the test Electron process. A conflicting title, unrelated input,
+substring label or another dialog remains rejected (six new regressions).
+Failure output puts phase/error/ancestry before bounded tree diagnostics to
+avoid losing the real cause to CI annotation truncation.
+
+Local follow-up `npm run check` passed: main 2332 passed /223 skipped;
+extension 196. This host had lost Xvfb, causing one extra Electron smoke skip;
+after restoring test dependencies that exact smoke was rerun and passed (1/0),
+and the real GTK chooser passed all 3 checks /0 errors. It is not silently
+counted as an unchanged full-run skip set. The prior candidate's browser suite
+also passed 58 /3 existing skips and shipped UI QA 81 checks /29 screenshots /
+0 failures. No production logic changed in this native-test follow-up. Native
+macOS/Windows and general Linux/Windows future-secret L1 still need qualification.

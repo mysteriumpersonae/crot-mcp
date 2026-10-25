@@ -7,7 +7,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { isProjectChooser, isGoToFolder } from "./project-picker-native-scope.mjs";
 const pid = Number(process.argv[2]);
 const selected = process.argv[3];
-const report = { status: "failed", nodes: [] };
+const report = { status: "failed", error: null, phase: null, focusedAncestry: [], goPanelNodes: [], nodes: [] };
 try {
   if (
     process.platform !== "darwin" ||
@@ -136,23 +136,46 @@ try {
       const result = postKey(app, character, code, down);
       if (result !== 0) throw Error("Native AX keyboard event refused: " + result);
     };
+    const panelLabels = (panel) => {
+      const queue = children(panel, "AXChildren").map((node) => ({ node, depth: 1 })),
+        labels = [],
+        evidence = [];
+      for (let cursor = 0; cursor < queue.length && cursor < 48; cursor++) {
+        const { node, depth } = queue[cursor],
+          role = label(node, "AXRole");
+        if (["AXSheet", "AXWindow", "AXDialog"].includes(role)) continue;
+        const title = label(node, "AXTitle"),
+          description = label(node, "AXDescription");
+        const text = role === "AXStaticText" ? label(node, "AXValue") : "";
+        evidence.push({ role, title, description, text });
+        if (role === "AXStaticText") labels.push(title, description, text);
+        if (depth < 3) for (const child of children(node, "AXChildren")) queue.push({ node: child, depth: depth + 1 });
+      }
+      report.goPanelNodes = evidence;
+      return labels;
+    };
     const focusedGoField = () => {
       const field = value(app, "AXFocusedUIElement");
       if (!field) return null;
       owned.push(field);
       const role = label(field, "AXRole");
       if (!["AXTextField", "AXComboBox"].includes(role)) return null;
-      let parent = field;
+      let parent = field,
+        goPanel = false;
       const ancestry = [];
       for (let depth = 0; depth < 16; depth++) {
         const role = label(parent, "AXRole"),
           title = label(parent, "AXTitle"),
           description = label(parent, "AXDescription");
         ancestry.push({ role, title, description });
-        if (isGoToFolder(role, title, description)) {
-          report.goFieldAncestry = ancestry;
-          return field;
+        // Go to Folder is a nested native sheet. It must belong to the exact
+        // chooser, not just any dialog with a similar focused input.
+        if (isProjectChooser(role, title, description)) {
+          report.focusedAncestry = ancestry;
+          return goPanel ? field : null;
         }
+        if (["AXSheet", "AXDialog", "AXWindow"].includes(role))
+          goPanel ||= isGoToFolder(role, title, description, panelLabels(parent));
         const next = value(parent, "AXParent");
         if (!next) break;
         owned.push(next);
