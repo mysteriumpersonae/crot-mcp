@@ -1,8 +1,0 @@
-{
-  "id": "production",
-  "issuer": "https://auth.crot.networking",
-  "relayHost": "mcp.crot.networking",
-  "pairingClientId": "REPLACE_WITH_PRODUCTION_PUBLIC_PAIRING_CLIENT_ID",
-  "pairingRedirectPort": 0,
-  "pairingScope": "openid"
-}
