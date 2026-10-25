@@ -4,7 +4,7 @@ import { Buffer } from "node:buffer";
 import koffi from "koffi";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { isProjectChooser, isGoToFolder } from "./project-picker-native-scope.mjs";
+import { isProjectChooser, isGoToFolder, traversesChooserControls } from "./project-picker-native-scope.mjs";
 const pid = Number(process.argv[2]);
 const selected = process.argv[3];
 const report = { status: "failed", error: null, phase: null, focusedAncestry: [], goPanelNodes: [], nodes: [] };
@@ -44,6 +44,7 @@ try {
     keys = new Map(),
     seen = new Set(),
     buttons = [];
+  let nestedSheets = 0;
   const key = (name) => {
     if (!keys.has(name)) {
       const value = string(null, name, 0x08000100);
@@ -105,6 +106,7 @@ try {
     const scan = () => {
       seen.clear();
       buttons.length = 0;
+      nestedSheets = 0;
       report.nodes = [];
       const queue = children(app, "AXWindows").map((node) => ({ node, inside: false }));
       for (let cursor = 0; cursor < queue.length; cursor++) {
@@ -116,7 +118,9 @@ try {
         const role = label(node, "AXRole"),
           title = label(node, "AXTitle"),
           description = label(node, "AXDescription");
-        const scope = inside || isProjectChooser(role, title, description);
+        const chooser = isProjectChooser(role, title, description);
+        const scope = inside || chooser;
+        if (inside && role === "AXSheet" && !chooser) nestedSheets++;
         if (report.nodes.length < 48)
           report.nodes.push({ role, title: title.slice(0, 100), description: description.slice(0, 100), scope });
         if (
@@ -126,9 +130,11 @@ try {
           enabled(node)
         )
           buttons.push(node);
+        if (!traversesChooserControls(role)) continue;
         for (const name of ["AXChildren", "AXSheets"])
           for (const child of children(node, name)) queue.push({ node: child, inside: scope });
       }
+      report.nestedSheets = nestedSheets;
       return buttons;
     };
     const postKey = ax.func("int AXUIElementPostKeyboardEvent(void *, unsigned short, unsigned short, bool)");
@@ -186,7 +192,8 @@ try {
     };
     report.phase = "open native Go to Folder";
     scan();
-    if (buttons.length !== 1) throw Error("Expected one enabled Open button in the exact chooser before navigation");
+    if (buttons.length !== 1 || nestedSheets !== 0)
+      throw Error("Expected one enabled Open button and no nested modal in the exact chooser before navigation");
     const stroke = (events) => {
       const held = [],
         errors = [];
@@ -226,7 +233,8 @@ try {
     let ready = false;
     while (Date.now() < openDeadline) {
       await delay(100);
-      if (!focusedGoField() && scan().length === 1) {
+      const openButtons = scan();
+      if (nestedSheets === 0 && openButtons.length === 1) {
         ready = true;
         break;
       }

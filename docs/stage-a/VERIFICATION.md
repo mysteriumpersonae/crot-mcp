@@ -718,3 +718,17 @@ counted as an unchanged full-run skip set. The prior candidate's browser suite
 also passed 58 /3 existing skips and shipped UI QA 81 checks /29 screenshots /
 0 failures. No production logic changed in this native-test follow-up. Native
 macOS/Windows and general Linux/Windows future-secret L1 still need qualification.
+
+Actual `41b34ca` macOS passed native Go sheet identity and exact AXValue path
+entry, then hit the existing 512-node traversal bound while the file browser
+updated. This is a test-driver failure, not native-selection Pass. The next
+candidate prunes file-content roles (browser/outline/table/list/rows/columns),
+searching only structural chooser controls without raising the bound. Ten
+regressions preserve traversal of sheets/groups/buttons and reject file lists.
+Before pressing Open it explicitly requires no nested native sheet attached to
+the exact chooser; losing a transient Go label is not treated as modal closure.
+
+A complete repeated check of `41b34ca` with restored host dependencies passed:
+main 2333 /222 host-inapplicable skips, extension 196. After the control-only
+traversal change, lint, typecheck and targeted picker/Electron smoke tests passed
+47/0; real GTK again passed 3/0. Actual final native CI remains required.

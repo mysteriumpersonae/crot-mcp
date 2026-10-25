@@ -14,3 +14,8 @@ export function isGoToFolder(role, title, description, childLabels = []) {
   // A conflicting nonempty title must never be overridden by descendant text.
   return identity ? exact(identity) : childLabels.some(exact);
 }
+
+/** File rows are not chooser controls; never enumerate a potentially huge directory. */
+export function traversesChooserControls(role) {
+  return !["AXOutline", "AXBrowser", "AXTable", "AXList", "AXRow", "AXColumn"].includes(role);
+}

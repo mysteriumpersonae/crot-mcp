@@ -145,3 +145,21 @@ it.each([
     expect(isGoToFolder(String(role), String(title), String(description), labels as string[])).toBe(expected);
   },
 );
+
+it.each([
+  ["AXBrowser", false],
+  ["AXOutline", false],
+  ["AXTable", false],
+  ["AXList", false],
+  ["AXRow", false],
+  ["AXColumn", false],
+  ["AXSheet", true],
+  ["AXGroup", true],
+  ["AXSplitGroup", true],
+  ["AXButton", true],
+])("limits native chooser traversal to controls rather than file rows: %s", async (role, expected) => {
+  const { traversesChooserControls }: { traversesChooserControls: (role: string) => boolean } = await import(
+    pathToFileURL(path.resolve("scripts/project-picker-native-scope.mjs")).href
+  );
+  expect(traversesChooserControls(String(role))).toBe(expected);
+});
