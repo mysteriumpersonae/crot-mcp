@@ -63,6 +63,7 @@ export class DeviceIdentity {
   }
   private registration: Promise<unknown> | undefined;
   private recovery: Promise<boolean> = Promise.resolve(true);
+  private rollbackTail: Promise<void> = Promise.resolve();
   private readonly rejections = new Map<TokenRejection, number>();
 
   constructor(private readonly options: DeviceIdentityOptions) {
@@ -198,7 +199,17 @@ export class DeviceIdentity {
   }
 
   /** Compensation survives a failed final binding write via a durable inactive intent. */
-  async rollbackPairing(deviceId?: string): Promise<boolean> {
+  rollbackPairing(deviceId?: string): Promise<boolean> {
+    // Startup recovery and owner retries must not race the same one-use relay
+    // challenge or erase/read the durable intent while another cleanup owns it.
+    const work = this.rollbackTail.then(() => this.rollbackPairingOnce(deviceId));
+    this.rollbackTail = work.then(
+      () => undefined,
+      () => undefined,
+    );
+    return work;
+  }
+  private async rollbackPairingOnce(deviceId?: string): Promise<boolean> {
     try {
       const pending = await this.options.binding.pendingRegistration();
       if (!pending || (deviceId !== undefined && pending.deviceId !== deviceId)) return true;

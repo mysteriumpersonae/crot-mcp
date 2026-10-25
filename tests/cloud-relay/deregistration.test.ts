@@ -201,16 +201,42 @@ describe("WP-29 local registration transaction / unpair", () => {
     expect(await h.registry.get(pending.deviceId)).toBeDefined();
     expect(binding.tunnelCredential(h.as.environment())).toMatchObject({ ok: false });
     const reopened = await DeviceBindingStore.open(binding.file, privateFiles, keys);
+    let release!: () => void, removed!: () => void;
+    const heldResponse = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const removalCommitted = new Promise<void>((resolve) => {
+      removed = resolve;
+    });
+    let requests = 0;
     const restored = new DeviceIdentity({
       environment: h.as.environment(),
       binding: reopened,
-      http: routedHttp(),
+      http: routedHttp(async (u, init) => {
+        if (!u.includes("/deregister")) return undefined;
+        requests++;
+        const response = await fetch(u.replace(`https://${TEST_RELAY}`, h.origin), init);
+        if (init?.method === "POST") {
+          removed();
+          await heldResponse;
+        }
+        return response;
+      }),
       log: () => {},
     });
-    await waitFor(() => !h.relay.isOnline(pending.deviceId));
-    await waitFor(() => h.logs.some((x) => x.event === "device.deregister"));
-    expect(await h.registry.count()).toBe(0);
-    expect(await restored.rollbackPairing()).toBe(true);
+    await removalCommitted;
+    // Relay has committed removal, but recovery has not consumed its response
+    // or cleared the intent. An owner retry must join the serialized cleanup.
+    const retry = restored.rollbackPairing();
+    try {
+      await waitFor(() => h.logs.some((x) => x.event === "device.deregister"));
+      expect(await h.registry.count()).toBe(0);
+      expect(requests).toBe(2); // one challenge GET and one authenticated POST
+    } finally {
+      release();
+    }
+    expect(await retry).toBe(true);
+    expect(requests).toBe(2);
     expect(await reopened.pendingRegistration()).toBeUndefined();
   });
   it("local unpair is immediate while removal uses a captured signer without the deleted secret; offline unpair never waits", async () => {
