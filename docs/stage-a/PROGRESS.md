@@ -109,3 +109,19 @@ including both actual Windows jobs and both macOS jobs. AD-54 next adds actual
 native-folder chooser qualification to those existing matrix jobs. It remains
 unqualified until those new tests run successfully. No workflow modifications,
 security downgrades or agent merge are performed.
+
+### AD-55 — authorized Windows native-secret candidate, not acceptance
+
+The owner now permits reconsidering AD-29's third-party-filesystem exclusion
+under zero-fee, proprietary-compatible licensing and Microsoft-signed-driver
+constraints. The first isolated CI experiment combines pinned official Dokan
+2.3.1 (dynamic LGPL DLL) with real zero-capability AppContainer/LPAC Jobs. It
+requires live projected data read/write, unchanged original security, and raw
+control denial before/after access with the same actors. It is not the rejected
+WRITE_RESTRICTED Low actor and does not alter its old failed evidence.
+
+Production is unchanged: no driver installation, dependency adoption or new
+project-secret L1 availability claim. Missing-component fail-closed integration,
+actual dynamic secret patterns/exact grants/revocation and final CrotService
+qualification remain mandatory before the candidate can replace a backend.
+Native Windows CI evidence is pending; Linux tests are not Windows proof.

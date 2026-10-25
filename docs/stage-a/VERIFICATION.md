@@ -732,3 +732,28 @@ A complete repeated check of `41b34ca` with restored host dependencies passed:
 main 2333 /222 host-inapplicable skips, extension 196. After the control-only
 traversal change, lint, typecheck and targeted picker/Electron smoke tests passed
 47/0; real GTK again passed 3/0. Actual final native CI remains required.
+
+### AD-55 first Windows candidate (pending native CI)
+
+Previous head `7e217890a2a2262c8f24d1632e9f7323f0de4c34` completed all 11
+actual CI checks SUCCESS, including native macOS/Windows chooser workflows.
+The owner then authorized a zero-fee, proprietary-compatible Windows native
+secret mediator investigation; see AD-55. This new source is not qualified by
+that prior green head.
+
+The isolated fixture pins official Dokan 2.3.1 binaries/headers, checks Microsoft
+hardware-publisher driver identity and kernel signing policy, and verifies
+actual dynamic DLL imports. AppContainer AND LPAC actors must read/write the
+live backing file while both Win32/NT raw-device aliases remain denied before
+and after data access. Original security snapshots must remain unchanged while
+mounted and after teardown. A separately tagged AD-55 packet distinguishes
+live data evidence from historical NUL-only diagnostics. No production
+registration, download/install path, fallback weakening or secret-barrier claim
+is introduced. Actual Windows compile/signature/kernel results are pending.
+
+Local full `npm run check` passed main 2349 /224 skips and extension 196.
+The skip set includes the new Windows-only experiment and one extra Electron
+smoke skip because this restored host lacked Xvfb. Test dependencies were
+restored and that exact smoke rerun passed 1/0. Neither result is a Windows
+qualification. Seven new protocol tests passed. After adding original security
+readback assertions, lint/typecheck and that targeted set passed again.

@@ -5692,10 +5692,12 @@ be visible in the shipped renderer and have both audit records. No dialog
 return value, IPC response or service acknowledgement is mocked.
 
 Linux retains X11/GTK keyboard and native-window control. macOS inspects the
-visible NSOpenPanel in the test Electron main process through AppKit, navigates
-its real directory URL and invokes its native cancel/OK actions. It does not
-use System Events, change TCC permissions or bypass an external accessibility
-requirement. Windows UIAutomation is restricted to a single visible native `#32770` chooser
+visible NSOpenPanel in the test Electron main process through AppKit. Native
+Go to Folder navigation and AXPress run in a bounded external Accessibility
+helper with existing OS trust, exact chooser identity and nested-sheet checks;
+proxy directoryURL is diagnostic only, never evidence of native navigation.
+Cancellation uses the public native cancel action. No forbidden programmatic
+NSSavePanel OK, TCC change, System Events or permission bypass is used. Windows UIAutomation is restricted to a single visible native `#32770` chooser
 whose process or native owner belongs to the test Electron PID. Win32 enumeration
 resolves its real handle before UIAutomation; the chooser need not be exposed as
 a direct desktop automation child. Ambiguous owned dialogs refuse execution. ValuePattern edits its real folder field
@@ -5708,3 +5710,54 @@ existing Node/OS matrix; Linux's existing actual GTK qualification remains a
 separate command. Host-inapplicable execution is explicit, not qualification.
 A successful Linux run and static review cannot prove the AppKit/Windows driver
 works. Actual native CI must pass before closing either acceptance gate.
+
+### AD-55. Owner-authorized zero-fee Windows secret-view investigation
+
+**Decision before code; supersedes only AD-29's blanket third-party-filesystem
+exclusion for this investigation.** The owner authorizes a free, commercially
+compatible native mediator for Stage A, not a relaxation of the secret policy.
+MIT/Apache/BSD/ISC and dynamically linked LGPL components are eligible; strict
+GPL without a proprietary-compatible exception is not. CROT stays private and
+UNLICENSED. WinFsp's proprietary paid route is not selected, and no dependency
+or CROT source is silently relicensed. LGPL distribution requires notices,
+corresponding library source/replacement/relinking and other applicable duties;
+a library import DLL is not statically embedded in CROT.
+
+No EV certificate, paid signing or locally rebuilt kernel driver is authorized.
+A driver candidate must be an unchanged pinned official Microsoft-signed release,
+verified on the actual CI host with kernel-signing policy and the exact installed
+binary/catalog identity. A GitHub commit signature or installer signature alone
+is insufficient. No test-signing, Secure Boot bypass or host-security weakening.
+Installation is confined to disposable hosted Windows CI. Production must never
+silently download/install a driver; missing/invalid/unsupported components require
+explicit unavailable diagnostics and refusal, never an unprotected command retry.
+
+The first candidate revisits the **composite** of the official Dokan 2.3.1
+LGPL DLL/driver and a zero-capability AppContainer/owned Job, not AD-27's rejected
+WRITE_RESTRICTED Low actor. Historical raw-control-open failures remain intact.
+AD-28's negative raw-device probes without projected data access are NOT sufficient:
+the same effective actor must actually read/write the live projected backing while
+raw control opens remain denied through both Win32 and absolute NT aliases,
+including literal zero DesiredAccess, before AND after data access. The device
+DACL/label must not be lowered or granted package access as a shortcut. Projected
+file security is separate from raw control-device security. Unknown results,
+namespace absence, loader failure and cleanup failure are not access-denial proof.
+
+This is a fresh isolated native CI fixture, not a production backend registration.
+A positive feasibility result must be followed by dynamic `.env`/`.env.*`/PEM/KEY
+and case/alias/link/rename/reparse tests, exact owner grants/revokes, inherited
+children, retained descriptors, same-backing write/atomic replace/sharing,
+kill/crash/unmount/recovery, original security preservation and final CrotService
+integration. Scans/watchers/Detours hooks, cached hydration or snapshot/copy-back
+are not a kernel filename barrier. No green feasibility test alone closes A,
+OD-9's untested OS/architecture matrix or Linux's separate future-secret gate.
+
+References: [Dokan pinned source/license](https://github.com/dokan-dev/dokany/tree/v2.3.1.1000),
+[LGPL terms](https://github.com/dokan-dev/dokany/blob/v2.3.1.1000/license.lgpl.txt),
+[AppContainer](https://learn.microsoft.com/en-us/windows/win32/secauthz/implementing-an-appcontainer).
+
+Pinned experiment downloads are not a production prohibition on an owner's
+interface-compatible LGPL DLL replacement. Before distribution, packaging must
+satisfy replacement/relinking rights and notices without weakening protection
+against agent modification of trusted runtime files. Runtime candidate readiness
+and licensing/distribution completion are separate, mandatory gates.
