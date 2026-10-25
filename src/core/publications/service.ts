@@ -202,7 +202,19 @@ export class PublicationService {
     });
   }
   list(project?: string): PublicationRecord[] {
-    return [...this.records.values()].filter((r) => !project || r.project === project).map(clone);
+    return [...this.records.values()]
+      .filter((r) => !project || r.project === project)
+      .map((record) => {
+        const visible = clone(record);
+        // A platform response is not a durably audited terminal outcome yet. The async owner UI
+        // must not announce completion (or expose a result ID) while save/audit is still pending.
+        if (this.active.has(record.id) && ["published", "draft_uploaded", "failed"].includes(record.state)) {
+          visible.state = "processing";
+          delete visible.resultId;
+          delete visible.error;
+        }
+        return visible;
+      });
   }
   /** Called ONLY with the transport's authenticated owner connection object. It is never a JSON parameter. */
   openForOwner(id: string, owner: object): { publication: PublicationRecord; confirmation: string } {
