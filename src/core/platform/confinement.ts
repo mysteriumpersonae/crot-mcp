@@ -39,6 +39,11 @@ export function decideConfinement(
 }
 
 export function confinementUnavailableError(status: ConfinementStatus): CrotError {
+  if (status.reason === "artifact_export_pending")
+    return new CrotError(
+      "CONFINEMENT_UNAVAILABLE",
+      "Artifact export pending: retry export before commands or source writes; scratch has been retained",
+    );
   return new CrotError(
     "CONFINEMENT_UNAVAILABLE",
     `Command confinement L1 is not available on this machine (${status.reason ?? "unknown"}); ` +

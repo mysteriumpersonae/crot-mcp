@@ -205,6 +205,12 @@ const FULL_CONTROL_CONFINEMENT_NOTE =
  * decisions themselves.
  */
 export class CrotCore {
+  artifactStatus() {
+    return this.confinement.artifactState?.() ?? { pending: false };
+  }
+  async syncWorkspaceArtifacts(context: import("./auth/principal.js").AuthContext, input: unknown) {
+    return this.filesystem.syncWorkspaceArtifacts(context, input);
+  }
   private constructor(
     readonly config: CrotConfig,
     readonly workspace: Workspace,
@@ -339,6 +345,14 @@ export class CrotCore {
       ...(options.checkedCommands
         ? {
             checkedSource: projectSecrets,
+            exportArtifacts: <T>(
+              files: readonly string[],
+              commit: (files: import("./platform/workspace-artifacts.js").ArtifactSnapshot[]) => Promise<T>,
+            ) => {
+              if (!confinement.exportArtifacts)
+                throw new CrotError("CONFINEMENT_UNAVAILABLE", "Artifact export unavailable");
+              return confinement.exportArtifacts(files, commit);
+            },
             sourceMutation: <T>(execute: () => Promise<T>): Promise<T> => {
               if (!confinement.withSourceMutation)
                 throw new CrotError("CONFINEMENT_FAILED", "AD-58 source transaction is unavailable");

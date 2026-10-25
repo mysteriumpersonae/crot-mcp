@@ -1,3 +1,5 @@
+import { SkillSchema } from "./connector-manifests.js";
+import { SyncArtifactsSchema } from "../core/platform/workspace-artifacts.js";
 /** Owner-only product configuration RPCs. Tool execution is never accepted as arbitrary RPC. */
 import { ChatConfigureSchema, ChatProviderSchema, ChatStartSchema } from "./chat-protocol.js";
 import { TokenIssueSchema } from "./client-tokens.js";
@@ -18,6 +20,24 @@ const filter = z
   })
   .strict();
 export const PRODUCT_SCHEMAS = {
+  "chat.testConnection": z.object({ provider: ChatProviderSchema }).strict(),
+  "skills.list": z.object({}).strict(),
+  "skills.create": SkillSchema,
+  "skills.remove": z.object({ id }).strict(),
+  "skills.test": z.object({ id }).strict(),
+  "skills.run": z.object({ id, values: z.record(z.string(), z.string().max(4096)).default({}) }).strict(),
+  "browser.policy.get": z.object({}).strict(),
+  "browser.policy.set": z
+    .object({
+      mode: z.enum(["active", "targeted", "background"]),
+      domains: list,
+      blockedDomains: list,
+      sensitivePreset: z.boolean(),
+    })
+    .strict(),
+  "onboarding.status": z.object({}).strict(),
+  "onboarding.advance": z.object({ step: z.number().int().min(1).max(4) }).strict(),
+  "system.check": z.object({}).strict(),
   "chat.providers": z.object({}).strict(),
   "chat.configure": ChatConfigureSchema,
   "chat.models": z.object({ provider: ChatProviderSchema }).strict(),
@@ -36,6 +56,8 @@ export const PRODUCT_SCHEMAS = {
   "security.kill": z.object({}).strict(),
   "security.setPolicy": RuntimePolicySchema,
   "security.revokeProjectGrant": ProjectGrantSchema,
+  "projects.artifactStatus": z.object({}).strict(),
+  "projects.syncWorkspaceArtifacts": SyncArtifactsSchema,
   "projects.inspect": z.object({}).strict(),
   "projects.list": z.object({}).strict(),
   "projects.create": z.object({ path: z.string().min(1).max(4096), name: id.optional() }).strict(),

@@ -49,6 +49,12 @@ it(
           });
         return;
       }
+      if (req.url?.split("?")[0]?.endsWith("/models")) {
+        res
+          .writeHead(200, { "content-type": "application/json" })
+          .end(JSON.stringify({ data: [{ id: "fixture-model" }], has_more: false }));
+        return;
+      }
       seenAuth = req.headers.authorization ?? "";
       res.writeHead(200, { "content-type": "application/json" }).end('{"ok":true}');
     });
@@ -83,11 +89,58 @@ it(
     const rpc = async (method: ProductMethod, params = {}) =>
       (await control!.request(method, params)) as Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
     const original = await rpc("projects.list");
+    const catalog = await rpc("connectors.list");
+    expect(catalog.manifests.find((m: { id: string }) => m.id === "Remotion")).toMatchObject({
+      kind: "local",
+      command: "node",
+    });
+    expect(catalog.manifests.find((m: { id: string }) => m.id === "Runway")).toMatchObject({
+      kind: "web",
+      probe: "https://api.dev.runwayml.com/v1/organization",
+    });
+    await rpc("skills.create", {
+      id: "custom-check",
+      name: "Check Node",
+      command: process.execPath,
+      args: ["-e", 'console.log("{{value}}")'],
+      workingDirectory: "build/preview",
+    });
+    expect((await rpc("skills.list")).skills[0]).toMatchObject({
+      id: "custom-check",
+      workingDirectory: "build/preview",
+    });
+    for (const provider of ["OpenAI", "Anthropic", "Local HTTP"]) {
+      await rpc("chat.configure", {
+        provider,
+        endpoint: `http://127.0.0.1:${port}`,
+        credential: "stage-b-provider-secret",
+      });
+      expect((await rpc("chat.testConnection", { provider })).models).toEqual(["fixture-model"]);
+    }
+    const policy = {
+      mode: "targeted",
+      domains: ["example.com"],
+      blockedDomains: ["private.example.com"],
+      sensitivePreset: true,
+    };
+    await rpc("browser.policy.set", policy);
+    expect((await rpc("browser.policy.get")).policy).toEqual(policy);
+    await expect(rpc("browser.policy.set", { ...policy, domains: ["*.example.com"] })).rejects.toThrow();
+    await expect(rpc("onboarding.advance", { step: 2 })).rejects.toThrow();
+    for (const step of [1, 2, 3, 4]) await rpc("onboarding.advance", { step });
+    expect((await rpc("onboarding.status")).onboarding.completedStep).toBe(4);
+    const diagnosis = await rpc("system.check");
+    expect(diagnosis.report.node.version).toMatch(/^v/);
+    expect(diagnosis.report.ports.status).toBe("available");
+    expect(diagnosis.report.l1.sourceAccess).toBe("core-only");
+    expect(JSON.stringify(diagnosis)).not.toContain("stage-b-provider-secret");
+
     const second = await rpc("projects.create", {
       path: path.join(dirs.outside, "project-two"),
       name: "Second project",
     });
     await rpc("projects.select", { id: second.project.id });
+    expect((await rpc("browser.policy.get")).policy).toEqual(policy);
     await call("fs_write_file", { path: "real.txt", content: "real workspace content" });
     expect(await readFile(path.join(second.project.path, "real.txt"), "utf8")).toBe("real workspace content");
     expect((await call("crot_status")).workspace.root).toBe(second.project.path);
@@ -114,6 +167,24 @@ it(
     });
     const connected = await rpc("mcpServers.connect", { id: added.server.id });
     const confinement = (await call("crot_status")).confinement;
+    if (confinement.available) {
+      expect((await rpc("skills.test", { id: "custom-check" })).ok).toBe(true);
+      // Canonical cwd selection drains prior native actors, including stdio MCP.
+      // Require the real disconnected state and an explicit successful reconnect.
+      await waitFor(
+        async () =>
+          (await rpc("mcpServers.list")).servers.find((s: { id: string }) => s.id === added.server.id)?.status ===
+          "Disconnected",
+      );
+      await expect(
+        rpc("mcpServers.callTool", {
+          id: added.server.id,
+          tool: "echo",
+          arguments: { text: "must not reuse drained transport" },
+        }),
+      ).rejects.toThrow("Connect the server first");
+      expect((await rpc("mcpServers.connect", { id: added.server.id })).server.status).toBe("Connected");
+    } else await expect(rpc("skills.test", { id: "custom-check" })).rejects.toThrow();
     expect(confinement.sourceAccess).toBe("core-only");
     if (confinement.available) {
       expect(connected.server.status, JSON.stringify(connected.server.logs)).toBe("Connected");

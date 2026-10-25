@@ -293,6 +293,7 @@ export const CONFINEMENT_REASON_CODES = [
   "apparmor_unix_mediation_unavailable",
   "overlay_unavailable",
   "private_storage_unavailable",
+  "artifact_export_pending",
   "self_test_failed",
 ] as const;
 export type ConfinementReason = (typeof CONFINEMENT_REASON_CODES)[number];
@@ -346,6 +347,19 @@ export interface ConfinementScope {
  * operation.
  */
 export interface CoreConfinement {
+  /** AD-60: exclusive actor-drained launch in a verified private scratch subdirectory. */
+  launchScratch?(
+    command: string,
+    args: readonly string[],
+    options: Omit<LaunchOptions, "cwd">,
+    relativeDirectory: string,
+  ): Promise<ManagedProcess>;
+  /** AD-59: drain actors, capture selected files, commit via checked Core; clean only after success. */
+  artifactState?(): { pending: boolean; recoveryDirectory?: string };
+  exportArtifacts?<T>(
+    files: readonly string[],
+    commit: (files: import("./workspace-artifacts.js").ArtifactSnapshot[]) => Promise<T>,
+  ): Promise<T>;
   /** AD-58 composition only: serialize source writes with launch admission,
    * drain actors and release native source guards before executing checked I/O.
    * Failure must prevent I/O. Native backend interfaces do not grant this hook. */

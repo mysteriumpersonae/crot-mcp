@@ -1,5 +1,5 @@
 /** Composition tests use a stub native provider: NOT OS isolation evidence. */
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, writeFile, symlink } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { openCommandWorkspace } from "../../src/core/platform/command-workspace.js";
@@ -16,6 +16,84 @@ const ready: ConfinementStatus = {
   detail: null,
 };
 describe("AD-58 command workspace composition", () => {
+  it("launches in a canonical scratch subdirectory, retains artifacts and recovers from a refused link cwd", async () => {
+    const d = await makeTempDirs(),
+      node = await createNodePlatform();
+    let scope: ConfinementScope | undefined;
+    const nativeClose = vi.fn(async () => undefined);
+    const core = await createTestCore(
+      {
+        workspace: { root: d.workspace },
+        permissions: { mode: "full_control", projectSecrets: { allow: [{ workspace: d.workspace, path: ".env" }] } },
+      },
+      undefined,
+      {
+        checkedCommands: true,
+        platform: {
+          ...node,
+          privateFiles: {
+            ...node.privateFiles,
+            ensureDirectory: async (dir) => {
+              await mkdir(dir, { recursive: true, mode: 0o700 });
+            },
+            inspect: async () => ({ ownerOnly: true, mechanism: "posix-mode", detail: "unit stub" }),
+          },
+          confinement: {
+            probe: async () => ready,
+            open: async (s) => {
+              scope = s;
+              return {
+                launcher: node.launcher,
+                status: () => ready,
+                refresh: async () => ready,
+                close: nativeClose,
+                closeSync: () => undefined,
+              };
+            },
+          },
+        },
+      },
+    );
+    try {
+      const result = await core.processes.execInScratch(
+        ctx,
+        {
+          command: process.execPath,
+          args: ["-e", "require('fs').writeFileSync('clip.bin',Buffer.from([0,255,3]));console.log(process.cwd())"],
+        },
+        "renders/preview",
+      );
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout.trim()).toBe(path.join(scope!.workspace, "renders", "preview"));
+      await expect(access(path.join(d.workspace, "renders"))).rejects.toMatchObject({ code: "ENOENT" });
+      await symlink(
+        d.workspace,
+        path.join(scope!.workspace, "alias"),
+        process.platform === "win32" ? "junction" : "dir",
+      );
+      await expect(
+        core.processes.execInScratch(
+          ctx,
+          { command: process.execPath, args: ["-e", "process.exit(99)"] },
+          "alias/escape",
+        ),
+      ).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+      await core.refreshConfinement();
+      const restored = await core.processes.exec(ctx, {
+        command: process.execPath,
+        args: ["-e", "console.log('RESTORED')"],
+      });
+      expect(restored.exitCode).toBe(0);
+      expect(restored.stdout).toContain("RESTORED");
+      await core.syncWorkspaceArtifacts(ctx, { files: ["renders/preview/clip.bin"] });
+      expect(await readFile(path.join(d.workspace, "renders/preview/clip.bin"))).toEqual(Buffer.from([0, 255, 3]));
+      expect(nativeClose).toHaveBeenCalled();
+    } finally {
+      await core.shutdown();
+      await d.cleanup();
+    }
+  });
+
   it("maps commands into empty private scratch, forwards launcher guarantees and never imports writes", async () => {
     const d = await makeTempDirs(),
       node = await createNodePlatform();

@@ -154,6 +154,22 @@ export async function runServiceScenarios({ real, evaluate, until, size, screens
   await until("document.querySelector('dialog pre')?.textContent.includes('Connected')");
   await screenshot("05-connector-real-service");
   await click("Close", "dialog button");
+  await click("Create Custom Skill");
+  await fill("Skill ID", "custom-ui-proof");
+  await fill("Skill name", "UI persisted skill");
+  await fill("Executable", process.execPath);
+  await fill("Scratch subdirectory", "renders/preview");
+  await fill("Argument template (JSON array)", '["--version"]');
+  await click("Save skill", "dialog button");
+  await until("!document.getElementById('action-dialog').open");
+  await until("document.body.textContent.includes('UI persisted skill')");
+  const skills = await evaluate("window.crot.product('skills.list')");
+  if (
+    !skills.skills.some(
+      (s) => s.id === "custom-ui-proof" && s.command === process.execPath && s.workingDirectory === "renders/preview",
+    )
+  )
+    throw Error("Skill was not persisted through the shipped form");
   await section("MCP Servers");
   await click("Add server");
   await fill("Server name", "Real fixture MCP");
@@ -267,6 +283,25 @@ export async function runServiceScenarios({ real, evaluate, until, size, screens
     await section(name);
     await screenshot(name.toLowerCase() + "-real-service");
   }
+  await section("Browser");
+  await until("document.querySelector('select[aria-label=\"Tab mode\"]')");
+  await evaluate(
+    "(()=>{const s=document.querySelector('select[aria-label=\"Tab mode\"]');s.value='targeted';s.dispatchEvent(new Event('change'));})()",
+  );
+  await fill("Target domains", "127.0.0.1");
+  await fill("Blocked domains", "localhost");
+  await click("Save browser policy");
+  await confirm();
+  const tabPolicy = await evaluate("window.crot.product('browser.policy.get')");
+  if (tabPolicy.policy.mode !== "targeted" || tabPolicy.policy.domains[0] !== "127.0.0.1")
+    throw Error("Browser policy form did not persist");
+  await section("Settings");
+  await click("Updates & Diagnostics");
+  await click("Check system");
+  await until("document.querySelector('main pre')?.textContent.includes('nativeCommandPrerequisiteMet')");
+  await click("First-run setup");
+  await until("document.querySelector('dialog')?.textContent.includes('Step 1 / 4')");
+  await click("Close", "dialog button");
   await writeFile(
     path.join(artifacts, "verification.json"),
     JSON.stringify(
@@ -277,6 +312,9 @@ export async function runServiceScenarios({ real, evaluate, until, size, screens
         ...(await real.verify()),
         ...chatEvidence,
         ownerSecretConfirmationAndRevocation: true,
+        customSkillFormPersistence: true,
+        browserPolicyFormPersistence: true,
+        realSystemCheckAndWizardEntry: true,
         nativeTerminalCancellationExecuted: state.confinement.available,
         terminalMissingNativeRefusal: !state.confinement.available,
       },

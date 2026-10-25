@@ -1,3 +1,4 @@
+import { ScratchDirectorySchema } from "../../platform/scratch-directory.js";
 import { stat } from "node:fs/promises";
 import type { AuthContext } from "../../auth/principal.js";
 import type { Limits } from "../../config/schema.js";
@@ -112,7 +113,14 @@ export class ProcessService {
   constructor(private readonly deps: ProcessServiceDeps) {}
 
   /** Run an executable with arguments (no shell) and wait for it to finish. */
-  async exec(context: AuthContext, input: ExecInput): Promise<ExecResult> {
+  exec(context: AuthContext, input: ExecInput): Promise<ExecResult> {
+    return this.execChecked(context, input);
+  }
+  /** Owner Custom Skills only: cwd is private scratch, not a live source path. */
+  execInScratch(context: AuthContext, input: ExecInput, relativeDirectory = "."): Promise<ExecResult> {
+    return this.execChecked(context, input, ScratchDirectorySchema.parse(relativeDirectory));
+  }
+  private async execChecked(context: AuthContext, input: ExecInput, scratchCwd?: string): Promise<ExecResult> {
     const args = parseInput(ExecInputSchema, input);
     const encoding = this.deps.platform.encodings.resolve(args.encoding);
     const cwd = await this.deps.workspace.resolve(args.cwd);
@@ -121,13 +129,30 @@ export class ProcessService {
       operation: "process.exec",
       capability: "shell.execute",
       paths: [cwd],
-      details: { command: args.command, args: args.args, ...commonDetails(args, timeoutMs) },
+      details: {
+        command: args.command,
+        args: args.args,
+        ...(scratchCwd === undefined ? {} : { scratchCwd }),
+        ...commonDetails(args, timeoutMs),
+      },
     } as const;
     return this.deps.guard.run(context, op, async () => {
       this.assertOpen();
       const launcher = this.launcherFor(context);
       await assertDirectory(cwd);
       const env = this.env(args.env);
+      if (scratchCwd !== undefined) {
+        if (!this.deps.confinement?.launchScratch)
+          throw new CrotError("CONFINEMENT_FAILED", "Protected scratch launch is unavailable; no unconfined fallback");
+        const started = Date.now();
+        const proc = await this.deps.confinement.launchScratch(
+          args.command,
+          args.args,
+          { env, stdin: args.stdin !== undefined },
+          scratchCwd,
+        );
+        return this.manageForeground(proc, started, args.stdin, timeoutMs, encoding, context.signal);
+      }
       const spec = await launcher.resolveCommand(args.command, args.args, {
         cwd: cwd.absolute,
         env,
@@ -473,6 +498,16 @@ export class ProcessService {
   ): Promise<ExecResult> {
     const started = Date.now();
     const proc = await launcher.launch(spec, { cwd: cwd.absolute, env, stdin: stdin !== undefined });
+    return this.manageForeground(proc, started, stdin, timeoutMs, encoding, signal);
+  }
+  private async manageForeground(
+    proc: ManagedProcess,
+    started: number,
+    stdin: string | undefined,
+    timeoutMs: number,
+    encoding: ResolvedEncoding,
+    signal?: AbortSignal,
+  ): Promise<ExecResult> {
     this.foreground.add(proc);
     const abort = () => {
       void proc.terminate("force");

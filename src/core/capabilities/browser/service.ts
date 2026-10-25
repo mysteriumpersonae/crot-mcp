@@ -1,3 +1,4 @@
+import { DEFAULT_TAB_POLICY, parseTabPolicy, type BrowserTabPolicy } from "./tab-policy.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { TabQueue } from "./tab-queue.js";
 import type { ExposureScope } from "../../auth/principal.js";
@@ -157,6 +158,16 @@ export interface BrowserServiceDeps {
  * acts. Any mismatch denies the operation (PERMISSION_DENIED) without acting.
  */
 export class BrowserService {
+  private tabPolicy: BrowserTabPolicy | undefined;
+  getTabPolicy(): BrowserTabPolicy {
+    return structuredClone(this.tabPolicy ?? DEFAULT_TAB_POLICY);
+  }
+  setTabPolicy(value: unknown): void {
+    const next = parseTabPolicy(value);
+    for (const controller of this.pending) controller.abort();
+    this.tabPolicy = next;
+  }
+
   private readonly timeoutMs: number;
   private readonly pending = new Set<AbortController>();
   private readonly queues = new TabQueue();
@@ -1148,6 +1159,7 @@ export class BrowserService {
       params = { ...params, tabId: active.tabId };
       connectionId ??= active.connectionId;
     }
+    if (this.tabPolicy) params = { ...params, __crotTabPolicy: this.getTabPolicy() } as BrowserCommandParams[C];
     const connection = bound ? this.boundConnection(bound) : this.requireConnection();
     const controller = new AbortController();
     this.pending.add(controller);

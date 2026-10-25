@@ -1,5 +1,5 @@
 service: CROT Cloud Relay
-public_url: https://relay.crot.network/.crot/health
+public_url: https://mcp.crot.network/.crot/health
 components:
   - name: Relay API
     slo: 99.9%

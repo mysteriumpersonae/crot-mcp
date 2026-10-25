@@ -131,6 +131,10 @@ export async function qualifyCheckedSource(): Promise<void> {
     expect(await readFile(path.join(d.workspace, "public.txt"), "utf8")).toBe("host-public-replacement");
     await expect(access(path.join(d.workspace, "private-only.txt"))).rejects.toMatchObject({ code: "ENOENT" });
     await expect(access(path.join(d.workspace, ".env.created"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(core.syncWorkspaceArtifacts(testContext, { files: [".env.generated"] })).rejects.toThrow();
+    const exported = await core.syncWorkspaceArtifacts(testContext, { files: ["private-only.txt"] });
+    expect(exported.written).toEqual([{ path: "private-only.txt", bytesWritten: 7 }]);
+    expect(await readFile(path.join(d.workspace, "private-only.txt"), "utf8")).toBe("private");
     await core.filesystem.writeFile(testContext, { path: "atomic.tmp", content: "checked-after" });
     await core.filesystem.move(testContext, { from: "atomic.tmp", to: "public.txt", overwrite: true });
     expect(await readFile(path.join(d.workspace, "public.txt"), "utf8")).toBe("checked-after");
@@ -144,6 +148,24 @@ export async function qualifyCheckedSource(): Promise<void> {
     });
     expect(next.exitCode).toBe(0);
     expect(next.stdout).toContain("AD58-FRESH");
+    const subdir = await core.processes.execInScratch(
+      testContext,
+      {
+        command: process.platform === "win32" ? "node" : process.execPath,
+        args: [
+          "-e",
+          `const f=require('fs'),p=require('path');let denied=0;for(const v of ${JSON.stringify([path.join(d.workspace, ".env"), path.join(d.workspace, ".ENVbackup"), path.join(state, "control-canary")])}){try{f.readFileSync(v);process.exit(19)}catch{denied++}};f.writeFileSync('result.txt','NESTED');console.log(JSON.stringify({cwd:process.cwd(),denied}))`,
+        ],
+      },
+      "renders/preview",
+    );
+    expect(subdir.exitCode).toBe(0);
+    const nested = JSON.parse(subdir.stdout.trim());
+    expect(nested.denied).toBe(3);
+    expect(nested.cwd).toMatch(/renders[\\/]preview$/);
+    await expect(access(path.join(d.workspace, "renders"))).rejects.toMatchObject({ code: "ENOENT" });
+    await core.syncWorkspaceArtifacts(testContext, { files: ["renders/preview/result.txt"] });
+    expect(await readFile(path.join(d.workspace, "renders/preview/result.txt"), "utf8")).toBe("NESTED");
     await expect(access(path.join(d.workspace, "fresh.txt"))).rejects.toMatchObject({ code: "ENOENT" });
   } finally {
     await child?.terminate("force");
@@ -167,6 +189,8 @@ export async function qualifyCheckedSource(): Promise<void> {
         "existing-and-future-secrets-denied",
         "scratch-write",
         "checked-core-commit",
+        "checked-artifact-export",
+        "canonical-scratch-subdirectory",
         "fresh-generation",
         "teardown",
       ],

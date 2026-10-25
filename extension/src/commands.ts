@@ -1,3 +1,8 @@
+import {
+  parseTabPolicy,
+  tabPolicyAllows,
+  type BrowserTabPolicy,
+} from "../../src/core/capabilities/browser/tab-policy.js";
 import { DownloadCapture } from "./download-capture.js";
 import type { BrowserCommand } from "../../src/core/capabilities/browser/connection.js";
 import type { ChromeApi, ChromeTab } from "./chrome-api.js";
@@ -80,6 +85,7 @@ export type CommandParams = Readonly<Record<string, unknown>>;
 export interface CommandContext {
   /** Connection id from the host's `welcome` (AD-9); undefined when unknown or the connection is gone. */
   readonly connectionId: () => string | undefined;
+  readonly tabPolicy?: BrowserTabPolicy;
 }
 
 export type CommandHandler = (params: CommandParams, context?: CommandContext) => Promise<unknown>;
@@ -477,7 +483,11 @@ export function createCommandHandlers(api: ChromeApi, options: CommandOptions = 
     context: CommandContext | undefined,
     page: boolean,
   ): Promise<ChromeTab & { readonly id: number }> {
-    if (!expected) return page ? resolvePageTab(tabId) : resolveTab(tabId);
+    if (!expected) {
+      const tab = await (page ? resolvePageTab(tabId) : resolveTab(tabId));
+      await enforceTabPolicy(context, tab);
+      return tab;
+    }
     if (tabId === undefined || tabId !== expected.tabId) throw mismatch("tab");
     let tab: ChromeTab;
     try {
@@ -487,7 +497,17 @@ export function createCommandHandlers(api: ChromeApi, options: CommandOptions = 
     }
     if (!hasId(tab)) throw mismatch("tab closed");
     checkTab(expected, tab, context);
+    await enforceTabPolicy(context, tab);
     return tab;
+  }
+
+  async function enforceTabPolicy(context: CommandContext | undefined, tab: ChromeTab): Promise<void> {
+    const active =
+      context?.tabPolicy?.mode === "active"
+        ? (await api.tabs.query({ active: true, lastFocusedWindow: true }))[0]?.id === tab.id
+        : tab.active === true;
+    if (context?.tabPolicy && !tabPolicyAllows(context.tabPolicy, tab.url ?? "", active))
+      throw new ExtensionError("BROWSER_PAGE_RESTRICTED", "Tab is excluded by owner browser policy");
   }
 
   /** True when the load finishes; false on close or loadWaitMs expiry. Never rejects. */
@@ -713,13 +733,26 @@ export function createCommandHandlers(api: ChromeApi, options: CommandOptions = 
         }),
       );
     },
-    async "tabs.list"(params) {
+    async "tabs.list"(params, context) {
       onlyKeys(params, []);
       const tabs = await api.tabs.query({});
+      const activeId =
+        context?.tabPolicy?.mode === "active"
+          ? (await api.tabs.query({ active: true, lastFocusedWindow: true }))[0]?.id
+          : undefined;
       return {
         tabs: await Promise.all(
           tabs
             .filter(hasId)
+            .filter(
+              (tab) =>
+                !context?.tabPolicy ||
+                tabPolicyAllows(
+                  context.tabPolicy,
+                  tab.url ?? "",
+                  context.tabPolicy.mode === "active" ? tab.id === activeId : tab.active === true,
+                ),
+            )
             .slice(0, MAX_TABS)
             .map(async (tab) => {
               const groups = await api.tabGroups.query({ title: "CROT", windowId: tab.windowId });
@@ -735,9 +768,9 @@ export function createCommandHandlers(api: ChromeApi, options: CommandOptions = 
       };
     },
 
-    async "tabs.resolve"(params) {
+    async "tabs.resolve"(params, context) {
       onlyKeys(params, ["tabId"]);
-      const tab = await resolveTab(optionalTabIdParam(params));
+      const tab = await targetTab(optionalTabIdParam(params), undefined, context, false);
       // The committed URL: what the tab shows now, not where it may be going.
       return { tabId: tab.id, url: bounded(tab.url, URL_MAX_LENGTH) };
     },
@@ -1253,6 +1286,23 @@ export function createCommandHandlers(api: ChromeApi, options: CommandOptions = 
     Object.entries(handlers).map(([name, handler]) => [
       name,
       async (params: CommandParams, context?: CommandContext) => {
+        if (params.__crotTabPolicy !== undefined) {
+          let policy: BrowserTabPolicy;
+          try {
+            policy = parseTabPolicy(params.__crotTabPolicy);
+          } catch {
+            throw invalid("Invalid owner tab policy");
+          }
+          const { __crotTabPolicy: _ignored, ...clean } = params;
+          params = clean;
+          context = { connectionId: context?.connectionId ?? (() => undefined), tabPolicy: policy };
+        }
+        if (
+          context?.tabPolicy &&
+          typeof params.url === "string" &&
+          !tabPolicyAllows(context.tabPolicy, params.url, name === "tabs.open" ? params.active === true : true)
+        )
+          throw new ExtensionError("BROWSER_PAGE_RESTRICTED", "Destination is excluded by owner browser policy");
         const dispatch = async (): Promise<unknown> => {
           if (exempt.has(name as BrowserCommand)) return handler(params, context);
           const tab = await targetTab(optionalTabIdParam(params), expectParam(params), context, true);

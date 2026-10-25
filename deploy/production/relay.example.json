@@ -1,6 +1,6 @@
 {
   "environment": "production",
-  "relayHost": "relay.crot.network",
+  "relayHost": "mcp.crot.network",
   "issuer": "https://auth.crot.network",
   "pairingClientId": "REPLACE_WITH_PRODUCTION_PUBLIC_PAIRING_CLIENT_ID",
   "host": "0.0.0.0",

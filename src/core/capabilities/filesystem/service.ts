@@ -1,3 +1,4 @@
+import { SyncArtifactsSchema, type ArtifactSnapshot } from "../../platform/workspace-artifacts.js";
 import { constants } from "node:fs";
 import {
   appendFile,
@@ -51,6 +52,10 @@ export interface FileSystemServiceDeps {
   readonly guard: Pick<ExecutionGuard, "run">;
   /** AD-58 service-only checked source semantics; no child can mutate this tree. */
   readonly checkedSource?: ProjectSecretPolicy;
+  readonly exportArtifacts?: <T>(
+    files: readonly string[],
+    commit: (files: ArtifactSnapshot[]) => Promise<T>,
+  ) => Promise<T>;
   readonly sourceMutation?: <T>(execute: () => Promise<T>) => Promise<T>;
   readonly limits: Pick<Limits, "maxReadBytes">;
   /** Serialises writes into Git directories with git.read operations on them (ARCHITECTURE.md §27, AD-1). */
@@ -86,7 +91,9 @@ export class FileSystemService {
                       throw new CrotError("PERMISSION_DENIED", "AD-58 source identity or secret boundary changed");
                   }
                   const capabilities = Array.isArray(op.capability) ? op.capability : [op.capability];
-                  return capabilities.includes("filesystem.write") && deps.sourceMutation
+                  return op.operation !== "filesystem.sync_workspace_artifacts" &&
+                    capabilities.includes("filesystem.write") &&
+                    deps.sourceMutation
                     ? deps.sourceMutation(async () => {
                         if (context.signal?.aborted)
                           throw new CrotError("OPERATION_FAILED", "Source operation cancelled during actor drain");
@@ -99,6 +106,70 @@ export class FileSystemService {
               }),
           },
         };
+  }
+
+  async syncWorkspaceArtifacts(context: AuthContext, input: unknown) {
+    const args = parseInput(SyncArtifactsSchema, input);
+    if (!this.deps.exportArtifacts || !this.deps.checkedSource)
+      throw new CrotError("CONFINEMENT_UNAVAILABLE", "Checked artifact export unavailable");
+    if (new Set(args.files.map((p) => p.toLowerCase())).size !== args.files.length)
+      throw new CrotError("INVALID_INPUT", "Duplicate artifact paths");
+    const targets = await Promise.all(
+      args.files.map((p) => this.deps.workspace.resolve(p, { followFinalSymlink: false })),
+    );
+    return this.deps.guard.run(
+      context,
+      {
+        operation: "filesystem.sync_workspace_artifacts",
+        capability: "filesystem.write",
+        paths: targets,
+        details: { count: args.files.length, overwrite: args.overwrite },
+      },
+      () =>
+        this.deps.exportArtifacts!(args.files, async (snapshots) => {
+          const written: { path: string; bytesWritten: number }[] = [];
+          for (const item of snapshots) {
+            if (context.signal?.aborted)
+              throw new CrotError("OPERATION_FAILED", "Artifact export cancelled; scratch retained");
+            const target = await this.deps.workspace.resolve(item.path, { followFinalSymlink: false });
+            if (!target.insideWorkspace || this.deps.checkedSource!.denies(target))
+              throw new CrotError("PERMISSION_DENIED", "Artifact destination refused");
+            // No symlink ancestors, even ones targeting another directory in source.
+            let current = this.deps.workspace.root;
+            for (const part of item.path.split("/")) {
+              current = path.join(current, part);
+              const info = await lstat(current).catch((e: NodeJS.ErrnoException) => {
+                if (e.code === "ENOENT") return undefined;
+                throw e;
+              });
+              if (info?.isSymbolicLink())
+                throw new CrotError("PERMISSION_DENIED", "Artifact destination links refused");
+            }
+            await assertRegularFileOrMissing(target.absolute, display(target), false);
+            await mkdir(path.dirname(target.absolute), { recursive: true });
+            const handle = await open(
+              target.absolute,
+              constants.O_WRONLY |
+                constants.O_CREAT |
+                (constants.O_NOFOLLOW ?? 0) |
+                (args.overwrite ? 0 : constants.O_EXCL),
+              0o600,
+            );
+            try {
+              const info = await handle.stat();
+              if (!info.isFile() || info.nlink !== 1)
+                throw new CrotError("PERMISSION_DENIED", "Artifact destination must be single-link regular file");
+              await handle.truncate(0);
+              await handle.writeFile(item.data);
+              await handle.sync();
+            } finally {
+              await handle.close();
+            }
+            written.push({ path: item.path, bytesWritten: item.data.length });
+          }
+          return { ok: true, written, atomicBatch: false };
+        }),
+    );
   }
 
   private async checkedTree(file: string): Promise<void> {
