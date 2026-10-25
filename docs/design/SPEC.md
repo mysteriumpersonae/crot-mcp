@@ -3,7 +3,7 @@
 ## Owner directive — 2026-10-24 (takes precedence over the attached review)
 
 - Full delegation: generate the SVG master in code from 01-login; no manual design prerequisite.
-- Official domain: `crot.networking`; MCP/Relay endpoint: `https://mcp.crot.networking/relay/...`. Never migrate credentials or production deployments as a cosmetic change.
+- Official domain: `crot.network`; MCP/Relay endpoint: `https://mcp.crot.network/relay/...`. Never migrate credentials or production deployments as a cosmetic change.
 - Reference images live in `reference/`; historical alternatives 04/06 are not implementation targets.
 - SVG masters: `assets/brand/crot-mascot.svg`, `crot-wordmark.svg`; all derivatives generated, not separately redrawn. Fill #FFC21A, stroke #1B2236, no gloss or shadows. Wordmark text is outlined.
 - Local Inter Variable for UI; local JetBrains Mono Variable for URLs, paths, tokens, ports. Latin and Cyrillic, tabular numerals, no Google Fonts calls.
@@ -42,7 +42,7 @@ Oct 24, 2026 · @kos
 Аккаунты и платежи
 [ ] Merchant of Record для приёма платежей (Paddle, Lemon Squeezy или Polar). Stripe недоступен для бизнеса в Украине: страница stripe.com/global её не содержит.
 [ ] Подпись приложений. Apple Developer Program (около $99 в год, по моим данным, проверь), сертификат подписи кода для Windows и разовый взнос Chrome Web Store для расширения (около $5, проверь). Без подписи ОС показывает предупреждения при установке.
-[ ] Домен и название. В макете уже есть mcp.crot.networking: убедись, что домен crot.networking зарегистрирован на тебя, и проверь, не занято ли название CROT как торговая марка в классе ПО.
+[ ] Домен и название. В макете уже есть mcp.crot.network: убедись, что домен crot.network зарегистрирован на тебя, и проверь, не занято ли название CROT как торговая марка в классе ПО.
 [ ] Документы. Terms of Service и Privacy Policy: ссылки на них уже есть в «Настройках», страницы должны существовать к релизу.
 Материалы для агента
 [ ] Положить скриншоты в docs/design/reference/ под именами 01-login, 02-plans, 03-home, 04-home-old, 05-chat, 06-chat-old, 07-agents-tokens, 08-projects, 09-connectors-local, 10-connectors-web, 11-accounts, 12-permissions, 13-browser, 14-settings, а этот документ как docs/design/SPEC.md.

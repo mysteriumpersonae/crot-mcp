@@ -1,5 +1,5 @@
 import { it, expect } from "vitest";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { CONNECTOR_MANIFESTS, SkillSchema } from "../../src/service/connector-manifests.js";
 import { validateEnvironment } from "../../src/identity/environment.js";
 import { parseRelayConfig } from "../../src/cloud-relay/config.js";
@@ -23,13 +23,14 @@ it("has one typed manifest per connector and keeps command templates separate fr
     overwrite: false,
   });
 });
-it("supports explicit networking deployment profiles without weakening legacy issuer pins", async () => {
-  for (const suffix of ["", "networking."]) {
-    const identity = JSON.parse(await readFile(`deploy/production/identity.${suffix}example.json`, "utf8"));
-    const relay = JSON.parse(await readFile(`deploy/production/relay.${suffix}example.json`, "utf8"));
-    expect(validateEnvironment(identity, "release")).toMatchObject({
-      relayHost: suffix ? "mcp.crot.networking" : "relay.crot.network",
-    });
-    expect(parseRelayConfig(relay)).toMatchObject({ relayHost: identity.relayHost, issuer: identity.issuer });
-  }
+it("uses one official production host with matching issuer pins and no temporary profiles", async () => {
+  const identity = JSON.parse(await readFile("deploy/production/identity.example.json", "utf8"));
+  const relay = JSON.parse(await readFile("deploy/production/relay.example.json", "utf8"));
+  expect(validateEnvironment(identity, "release")).toMatchObject({
+    relayHost: "mcp.crot.network",
+    issuer: "https://auth.crot.network",
+  });
+  expect(parseRelayConfig(relay)).toMatchObject({ relayHost: identity.relayHost, issuer: identity.issuer });
+  const files = await readdir("deploy/production");
+  expect(files.filter((p) => p.endsWith(".example.json"))).toEqual(["identity.example.json", "relay.example.json"]);
 });

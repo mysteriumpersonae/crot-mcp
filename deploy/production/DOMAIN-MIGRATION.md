@@ -1,13 +1,13 @@
-# Opt-in networking domain deployment
+# Official production domain
 
-The Stage B target is `crot.networking`, MCP endpoint `mcp.crot.networking`.
-Use `relay.networking.example.json` and `identity.networking.example.json`
-as one matched configuration pair after DNS/TLS and the identity provider are
-provisioned by the operator. These files do not provision DNS, certificates or
-identity applications. Replace the placeholder pairing client ID before release.
+The only official production domain is `crot.network`; the MCP/Relay endpoint
+is `https://mcp.crot.network` and the pinned issuer is `https://auth.crot.network`.
+Use `identity.example.json` and `relay.example.json` as the matched production
+configuration pair. Temporary alternative-domain profiles have been removed
+following the owner correction recorded in AD-60.
 
-Existing `*.example.json` profiles and pinned staging fixtures retain
-`crot.network` for compatibility. There is no implicit issuer alias, redirect,
-or relaxation of audience/host verification. Keep the old host operational for
-existing paired clients; switching a pinned identity profile requires deliberate
-re-pairing and matching backend configuration. Do not silently mix the two pairs.
+These files do not provision DNS, certificates or identity applications. Replace
+the placeholder pairing client ID before release. Issuer/audience verification
+is not widened and there is no alternate production-domain alias. A deployed
+older relay host requires an explicit operator-managed endpoint migration and
+re-pairing; do not redirect or silently mix pinned configurations.

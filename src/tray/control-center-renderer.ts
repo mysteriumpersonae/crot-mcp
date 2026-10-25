@@ -130,12 +130,12 @@ export const CONTROL_CENTER_RENDERER =
     const p=panel('Custom Skills'),out=node('div');
     const create=button('Create Custom Skill',()=>{
       modal('Custom Skill',d=>{
-        const id=field('Skill ID','text','custom-'),name=field('Skill name'),command=field('Executable'),args=field('Argument template (JSON array)','textarea','[]');
-        d.append(id.wrap,name.wrap,command.wrap,args.wrap);
-        d.append(button('Save skill',async()=>{await rpc('skills.create',{id:id.input.value,name:name.input.value,command:command.input.value,args:JSON.parse(args.input.value),workingDirectory:'.'});d.close();renderPage();}),button('Cancel',()=>d.close()));
+        const id=field('Skill ID','text','custom-'),name=field('Skill name'),command=field('Executable'),args=field('Argument template (JSON array)','textarea','[]'),cwd=field('Scratch subdirectory','text','.');
+        d.append(id.wrap,name.wrap,command.wrap,args.wrap,cwd.wrap);
+        d.append(button('Save skill',async()=>{await rpc('skills.create',{id:id.input.value,name:name.input.value,command:command.input.value,args:JSON.parse(args.input.value),workingDirectory:cwd.input.value||'.'});d.close();renderPage();}),button('Cancel',()=>d.close()));
       });
     });
-    p.append(node('p','Skills run through Core in private scratch. Only root cwd is supported. {{name}} placeholders remain literal argv entries. Export useful results before other Core writes.','muted'),create,out);root.append(p);
+    p.append(node('p','Skills run through Core in private scratch. An optional relative cwd stays inside scratch; traversal and links are forbidden. {{name}} placeholders remain literal argv entries. Export useful results before other Core writes.','muted'),create,out);root.append(p);
     loadInto(out,async()=>{
       const r=await rpc('skills.list');clear(out);
       for(const skill of r.skills){

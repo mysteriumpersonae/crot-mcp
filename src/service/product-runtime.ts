@@ -519,7 +519,11 @@ export class ProductRuntime {
               );
         const result = await this.host
           .core()
-          .processes.exec(this.context(), { command: skill.command, args, cwd: this.activeProject.path });
+          .processes.execInScratch(
+            this.context(),
+            { command: skill.command, args, cwd: this.activeProject.path },
+            skill.workingDirectory,
+          );
         return { ok: result.exitCode === 0, result };
       }
       case "onboarding.status":

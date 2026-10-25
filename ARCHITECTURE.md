@@ -6093,3 +6093,36 @@ provisioning and deliberate re-pairing are operator actions, not fabricated CI.
 Stage B remains unqualified until its new native tests, UI/service tests and all
 11 exact-head checks actually pass. PR #5 was merged with explicit owner approval;
 PR #6 must not be merged without further instruction.
+
+
+### AD-60. Stage B final contract: local models, private cwd and official domain
+
+Owner directive supersedes AD-59's temporary domain profiles and root-only
+Custom Skill cwd restriction. The only official production domain is
+`crot.network`, MCP/Relay `https://mcp.crot.network`, issuer
+`https://auth.crot.network`. Temporary alternative-domain deployment profiles
+are removed; neither token issuers nor host/audience pins gain an alias.
+Historical AD-59 describes a superseded proposal, not a second production domain.
+
+Local Models means OpenAI-compatible `/v1/models` and
+`/v1/chat/completions`, including Ollama's supported `/v1` compatibility API,
+LM Studio and vLLM. A separate native OpenCode server protocol is not required
+and must not be advertised as implemented. This closes that Stage B item.
+
+Custom Skills may select an optional slash-separated relative
+`workingDirectory`, default `.`. It names private scratch only, never a live
+source directory. Absolute paths, dot-dot, empty components, secret patterns,
+Windows ambiguous paths and symlinks are refused. Core holds command admission,
+drains all prior sandbox actors, validates/creates directory components with
+lstat and canonical-path containment, reopens native confinement, then resolves
+and spawns without releasing admission in between. This prevents a sibling
+sandbox actor from replacing cwd ancestors between validation and spawn. Skill
+launch drains prior commands but retains scratch artifacts. Every checked
+source write still drains/clears scratch under AD-58. Native failure is fail-closed;
+there is no direct host-launch fallback. Mandatory native acceptance includes a
+nested cwd command, continued source/control/secret denial and checked export
+of its resulting artifact. Composition mocks are not OS isolation evidence.
+
+Once the updated exact-head 11 CI checks pass, the owner explicitly authorizes
+marking PR #6 Ready and merging it. Stage C must start in a new branch/PR #7;
+this does not authorize publishing user content or merging PR #7 automatically.

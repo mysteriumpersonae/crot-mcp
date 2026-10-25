@@ -1,4 +1,5 @@
 /** Stage B built-ins: data only, never arbitrary imported executable plugins. */
+import { ScratchDirectorySchema } from "../core/platform/scratch-directory.js";
 import { z } from "zod";
 export const ConnectorManifestSchema = z
   .object({
@@ -59,7 +60,7 @@ export const SkillSchema = z
       .max(4096)
       .regex(/^[^\r\n\0]+$/),
     args: z.array(z.string().max(4096)).max(128).default([]),
-    workingDirectory: z.literal(".").default("."),
+    workingDirectory: ScratchDirectorySchema,
   })
   .strict();
 export type CustomSkill = z.infer<typeof SkillSchema>;

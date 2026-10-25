@@ -158,12 +158,17 @@ export async function runServiceScenarios({ real, evaluate, until, size, screens
   await fill("Skill ID", "custom-ui-proof");
   await fill("Skill name", "UI persisted skill");
   await fill("Executable", process.execPath);
+  await fill("Scratch subdirectory", "renders/preview");
   await fill("Argument template (JSON array)", '["--version"]');
   await click("Save skill", "dialog button");
   await until("!document.getElementById('action-dialog').open");
   await until("document.body.textContent.includes('UI persisted skill')");
   const skills = await evaluate("window.crot.product('skills.list')");
-  if (!skills.skills.some((s) => s.id === "custom-ui-proof" && s.command === process.execPath))
+  if (
+    !skills.skills.some(
+      (s) => s.id === "custom-ui-proof" && s.command === process.execPath && s.workingDirectory === "renders/preview",
+    )
+  )
     throw Error("Skill was not persisted through the shipped form");
   await section("MCP Servers");
   await click("Add server");

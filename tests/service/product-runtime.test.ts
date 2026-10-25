@@ -103,9 +103,12 @@ it(
       name: "Check Node",
       command: process.execPath,
       args: ["-e", 'console.log("{{value}}")'],
-      workingDirectory: ".",
+      workingDirectory: "build/preview",
     });
-    expect((await rpc("skills.list")).skills[0].id).toBe("custom-check");
+    expect((await rpc("skills.list")).skills[0]).toMatchObject({
+      id: "custom-check",
+      workingDirectory: "build/preview",
+    });
     for (const provider of ["OpenAI", "Anthropic", "Local HTTP"]) {
       await rpc("chat.configure", {
         provider,

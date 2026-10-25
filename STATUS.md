@@ -31,7 +31,7 @@ Four axes are independent: **implementation** (planned/partial/implemented), **v
 
 ## External gates
 
-Production `relay.crot.network`, live Stripe, vendor signing/notarization, GUI installers, store publication, legal operator approval, live disaster recovery, ≥4 external-client compatibility runs, beta and GA remain open. AD-36 resolves the single-issuer RFC 9207 deviation; it is not an open requirement to add unsupported issuer metadata.
+Production `mcp.crot.network`, live Stripe, vendor signing/notarization, GUI installers, store publication, legal operator approval, live disaster recovery, ≥4 external-client compatibility runs, beta and GA remain open. AD-36 resolves the single-issuer RFC 9207 deviation; it is not an open requirement to add unsupported issuer metadata.
 
 Unique branch decisions are retained in [BRANCH_RECONCILIATION](docs/BRANCH_RECONCILIATION.md). No branch deletion/history rewriting is part of normalization. Local `opencode.json` is private and must be preserved.
 

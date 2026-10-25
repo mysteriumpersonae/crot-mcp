@@ -347,6 +347,13 @@ export interface ConfinementScope {
  * operation.
  */
 export interface CoreConfinement {
+  /** AD-60: exclusive actor-drained launch in a verified private scratch subdirectory. */
+  launchScratch?(
+    command: string,
+    args: readonly string[],
+    options: Omit<LaunchOptions, "cwd">,
+    relativeDirectory: string,
+  ): Promise<ManagedProcess>;
   /** AD-59: drain actors, capture selected files, commit via checked Core; clean only after success. */
   artifactState?(): { pending: boolean; recoveryDirectory?: string };
   exportArtifacts?<T>(

@@ -2,14 +2,14 @@
 
 > Offline restore validates complete schemas and registry→commercial ownership before writes. Each rename is atomic; the pair is NOT a power-loss-proof transaction. A second replacement failure restores previous bytes via rename; rollback failure is explicit and requires offline recovery. Keep relay stopped throughout. Automated drills are tests, not evidence that production live drills were performed. Metrics private exposure requires operator routing/ACLs.
 
-**Scope:** WP-39 repository operations for `relay.crot.network` and pinned staging. Commands assume a built release and least-privilege service account. Record every production action/change ticket; never paste secrets in logs or tickets.
+**Scope:** WP-39 repository operations for `mcp.crot.network` and pinned staging. Commands assume a built release and least-privilege service account. Record every production action/change ticket; never paste secrets in logs or tickets.
 
 ## Environment profiles
 
 | Environment | Issuer | Relay | Pairing client |
 | --- | --- | --- | --- |
 | staging | `https://prestigious-continent-62-staging.authkit.app` | `relay-staging.crot.network` | `client_01M5FJB95CE7KH33Y1SPE5X77Q` |
-| production | pinned `https://auth.crot.network` or the approved WorkOS `https://<production-slug>.authkit.app` | `relay.crot.network` | operator-provisioned production ID |
+| production | pinned `https://auth.crot.network` or the approved WorkOS `https://<production-slug>.authkit.app` | `mcp.crot.network` | operator-provisioned production ID |
 
 Issuer and relay may use different domains. The issuer is an exact HTTPS origin and must byte-match authorization metadata and JWT `iss`. Populate `deploy/production/*.json` through secret/config management; placeholders block release. Never set runtime development overrides on release artifacts.
 

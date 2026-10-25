@@ -4,6 +4,7 @@ import { rmSync } from "node:fs";
 import os from "node:os";
 import { readWorkspaceArtifacts, ArtifactPathSchema } from "./workspace-artifacts.js";
 import path from "node:path";
+import { prepareScratchDirectory, ScratchDirectorySchema } from "./scratch-directory.js";
 import { CrotError } from "../errors.js";
 import type { Workspace } from "../workspace/workspace.js";
 import { unavailableConfinement, confinementUnavailableError } from "./confinement.js";
@@ -36,7 +37,13 @@ export async function openCommandWorkspace(
       .filter(Boolean)
       .join("; "),
   });
-  type Generation = { root: string; scratch: string; native: CoreConfinement; exportPending?: boolean };
+  type Generation = {
+    root: string;
+    scratch: string;
+    native: CoreConfinement;
+    nativeReady?: boolean;
+    exportPending?: boolean;
+  };
   let current: Generation | undefined,
     closing = false,
     fault: unknown,
@@ -54,12 +61,22 @@ export async function openCommandWorkspace(
   const assert = () => {
     if (closing) throw blocked("workspace is closing");
     if (fault) throw blocked("native teardown failed; source mutation and new commands refused");
-    current?.native.assertAdmission?.();
+    if (current?.nativeReady !== false) current?.native.assertAdmission?.();
   };
   const checkCwd = (cwd: string) => {
     assert();
     if (!workspace.rules.equals(cwd, workspace.root, workspace.caseSensitive))
       throw blocked("only the project-root cwd is supported; nested/source cwd is not mounted");
+  };
+  const openNative = async (scratch: string) => {
+    if (!platform.confinement) throw confinementUnavailableError(annotate(last));
+    await prepareScratchDirectory(scratch, ".");
+    return platform.confinement.open({
+      ...scope,
+      workspace: scratch,
+      projectSecretAllowedPaths: [],
+      protectedPaths: [...new Set([...scope.protectedPaths, workspace.root])],
+    });
   };
   const prepare = async (): Promise<Generation> => {
     if (!platform.confinement) throw confinementUnavailableError(annotate(last));
@@ -77,13 +94,8 @@ export async function openCommandWorkspace(
         throw blocked("private storage is not owner-only");
       const scratch = path.join(privateRoot, "work");
       await mkdir(scratch, { mode: 0o700 });
-      const native = await platform.confinement.open({
-        ...scope,
-        workspace: scratch,
-        projectSecretAllowedPaths: [],
-        protectedPaths: [...new Set([...scope.protectedPaths, workspace.root])],
-      });
-      return { root, scratch, native };
+      const native = await openNative(scratch);
+      return { root, scratch, native, nativeReady: true };
     } catch (cause) {
       if (root) await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
       throw cause;
@@ -106,6 +118,13 @@ export async function openCommandWorkspace(
         ).status();
         throw confinementUnavailableError(annotate(last));
       }
+    }
+    if (current.nativeReady === false) {
+      current.native = await openNative(current.scratch);
+      current.nativeReady = true;
+      last = current.native.status();
+      control = current.native.launcher.processControl;
+      orphaned = current.native.launcher.canTerminateOrphanedDescendants;
     }
     assert();
     if (!last.available) throw confinementUnavailableError(annotate(last));
@@ -176,11 +195,39 @@ export async function openCommandWorkspace(
   };
   return {
     launcher,
+    launchScratch: (command, args, options, relativeDirectory) =>
+      serial(async () => {
+        const relative = ScratchDirectorySchema.parse(relativeDirectory);
+        const g = await ensure();
+        try {
+          await g.native.close();
+        } catch (error) {
+          fault = error;
+          last = { ...last, available: false, reason: "self_test_failed", detail: "Scratch cwd actor drain failed" };
+          throw error;
+        }
+        g.nativeReady = false;
+        // No sandbox actor remains; admission stays locked through canonical
+        // validation, native re-confinement, executable resolution and spawn.
+        const cwd = await prepareScratchDirectory(g.scratch, relative);
+        g.native = await openNative(g.scratch);
+        g.nativeReady = true;
+        last = g.native.status();
+        if (!last.available) throw confinementUnavailableError(annotate(last));
+        const spec = await g.native.launcher.resolveCommand(command, args, { cwd, env: options.env });
+        const proc = await g.native.launcher.launch(spec, { ...options, cwd });
+        if (closing) {
+          await proc.terminate("force");
+          throw blocked("closed during scratch launch");
+        }
+        return proc;
+      }),
     assertAdmission: assert,
     status: () => annotate(last),
     refresh: () =>
       serial(async () => {
         assert();
+        if (current?.nativeReady === false) await ensure();
         last = current
           ? await current.native.refresh()
           : platform.confinement
