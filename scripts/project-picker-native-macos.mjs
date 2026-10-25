@@ -194,13 +194,14 @@ try {
     scan();
     if (buttons.length !== 1 || nestedSheets !== 0)
       throw Error("Expected one enabled Open button and no nested modal in the exact chooser before navigation");
-    const stroke = (events) => {
+    const stroke = async (events) => {
       const held = [],
         errors = [];
       try {
         for (const [code, character = 0] of events) {
           keyboard(code, true, character);
           held.push([code, character]);
+          await delay(20);
         }
       } catch (error) {
         errors.push(error);
@@ -209,6 +210,7 @@ try {
         for (const [code, character] of held.reverse()) {
           try {
             keyboard(code, false, character);
+            await delay(15);
           } catch (error) {
             errors.push(error);
           }
@@ -217,17 +219,34 @@ try {
       if (errors.length)
         throw new AggregateError(errors, "Native AX keyboard stroke failed: " + errors.map(String).join("; "));
     };
-    stroke([[55], [56], [5, 71]]);
-    let field;
+    // WindowServer activation can precede keyboard delivery readiness on CI.
+    // Pace the native chord; retry only while the exact chooser still has one
+    // enabled Open control and no nested sheet. Never edit a generic text field.
+    await delay(100);
+    await stroke([[55], [56], [5, 71]]);
+    let field,
+      attempts = 1,
+      lastChord = Date.now();
     const goDeadline = Date.now() + 3500;
-    while (Date.now() < goDeadline && !(field = focusedGoField())) await delay(100);
+    while (Date.now() < goDeadline && !(field = focusedGoField())) {
+      await delay(100);
+      if (attempts < 3 && Date.now() - lastChord >= 800) {
+        scan();
+        if (nestedSheets === 0 && buttons.length === 1) {
+          await stroke([[55], [56], [5, 71]]);
+          attempts++;
+          lastChord = Date.now();
+        }
+      }
+    }
+    report.chordAttempts = attempts;
     if (!field) throw Error("Native Go to Folder input unavailable inside its exact dialog");
     report.phase = "enter exact folder in native Go to Folder";
     const setValue = ax.func("int AXUIElementSetAttributeValue(void *, void *, void *)");
     const result = setValue(field, key("AXValue"), key(selected));
     if (result !== 0 || label(field, "AXValue") !== selected)
       throw Error("Native Go to Folder edit refused the exact fixture path: " + result);
-    stroke([[36, 13]]);
+    await stroke([[36, 13]]);
     report.phase = "confirm native folder selection";
     const openDeadline = Date.now() + 3500;
     let ready = false;

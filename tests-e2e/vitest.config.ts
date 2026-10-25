@@ -9,6 +9,7 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   root: fileURLToPath(new URL("..", import.meta.url)),
   test: {
+    reporters: ["default", "./tests/browser-files-reporter.ts"],
     include: ["tests-e2e/**/*.e2e.test.ts"],
     testTimeout: 120_000,
     hookTimeout: 120_000,
