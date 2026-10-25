@@ -39,7 +39,7 @@ unsigned nativeOpen(NtCreate create,const std::wstring& device,ACCESS_MASK acces
 }
 int wmain(int argc,wchar_t** argv) {
   // Fixed bounded diagnostic frame in exit status; absence means NOT ready.
-  if (argc!=4 || (wcscmp(argv[2],L"0") && wcscmp(argv[2],L"1"))) return 2;
+  if (argc!=5 || (wcscmp(argv[2],L"0") && wcscmp(argv[2],L"1"))) return 2;
   const std::wstring device=argv[1];
   if (device.size()!=52 || device.compare(0,15,L"\\Device\\Volume{") || device.back()!=L'}' ||
       device.find_first_not_of(L"0123456789abcdefABCDEF-",15)<device.size()-1) return 2;
@@ -72,10 +72,27 @@ int wmain(int argc,wchar_t** argv) {
   unsigned bits=rawChecks();
   const std::wstring mount=argv[3];
   if (mount.size()>32000 || mount.find(L'"')!=std::wstring::npos || mount.size()<3 || mount.substr(1,2)!=L":\\") return 7;
-  const auto publicFile=mount+L"\\public.txt";
   DWORD dataError=0; unsigned dataStage=1;
-  HANDLE data=CreateFileW(publicFile.c_str(),GENERIC_READ|GENERIC_WRITE,0,nullptr,OPEN_EXISTING,0,nullptr);
-  if (data==INVALID_HANDLE_VALUE) dataError=GetLastError();
+  // Fixed explicit directory capability, not a raw device or operation pipe.
+  wchar_t* end=nullptr; const auto rootValue=wcstoull(argv[4],&end,10);
+  if (!rootValue || !end || *end) return 8;
+  HANDLE dataRoot=reinterpret_cast<HANDLE>(static_cast<ULONG_PTR>(rootValue));
+  BY_HANDLE_FILE_INFORMATION rootInfo{};
+  if (GetFileType(dataRoot)!=FILE_TYPE_DISK || !GetFileInformationByHandle(dataRoot,&rootInfo) ||
+      !(rootInfo.dwFileAttributes&FILE_ATTRIBUTE_DIRECTORY)) return 9;
+  wchar_t leaf[]=L"public.txt";
+  UNICODE_STRING relative{}; relative.Buffer=leaf; relative.Length=sizeof(leaf)-sizeof(wchar_t);
+  relative.MaximumLength=sizeof(leaf);
+  OBJECT_ATTRIBUTES a{}; a.Length=sizeof(a); a.RootDirectory=dataRoot; a.ObjectName=&relative; a.Attributes=0x40;
+  IO_STATUS_BLOCK io{}; HANDLE data=INVALID_HANDLE_VALUE;
+  const NTSTATUS opened=create(&data,GENERIC_READ|GENERIC_WRITE|SYNCHRONIZE|FILE_READ_ATTRIBUTES,
+      &a,&io,nullptr,0,0,1,0x60,nullptr,0); // non-directory, synchronous non-alert
+  if (opened<0 || data==INVALID_HANDLE_VALUE) {
+    auto map=reinterpret_cast<ULONG(NTAPI*)(NTSTATUS)>(GetProcAddress(GetModuleHandleW(L"ntdll.dll"),"RtlNtStatusToDosError"));
+    dataError=map?map(opened):ERROR_GEN_FAILURE;
+    if (data && data!=INVALID_HANDLE_VALUE && !CloseHandle(data)) dataError=ERROR_INVALID_HANDLE;
+    data=INVALID_HANDLE_VALUE;
+  }
   else {
     char before[32]{}; DWORD read=0,written=0;
     const char initial[]="CROT-AD55-BEFORE", after[]="CROT-AD55-AFTER";
@@ -92,6 +109,7 @@ int wmain(int argc,wchar_t** argv) {
     if (!CloseHandle(data)) { dataStage=8; dataError=GetLastError(); }
     if (!dataStage) bits|=0x100;
   }
+  if (!CloseHandle(dataRoot)) { dataStage=8; dataError=GetLastError(); bits&=~0x100u; }
   bits|=rawChecks(); // data access must not unlock raw control aliases
   // New research-only exit protocol: 0x55, bounded Win32 error, stage, raw/data
   // bits. This is deliberately distinct from historical AD-28's NUL protocol.

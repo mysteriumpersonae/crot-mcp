@@ -77,6 +77,8 @@ describe.runIf(isWindows)("AD-55 signed Windows data/control candidate", () => {
           title: "CROT-AD55-data-control",
           value: {
             proof,
+            dataRoute: "inherited-directory-relative-nt",
+            absoluteWin32Qualified: false,
             originalChangedBeforeUnmount: true,
             originalSecurityUnchanged: true,
             appContainerAndLpacRawIsolated: true,

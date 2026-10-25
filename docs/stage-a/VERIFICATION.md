@@ -778,3 +778,25 @@ All 12 integration tests passed locally; the three liveness tests additionally
 passed five repeated runs. Lint/typecheck passed. The restored-dependency full
 check of `94ede67` also passed main 2350 /223 host skips and extension 196.
 Final follow-up full checks and actual native CI remain pending.
+
+
+AD-55 diagnostic head `cc244740f10430148d5633f908977bb58b961449` completed
+**9/11 SUCCESS**. Both Windows jobs failed the positive data/control gate:
+`CROT_VIEW_DATA:0:1:5:0:0:00000000` and the identical LPAC record. Both actors
+returned Win32 ACCESS_DENIED at open, with no create callback. Both macOS jobs
+passed, including the revised heartbeat tests; all Linux/Chromium checks passed.
+Windows run: https://github.com/crotMcp/crot/actions/runs/40158147198.
+
+Full local check of this head passed **2359 /223 host skips**, extension **196**.
+The first local browser attempt lacked CROT_E2E_CHROME; the second supplied the
+binary but omitted the documented headless environment and could not connect
+native messaging. Neither is reported as browser qualification. With the
+previously qualified full local environment (binary, headless, container flags),
+all **58 browser tests passed /3 existing platform placeholders skipped**; UI QA
+passed **81 checks /29 screenshots /0 failures**. No production browser source
+changed and no failure was skipped/reclassified in source.
+
+The next candidate tests a single explicit inherited data-directory handle;
+no raw device handle or new raw ACL grant is supplied. Positive relative NT
+access, if observed, will not qualify general absolute Win32/Node tool paths.
+Actual follow-up native CI remains required.

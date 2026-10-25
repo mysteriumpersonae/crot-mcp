@@ -135,3 +135,12 @@ and whether the request reached native callbacks, without widening permissions.
 The unrelated macOS heartbeat wall-clock race is covered by paired controlled-
 clock real-socket positive/negative tests. Missing-component production
 fail-closed integration and the Linux/Windows future-secret barrier remain open.
+
+
+The diagnostic follow-up `cc244740` completed **9/11** checks successfully.
+Both macOS jobs now pass the heartbeat regression. Both actual Windows jobs
+report identical data open error 5 with **zero create callbacks** for both
+actors. It is not a filename callback defect. The next AD-55 experiment tests
+an explicitly inherited, root-only data directory capability, preserving the
+raw device ACL and every raw-denial gate. It is relative-NT feasibility only,
+not general Win32 tool compatibility, activation or Stage A completion.

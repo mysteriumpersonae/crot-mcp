@@ -72,7 +72,7 @@ DWORD oneControlProfile(const std::wstring& device,const std::wstring& source,
   DWORD outcome=0x801; PSID packageSid=nullptr; PSECURITY_DESCRIPTOR sd=nullptr, dataSd=nullptr;
   bool directoryOwned=false,fileOwned=false,jobSettled=true;
   const auto target=directory+L"\\control-profile-child.exe";
-  Handle probeJob,process,thread;
+  Handle probeJob,process,thread,dataRoot;
   try {
     // Microsoft's public sequence provisions a NEW per-user profile first.
     // Never adopt an existing profile; reserve bookkeeping before OS mutation.
@@ -116,17 +116,34 @@ DWORD oneControlProfile(const std::wstring& device,const std::wstring& source,
     if (!SetInformationJobObject(probeJob.h,JobObjectExtendedLimitInformation,&limits,sizeof(limits)) ||
         !QueryInformationJobObject(probeJob.h,JobObjectBasicAccountingInformation,&accounting,sizeof(accounting),nullptr) ||
         accounting.ActiveProcesses || accounting.TotalProcesses) deny();
+    // This is a file-directory object, never the raw DCB/control handle.
+    // Only the exact controller process may pre-open the fixed data root.
+    SECURITY_ATTRIBUTES inheritRoot{sizeof(inheritRoot),nullptr,TRUE};
+    controllerRootOpen=true;
+    dataRoot.h=CreateFileW(mountPath.c_str(),FILE_LIST_DIRECTORY|FILE_TRAVERSE|
+        FILE_READ_ATTRIBUTES|READ_CONTROL|SYNCHRONIZE,
+        FILE_SHARE_READ|FILE_SHARE_WRITE,&inheritRoot,OPEN_EXISTING,FILE_FLAG_BACKUP_SEMANTICS,nullptr);
+    const DWORD rootError=GetLastError();
+    controllerRootOpen=false;
+    if (!dataRoot.valid()) {
+      fprintf(stderr,"CROT_VIEW_ROOT:%lu\n",rootError); fflush(stderr); deny();
+    }
+    BY_HANDLE_FILE_INFORMATION rootInfo{};
+    if (GetFileType(dataRoot.h)!=FILE_TYPE_DISK || !GetFileInformationByHandle(dataRoot.h,&rootInfo) ||
+        !(rootInfo.dwFileAttributes&FILE_ATTRIBUTE_DIRECTORY)) deny();
     SECURITY_CAPABILITIES caps{}; caps.AppContainerSid=packageSid;
     DWORD policy=PROCESS_CREATION_ALL_APPLICATION_PACKAGES_OPT_OUT;
-    Attributes attrs(lpac?3:2);
+    Attributes attrs(lpac?4:3);
     if (!attrs.set(PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES,&caps,sizeof(caps)) ||
         !attrs.set(PROC_THREAD_ATTRIBUTE_JOB_LIST,&probeJob.h,sizeof(HANDLE)) ||
+        !attrs.set(PROC_THREAD_ATTRIBUTE_HANDLE_LIST,&dataRoot.h,sizeof(HANDLE)) ||
         (lpac && !attrs.set(PROC_THREAD_ATTRIBUTE_ALL_APPLICATION_PACKAGES_POLICY,&policy,sizeof(policy)))) deny();
     STARTUPINFOEXW startup{}; startup.StartupInfo.cb=sizeof(startup); startup.lpAttributeList=attrs.p;
     PROCESS_INFORMATION pi{};
-    auto command=L"\""+target+L"\" \""+device+L"\" "+(lpac?L"1":L"0")+L" \""+mountPath+L"\"";
+    auto command=L"\""+target+L"\" \""+device+L"\" "+(lpac?L"1":L"0")+L" \""+mountPath+L"\" "+
+        std::to_wstring(reinterpret_cast<ULONG_PTR>(dataRoot.h));
     outcome=0x803;
-    if (!CreateProcessW(target.c_str(),command.data(),nullptr,nullptr,FALSE,
+    if (!CreateProcessW(target.c_str(),command.data(),nullptr,nullptr,TRUE,
         CREATE_SUSPENDED|CREATE_NO_WINDOW|EXTENDED_STARTUPINFO_PRESENT,nullptr,directory.c_str(),&startup.StartupInfo,&pi)) {
       const DWORD error=GetLastError(); controlProfileNtStatus=error;
       switch (error) {
@@ -214,6 +231,7 @@ DWORD oneControlProfile(const std::wstring& device,const std::wstring& source,
   release(thread.h); thread.h=INVALID_HANDLE_VALUE;
   release(process.h); process.h=INVALID_HANDLE_VALUE;
   release(probeJob.h); probeJob.h=INVALID_HANDLE_VALUE;
+  release(dataRoot.h); dataRoot.h=INVALID_HANDLE_VALUE;
   bool clean=jobSettled && !failed;
   if (fileOwned && jobSettled && !DeleteFileW(target.c_str())) clean=false;
   if (directoryOwned && jobSettled && !RemoveDirectoryW(directory.c_str())) clean=false;

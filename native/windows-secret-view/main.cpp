@@ -170,8 +170,9 @@ HANDLE candidateJob = nullptr;
 // Bounded research diagnostics only; no names, contents, tokens or control IOCTLs.
 std::atomic<unsigned> candidateCreates{0}, candidateAuthorized{0};
 std::atomic<NTSTATUS> candidateCreateStatus{STATUS_SUCCESS};
+std::atomic<bool> controllerRootOpen{false};
 #include "control-profile-probe.h"
-void authorize(PDOKAN_FILE_INFO fi) {
+void authorize(PDOKAN_FILE_INFO fi,bool controllerRoot=false) {
   std::lock_guard<std::mutex> actor(candidateLock);
   if (failed || !fi->ProcessId) deny();
   Handle request(DokanOpenRequestorToken(fi));
@@ -182,6 +183,12 @@ void authorize(PDOKAN_FILE_INFO fi) {
   auto a=tokenInfo(request.h,TokenStatistics), b=tokenInfo(primary.h,TokenStatistics);
   if (memcmp(&reinterpret_cast<TOKEN_STATISTICS*>(a.data())->TokenId,
              &reinterpret_cast<TOKEN_STATISTICS*>(b.data())->TokenId,sizeof(LUID))) deny();
+  if (controllerRoot && controllerRootOpen && fi->ProcessId==GetCurrentProcessId()) {
+    auto owner=tokenInfo(request.h,TokenUser), app=tokenInfo(request.h,TokenIsAppContainer);
+    if (!EqualSid(reinterpret_cast<TOKEN_USER*>(owner.data())->User.Sid,ownerSid) ||
+        *reinterpret_cast<DWORD*>(app.data())) deny();
+    return; // exact controller, root-only read/traverse rights checked at create
+  }
   BOOL member=FALSE;
   if (!candidatePackage || !candidateJob || !IsProcessInJob(process.h,candidateJob,&member) || !member) deny();
   auto u=tokenInfo(request.h,TokenUser), ac=tokenInfo(request.h,TokenIsAppContainer),
@@ -216,9 +223,12 @@ NTSTATUS DOKAN_CALLBACK create(LPCWSTR name,PDOKAN_IO_SECURITY_CONTEXT,ACCESS_MA
   ++candidateCreates;
   bool openedExisting=false;
   auto outcome=status([&] {
-    authorize(fi);
     GENERIC_MAPPING mapping{FILE_GENERIC_READ,FILE_GENERIC_WRITE,FILE_GENERIC_EXECUTE,FILE_ALL_ACCESS};
     MapGenericMask(&access,&mapping);
+    const ACCESS_MASK rootRights=FILE_LIST_DIRECTORY|FILE_TRAVERSE|FILE_READ_ATTRIBUTES|READ_CONTROL|SYNCHRONIZE;
+    const bool controllerRoot=sameName(name,L"\\") && !(access&~rootRights) &&
+        disposition==FILE_OPEN && !(options&FILE_NON_DIRECTORY_FILE);
+    authorize(fi,controllerRoot);
     auto p=parts(name);
     if (fi->Context || access&(WRITE_DAC|WRITE_OWNER|ACCESS_SYSTEM_SECURITY) ||
         attributes&FILE_ATTRIBUTE_REPARSE_POINT || options&FILE_OPEN_BY_FILE_ID || disposition==FILE_SUPERSEDE) deny();

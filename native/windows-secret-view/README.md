@@ -26,3 +26,13 @@ package or license-compliance completion is claimed here.
 Even a successful experiment is NOT the complete future-secret barrier, owner
 exceptions/revocation, tool compatibility, crash recovery or Stage A acceptance.
 No production fallback/availability policy is changed by this fixture.
+
+
+The absolute-path candidate at `cc244740` failed both Windows jobs before any
+create callback. The next isolated follow-up explicitly inherits **one scoped
+data directory file handle** (HANDLE_LIST), not the disk/control device. Only
+the controller's exact PID/token can pre-open the fixed root with read/traverse
+rights. Child creates still require the actual AppContainer SID/token/owned Job.
+Live data is attempted with relative NtCreateFile through that capability; raw
+controls are probed unchanged. It is not proof of general absolute Win32/Node/
+PowerShell compatibility or a production backend. See AD-55 follow-up decision.

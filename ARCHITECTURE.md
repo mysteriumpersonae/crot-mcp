@@ -5761,3 +5761,31 @@ interface-compatible LGPL DLL replacement. Before distribution, packaging must
 satisfy replacement/relinking rights and notices without weakening protection
 against agent modification of trusted runtime files. Runtime candidate readiness
 and licensing/distribution completion are separate, mandatory gates.
+
+**AD-55 follow-up decision, before code — scoped data-directory capability.**
+Actual `cc244740` Windows Node20/22 refused absolute mounted data opens with
+Win32 ACCESS_DENIED before any create callback (both AppContainer and LPAC).
+Upstream pinned `sys/event.c` sets `FILE_DEVICE_SECURE_OPEN` whenever a volume
+SD is supplied. This explains why projected-file SD grants alone cannot admit
+this path while the raw device remains private. Dropping the volume SD is not
+accepted: upstream's default `sys/dokan.h` SD includes Everyone/Restricted Code,
+and tightening it after mounting does not revoke previously opened handles.
+No raw package grant, broader initial ACL, driver fork or security downgrade.
+
+The next isolated experiment delegates exactly one **data root directory file
+handle**, opened by the controller using a temporary exact-self-PID/root-only
+read/traverse admission, via the explicit Windows process HANDLE_LIST. No raw
+Dokan disk/control handle is inherited. The AppContainer/LPAC child must verify
+the inherited object is a disk directory, issue relative `NtCreateFile` for the
+fixed public file through that handle, and perform the same live backing writes
+while all raw Win32/NT probes remain denied. Exact token identity/owned Job gates
+remain for child create callbacks. Root capability ownership lasts through Job
+drain, with cleanup failures refusing readiness. A directory capability is not
+permission to bypass future filename checks; those remain in the mediator.
+
+This only tests the data/control mechanism. General Win32 absolute paths, Node/
+cmd/PowerShell compatibility, process cwd/descendants, path/secret/link/rename
+policies and production integration remain independent unimplemented gates.
+A relative-capability result must never be reported as full tool compatibility.
+Reference: pinned upstream `sys/event.c`, `sys/dokan.h`, `sys/fscontrol.c` and
+Microsoft process attribute `PROC_THREAD_ATTRIBUTE_HANDLE_LIST` documentation.
