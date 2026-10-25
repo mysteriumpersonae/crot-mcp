@@ -81,6 +81,19 @@ export class SocialAccountRuntime {
     await this.accounts.disconnect(provider);
     return this.list();
   }
+  /** Trusted in-process publisher only. This callback/credential is never an owner RPC result. */
+  async usePublicationCredential<T>(
+    provider: SocialProvider,
+    accountId: string,
+    generation: string,
+    work: (access: string, signal: AbortSignal) => Promise<T>,
+  ): Promise<T> {
+    return this.accounts.withCredential(provider, async (access, signal, account) => {
+      if (account.id !== accountId || account.generation !== generation)
+        throw new Error("Publication account grant changed");
+      return work(access, signal);
+    });
+  }
   async close() {
     await this.accounts.close();
   }
