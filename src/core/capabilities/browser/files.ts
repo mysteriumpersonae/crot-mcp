@@ -12,6 +12,7 @@ import {
   publishWindows,
   type TransferFile,
 } from "../../../native-host/browser-files.js";
+import type { ProjectSecretPolicy } from "../../permissions/project-secrets.js";
 import type { PrivateFileProtection } from "../../platform/types.js";
 import type { ResolvedPath, Workspace } from "../../workspace/workspace.js";
 import { CrotError } from "../../errors.js";
@@ -45,6 +46,7 @@ export class BrowserFiles {
     readonly uploadRoot: string,
     readonly downloadRoot: string,
     private protection: PrivateFileProtection,
+    private readonly checked?: { policy: ProjectSecretPolicy; mutate: <T>(execute: () => Promise<T>) => Promise<T> },
   ) {}
 
   private async ready(): Promise<void> {
@@ -94,10 +96,14 @@ export class BrowserFiles {
     try {
       for (let i = 0; i < sources.length; i++) {
         const source = sources[i]!;
+        if (this.checked && (!source.insideWorkspace || this.checked.policy.denies(source)))
+          throw new CrotError("PERMISSION_DENIED", "AD-58 browser upload source is outside checked policy");
         const input = await openTransferRead(source.absolute);
         try {
           const info = await input.stat();
           if (!info.isFile() || info.nlink < 1) fail("Upload source is not a regular file.");
+          if (this.checked && info.nlink !== 1)
+            throw new CrotError("PERMISSION_DENIED", "AD-58 refuses multiple-link upload sources");
           // The descriptor must name the authorized canonical source, not a swapped ancestor.
           await verifyTransferIdentity(source.absolute, info);
           total += info.size;
@@ -148,6 +154,27 @@ export class BrowserFiles {
     await rm(lease.directory, { recursive: true, force: true });
   }
   async publish(
+    lease: DownloadLease,
+    name: string,
+    size: number,
+    destination: ResolvedPath,
+    overwrite: boolean,
+  ): Promise<void> {
+    const execute = async () => {
+      if (this.checked) {
+        const again = await this.workspace.resolve(destination.absolute);
+        if (
+          !destination.insideWorkspace ||
+          again.absolute !== destination.absolute ||
+          this.checked.policy.denies(again)
+        )
+          throw new CrotError("PERMISSION_DENIED", "AD-58 browser destination identity or secret policy changed");
+      }
+      return this.publishChecked(lease, name, size, destination, overwrite);
+    };
+    return this.checked ? this.checked.mutate(execute) : execute();
+  }
+  private async publishChecked(
     lease: DownloadLease,
     name: string,
     size: number,

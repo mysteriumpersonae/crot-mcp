@@ -1,0 +1,108 @@
+{
+  "sourceHead": "cc244740f10430148d5633f908977bb58b961449",
+  "ciMergeCommit": "2d77287a80f7b1530e398f03d7faf967f7c6a432",
+  "sameGitTree": "e613a697375ba0f738affba09a858462f6c5d578",
+  "qualification": "rejected-data-access-not-production",
+  "checks": [
+    {
+      "name": "L1 / ubuntu-22.04",
+      "conclusion": "success",
+      "url": "https://github.com/crotMcp/crot/actions/runs/40158147329/job/121063830112"
+    },
+    {
+      "name": "L1 / ubuntu-22.04-arm",
+      "conclusion": "success",
+      "url": "https://github.com/crotMcp/crot/actions/runs/40158147329/job/121063830072"
+    },
+    {
+      "name": "L1 / ubuntu-24.04-arm",
+      "conclusion": "success",
+      "url": "https://github.com/crotMcp/crot/actions/runs/40158147329/job/121063829988"
+    },
+    {
+      "name": "L1 / ubuntu-24.04",
+      "conclusion": "success",
+      "url": "https://github.com/crotMcp/crot/actions/runs/40158147329/job/121063829864"
+    },
+    {
+      "name": "Node 20 / windows-latest",
+      "conclusion": "failure",
+      "url": "https://github.com/crotMcp/crot/actions/runs/40158147198/job/121063829673"
+    },
+    {
+      "name": "Node 22 / macos-latest",
+      "conclusion": "success",
+      "url": "https://github.com/crotMcp/crot/actions/runs/40158147198/job/121063829617"
+    },
+    {
+      "name": "real-chromium",
+      "conclusion": "success",
+      "url": "https://github.com/crotMcp/crot/actions/runs/40158147263/job/121063829594"
+    },
+    {
+      "name": "Node 20 / macos-latest",
+      "conclusion": "success",
+      "url": "https://github.com/crotMcp/crot/actions/runs/40158147198/job/121063829552"
+    },
+    {
+      "name": "Node 20 / ubuntu-latest",
+      "conclusion": "success",
+      "url": "https://github.com/crotMcp/crot/actions/runs/40158147198/job/121063829536"
+    },
+    {
+      "name": "Node 22 / windows-latest",
+      "conclusion": "failure",
+      "url": "https://github.com/crotMcp/crot/actions/runs/40158147198/job/121063829532"
+    },
+    {
+      "name": "Node 22 / ubuntu-latest",
+      "conclusion": "success",
+      "url": "https://github.com/crotMcp/crot/actions/runs/40158147198/job/121063829401"
+    }
+  ],
+  "components": [
+    {
+      "checkId": 121063829673,
+      "proof": {
+        "signer": "CN=Microsoft Windows Hardware Compatibility Publisher, O=Microsoft Corporation, L=Redmond, S=Washington, C=US",
+        "version": "2.3.1.1000",
+        "signatureStatus": "Valid",
+        "dynamicImportVerified": true,
+        "driverSha256": "9549A20E63C22A2B068E635600B65F6B55D8BE5122A6623997B1274A1A1F6235",
+        "thumbprint": "80340186207957ED96BDFDAD23F87AE9358C0D2B",
+        "architecture": "x64",
+        "kernelPolicyVerified": true
+      },
+      "checkout": "2d77287a80f7b1530e398f03d7faf967f7c6a432"
+    },
+    {
+      "checkId": 121063829532,
+      "proof": {
+        "signer": "CN=Microsoft Windows Hardware Compatibility Publisher, O=Microsoft Corporation, L=Redmond, S=Washington, C=US",
+        "version": "2.3.1.1000",
+        "signatureStatus": "Valid",
+        "dynamicImportVerified": true,
+        "driverSha256": "9549A20E63C22A2B068E635600B65F6B55D8BE5122A6623997B1274A1A1F6235",
+        "thumbprint": "80340186207957ED96BDFDAD23F87AE9358C0D2B",
+        "architecture": "x64",
+        "kernelPolicyVerified": true
+      },
+      "checkout": "2d77287a80f7b1530e398f03d7faf967f7c6a432"
+    }
+  ],
+  "dataDiagnostics": {
+    "appContainer": {
+      "phase": "open",
+      "win32Error": 5,
+      "createCallbacks": 0,
+      "authorizedCallbacks": 0
+    },
+    "lpac": {
+      "phase": "open",
+      "win32Error": 5,
+      "createCallbacks": 0,
+      "authorizedCallbacks": 0
+    }
+  },
+  "packet": "c0000000"
+}

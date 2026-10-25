@@ -18,6 +18,8 @@ import path from "node:path";
 import type { AuthContext } from "../../auth/principal.js";
 import type { Limits } from "../../config/schema.js";
 import { CrotError, fromNodeError, parseInput } from "../../errors.js";
+import type { ProjectSecretPolicy } from "../../permissions/project-secrets.js";
+import type { OperationDescriptor } from "../../execution/guard.js";
 import type { ExecutionGuard } from "../../execution/guard.js";
 import { displayPath as display, type ResolvedPath, type Workspace } from "../../workspace/workspace.js";
 import type { GitMetadataLock } from "../git/metadata-lock.js";
@@ -46,7 +48,10 @@ import {
 
 export interface FileSystemServiceDeps {
   readonly workspace: Workspace;
-  readonly guard: ExecutionGuard;
+  readonly guard: Pick<ExecutionGuard, "run">;
+  /** AD-58 service-only checked source semantics; no child can mutate this tree. */
+  readonly checkedSource?: ProjectSecretPolicy;
+  readonly sourceMutation?: <T>(execute: () => Promise<T>) => Promise<T>;
   readonly limits: Pick<Limits, "maxReadBytes">;
   /** Serialises writes into Git directories with git.read operations on them (ARCHITECTURE.md §27, AD-1). */
   readonly gitLock?: GitMetadataLock;
@@ -59,7 +64,63 @@ export interface FileSystemServiceDeps {
  * runs through the ExecutionGuard before touching the filesystem.
  */
 export class FileSystemService {
-  constructor(private readonly deps: FileSystemServiceDeps) {}
+  private readonly deps: FileSystemServiceDeps;
+  private sourceTail: Promise<unknown> = Promise.resolve();
+  constructor(deps: FileSystemServiceDeps) {
+    this.deps = !deps.checkedSource
+      ? deps
+      : {
+          ...deps,
+          guard: {
+            run: <T>(context: AuthContext, op: OperationDescriptor, execute: () => Promise<T>) =>
+              deps.guard.run(context, op, () => {
+                const next = this.sourceTail.then(async () => {
+                  if (context.signal?.aborted) throw new CrotError("OPERATION_FAILED", "Source operation cancelled");
+                  for (const target of op.paths ?? []) {
+                    const again = await deps.workspace.resolve(target.absolute, { followFinalSymlink: false });
+                    if (
+                      !target.insideWorkspace ||
+                      again.absolute !== target.absolute ||
+                      deps.checkedSource!.denies(again)
+                    )
+                      throw new CrotError("PERMISSION_DENIED", "AD-58 source identity or secret boundary changed");
+                  }
+                  const capabilities = Array.isArray(op.capability) ? op.capability : [op.capability];
+                  return capabilities.includes("filesystem.write") && deps.sourceMutation
+                    ? deps.sourceMutation(async () => {
+                        if (context.signal?.aborted)
+                          throw new CrotError("OPERATION_FAILED", "Source operation cancelled during actor drain");
+                        return execute();
+                      })
+                    : execute();
+                });
+                this.sourceTail = next.catch(() => undefined);
+                return next;
+              }),
+          },
+        };
+  }
+
+  private async checkedTree(file: string): Promise<void> {
+    if (!this.deps.checkedSource) return;
+    let count = 0;
+    const visit = async (name: string, depth: number): Promise<void> => {
+      if (++count > 10000 || depth > 128)
+        throw new CrotError("PERMISSION_DENIED", "AD-58 source tree validation exceeds bounds");
+      if (this.deps.checkedSource!.denies(this.deps.workspace.describe(name)))
+        throw new CrotError("PERMISSION_DENIED", "AD-58 directory operation includes a denied secret");
+      const info = await lstat(name).catch((e) => {
+        if (e.code === "ENOENT") return undefined;
+        throw e;
+      });
+      if (!info) return;
+      if (info.isDirectory()) {
+        for (const child of await readdir(name)) await visit(path.join(name, child), depth + 1);
+      } else if (!info.isFile() || info.nlink !== 1)
+        throw new CrotError("PERMISSION_DENIED", "AD-58 source operation refuses links and special files");
+    };
+    await visit(file, 0);
+  }
 
   /** Run a write after authorization, excluding git.read on any Git directory it touches. */
   private exclusive<T>(paths: readonly ResolvedPath[], fn: () => Promise<T>): Promise<T> {
@@ -83,12 +144,19 @@ export class FileSystemService {
         // Refuse FIFOs, sockets and devices before opening: opening a FIFO blocks until a writer appears.
         await assertRegularFileOrMissing(target.absolute, display(target), true);
         // O_NONBLOCK (POSIX) guards against the path being swapped for a FIFO after the check.
-        const handle = await open(target.absolute, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0)).catch((e) => {
+        const handle = await open(
+          target.absolute,
+          constants.O_RDONLY |
+            (constants.O_NONBLOCK ?? 0) |
+            (this.deps.checkedSource ? (constants.O_NOFOLLOW ?? 0) : 0),
+        ).catch((e) => {
           throw fromNodeError(e, `Cannot open ${display(target)}`);
         });
         try {
           const info = await handle.stat();
           if (!info.isFile()) throw new CrotError("INVALID_INPUT", `Not a regular file: ${display(target)}`);
+          if (this.deps.checkedSource && info.nlink !== 1)
+            throw new CrotError("PERMISSION_DENIED", "AD-58 refuses multiple-link source reads");
           const toRead = Math.max(0, Math.min(limit, info.size - args.offset));
           const buffer = Buffer.alloc(toRead);
           const { bytesRead } = toRead > 0 ? await handle.read(buffer, 0, toRead, args.offset) : { bytesRead: 0 };
@@ -128,7 +196,27 @@ export class FileSystemService {
           const existed = await exists(target.absolute);
           try {
             if (args.createParents) await mkdir(path.dirname(target.absolute), { recursive: true });
-            if (args.mode === "append") await appendFile(target.absolute, data);
+            if (this.deps.checkedSource) {
+              const flags =
+                constants.O_WRONLY |
+                constants.O_CREAT |
+                (constants.O_NOFOLLOW ?? 0) |
+                (args.mode === "create" ? constants.O_EXCL : 0) |
+                (args.mode === "append" ? constants.O_APPEND : 0);
+              const handle = await open(target.absolute, flags, 0o600);
+              try {
+                const info = await handle.stat();
+                if (!info.isFile() || info.nlink !== 1)
+                  throw new CrotError(
+                    "PERMISSION_DENIED",
+                    "AD-58 refuses linked/special source writes before truncation",
+                  );
+                if (args.mode !== "append") await handle.truncate(0);
+                await handle.writeFile(data);
+              } finally {
+                await handle.close();
+              }
+            } else if (args.mode === "append") await appendFile(target.absolute, data);
             else await writeFile(target.absolute, data, { flag: args.mode === "create" ? "wx" : "w" });
           } catch (e) {
             throw fromNodeError(e, `Cannot write ${display(target)}`);
@@ -163,6 +251,7 @@ export class FileSystemService {
             }
             const full = path.join(dir, d.name);
             const rel = prefix ? `${prefix}/${d.name}` : d.name;
+            if (this.deps.checkedSource?.denies(this.deps.workspace.describe(full))) continue;
             const info = await lstat(full).catch(() => undefined);
             const type: EntryType = info ? entryType(info) : "other";
             entries.push({ path: rel, type, size: info && type === "file" ? info.size : 0 });
@@ -243,6 +332,7 @@ export class FileSystemService {
             throw new CrotError("INVALID_INPUT", "Refusing to delete the workspace root.");
           if (target.absolute === path.parse(target.absolute).root)
             throw new CrotError("INVALID_INPUT", "Refusing to delete a filesystem root.");
+          await this.checkedTree(target.absolute);
           try {
             const info = await lstat(target.absolute);
             if (info.isDirectory() && !args.recursive) await rmdir(target.absolute);
@@ -284,6 +374,8 @@ export class FileSystemService {
         this.exclusive([from, to], async () => {
           if (this.deps.workspace.isRoot(from))
             throw new CrotError("INVALID_INPUT", "Refusing to move the workspace root.");
+          await this.checkedTree(from.absolute);
+          if (args.overwrite) await this.checkedTree(to.absolute);
           if (!args.overwrite && (await exists(to.absolute))) {
             throw new CrotError("ALREADY_EXISTS", `Destination exists (set overwrite to replace it): ${display(to)}`);
           }

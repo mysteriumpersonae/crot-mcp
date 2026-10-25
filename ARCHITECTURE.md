@@ -5280,3 +5280,757 @@ Raster references remain immutable evidence (including obsolete illustrated
 endpoints); they are never executable configuration. The newly supplied official
 endpoint is `https://mcp.crot.networking`. Source changes do not migrate deployed
 DNS, TLS certificates, configured OAuth issuer/audience or provider callbacks.
+
+### AD-43 — Functional Stage A: owner runtime policy and emergency brake
+
+The owner authorizes extending CrotService/Core and replacing obsolete tests,
+with Stage A required before B/C. This branch is a **partial Stage A working
+slice**, not acceptance of the entire directive. Scoped credentials, native
+project discovery/secret-file confinement, provider chat/tool execution and
+project-wide approval decisions remain unimplemented here.
+
+The final owner correction supersedes the domain sentence in AD-42: the official
+domain remains `crot.network`, MCP at `mcp.crot.network`. Do not migrate production
+configuration, DNS, issuer/audience or OAuth callbacks to `crot.networking`.
+
+1. Runtime `allow / ask / deny` configuration is consumed by the existing
+   PermissionEngine, never a second authorizer. Rules select an exact Core
+   operation or capability; any matching deny wins. Strict Mode adds an ask gate
+   to otherwise authorized operations. Allow does **not** override capability,
+   workspace, service-secret, network, exposure, remote or configured mandatory
+   approval ceilings. Post-approval reauthorization reads the current policy.
+2. Owner-only authenticated product RPCs expose `security.status`,
+   `security.setPolicy` and `security.kill`. Policy is validated, persisted in
+   protected product state and audited before publication to the running engine;
+   a failed audit does not publish a widening. Policy is restored on service
+   startup and shared across workspace/preset Core replacement.
+3. Emergency stop latches synchronously before awaiting work. It cancels pending
+   approvals, force-signals process trees (including Git/Docker commands), aborts
+   network/browser work, aborts product tasks, closes loopback HTTP and Relay
+   sessions, and refuses new shim admission. The owner control channel and audit
+   sink remain available. Calls are idempotent; cleanup/audit failure is reported,
+   never represented as complete success. Header and tray invoke this real RPC.
+4. The latch cannot be cleared by changing a permission, workspace or preset.
+   Explicit service restart is required to resume. It is a process-lifetime brake,
+   not persistent disablement across restart. It cannot undo an already committed
+   filesystem write, browser action or external side effect, nor stop processes
+   CROT did not start. Force-signalling is immediate; cleanup/reaping is bounded
+   by the existing process/guard shutdown limits, not a zero-latency guarantee.
+5. This slice does not yet implement project-scoped grants, application-secret
+   globs at the L1 boundary, scoped agent tokens, provider chat, model discovery,
+   attachments, streaming or the full Stage A connect/task/approve/audit UI flow.
+   PR #5 must not be presented as complete Stage A until these gates and CI pass.
+
+
+### AD-44 — Named loopback credentials and scoped-resource invalidation (Stage A)
+
+This supersedes only the named-token and native-folder-selection gaps in AD-43;
+Stage A as a whole remains incomplete. Relay continues to require its existing
+verified OAuth device/account identity. Named bearer credentials are **loopback
+only**, not a replacement for Relay OAuth or a new full-access credential.
+
+1. An owner-only registry issues independent 256-bit random tokens with client
+   names, explicit non-empty `files / terminal / browser` scopes and a bounded
+   TTL (60 seconds through 365 days). Only SHA-256 hashes and metadata persist in
+   protected service-secret storage. Plaintext is returned once over owner IPC,
+   displayed in a masked transient dialog, and cleared on closing; it is never
+   included in token listings, audit records, logs or localStorage. Rotation
+   retains scopes and the original expiration; old generations cannot resume.
+2. The HTTP verifier builds an immutable verified ID/generation/scope binding;
+   MCP arguments and self-reported client names cannot set it. Session ownership
+   includes that binding. The one PermissionEngine intersects scopes with the
+   configured capability ceilings. Files permits filesystem read/write, terminal
+   permits shell/process and dedicated Git operations, browser permits browser
+   read/control. Unmapped capabilities, Docker, direct network APIs and
+   filesystem.full are denied. Scoped principals always use the sandbox profile,
+   and arbitrary process execution **requires available L1**, without local
+   unconfined fallback even when the owner uses full_control. Scopes describe
+   Core capabilities, not a promise that an allowed shell command has no effects
+   within its configured L1 workspace/network boundary.
+3. ExecutionGuard's existing narrowing hook rechecks authoritative token validity
+   before execution and after approval. Every authenticated HTTP request updates
+   last-use metadata. Expiry is checked at authentication and authorization;
+   a 250 ms sweep cancels already running work, subject to event-loop scheduling
+   and OS reaping (not a zero-latency guarantee). Revocation/rotation immediately
+   invalidate the generation in memory, close its HTTP responses and legacy
+   sessions, cancel its product task controllers and terminate its background
+   process trees. Pending startup rechecks cancellation after launch, so a late
+   process ID cannot orphan a revoked client's process.
+4. `ProcessService.cancelToken` is a service lifecycle resource teardown, analogous
+   to shutdown, not an MCP tool or a way to execute arbitrary operations. It
+   matches the credential captured at the originally authorized process start,
+   never UI-supplied display names. Strict Mode cannot block teardown by asking
+   for another approval. Other token generations/agents' resources are untouched.
+5. Issuance/rotation persist an inactive credential and audit before activating
+   it; interrupted or unaudited credentials cannot authenticate on restart.
+   Revocation persists a tombstone. Storage or resource-cleanup failure latches
+   the runtime fail-closed and is reported as failure, not successful revocation.
+   A failed disk write cannot be claimed as durable revocation across restart.
+   The old bootstrap local token remains an explicitly privileged compatibility
+   credential; named-token rotation does not silently rotate that credential.
+6. The Projects Open Folder action uses a fixed Electron main-process native
+   directory picker. The renderer supplies no path/options to that action. A
+   cancelled dialog changes nothing; selected directories still pass canonical
+   project registration and idle workspace-switch checks. Native GUI interaction
+   requires separate OS smoke verification; a Chromium fixture is not that proof.
+
+Application-secret globs at the L1 boundary, stack/port discovery, provider chat,
+attachments/streaming/tool calls and project-persistent approval grants remain
+Stage A acceptance gates. Domain remains `crot.network` / `mcp.crot.network`.
+
+### AD-45 — Guarded provider streaming and transient owner chat (Stage A)
+
+This supersedes AD-43/44's unimplemented-chat description only. It does not close
+project grants, project discovery or application-secret L1 enforcement gates.
+
+1. The existing Core NetworkService accepts an optional trusted in-process stream
+   observer. No MCP/IPC schema accepts callbacks. DNS pinning, destination policy,
+   redirect rules, response limits, cancellation and audit remain on the same
+   ExecutionGuard path. Observer errors close the response; cancellation wins even
+   when delivered during the final data callback. Chat disables redirects, so
+   provider credentials cannot follow a redirect to a different destination.
+2. Owner-only provider configuration uses the encrypted product vault for keys;
+   listings expose only credential presence. Actual model inventories and bounded
+   SSE responses use Core HTTP, never renderer fetch or fabricated model lists.
+   OpenAI and OpenAI-compatible Local HTTP use chat/completions; Anthropic uses
+   messages and paginated model discovery. Explicit endpoint selection permits
+   HTTP, including non-loopback destinations if Core policy allows them; the owner
+   must use HTTPS when transport confidentiality is required. Platform fixtures
+   are not qualification of the live vendors, models or a local model server.
+3. Owner chat is a local principal, not a remote scoped credential. Its multi-step
+   generation holds the CoreHolder idle-switch barrier and a cancellable product
+   task. Individual calls still use current Core permission checks. Stop aborts
+   HTTP and pending approval; emergency stop closes the chat runtime. Subtasks
+   from owner-chat cannot persist prompt/attachment/tool arguments as retry replay
+   data. Keys, prompts and raw upstream parse errors are not audit descriptions.
+4. Conversations are transient, bounded to eight sessions, one active generation,
+   eight tool rounds, sixteen explicitly selected tools, 1 MiB per SSE response
+   and a bounded display/result transfer. Attachments are at most four / 96 KB
+   decoded, strict UTF-8 text or type-checked PNG/JPEG/WebP data. Selecting a
+   provider consents to transmitting the message, attachments and enabled tool
+   results to it; it does not authorize a network destination or a Core action.
+5. The decoder accepts split UTF-8 and CRLF frames but requires dispatched frames
+   and provider completion before invoking any tool. Unknown/unselected tools
+   return an error without execution. Actual invocations use canonical MCP tool
+   definitions and invokeTool, with the same validation, authorization, exposure
+   state, broker approvals and audit as external clients. Upstream JSON/decoder
+   failures are converted to generic errors before reaching network/task audit.
+6. Renderer polling displays streamed text and tool-call blocks as plain text,
+   never provider-supplied HTML. The shared broker queue appears inline and in the
+   header; this slice still offers only one-time approve/reject. Persistent
+   project grants and the complete native GUI acceptance journey remain open.
+
+### AD-46 — Digest-bound owner project grants in the existing runtime policy
+
+1. A project grant remembers one exact Core operation for the canonical workspace
+   bound by the Core that presented the request, not a UI-supplied path or project
+   ID. Workspace is part of the immutable approval subject and its digest. The
+   subscribed owner tray must present that digest and a still-pending ticket.
+   The UI explicitly labels this grant as applying to every agent in that project.
+2. PermissionEngine alone interprets grants. They suppress only the runtime `ask`
+   gate for the matching workspace/operation and in-workspace paths. Strict Mode,
+   runtime deny, capability ceilings, token scopes, workspace/secrets/network
+   checks, configured mandatory gates and exposure/remote gates still apply.
+   Full-control outside-workspace subjects cannot be remembered for a project.
+   Process scopes retain their existing L1/full-control semantics; a project
+   grant is not a new kernel sandbox or a restriction on arbitrary command I/O.
+3. The existing protected two-phase runtime-policy transaction serializes grants,
+   revocations and owner policy changes. It stages the prior policy, writes audit,
+   rechecks/consumes the exact ticket synchronously, then commits before publishing
+   the future grant in memory. Expired/cancelled/digest-mismatched requests or audit
+   failures cannot publish a grant. An interrupted staged snapshot restores the
+   prior policy on restart. Audit records describe the attempted policy transition;
+   a later cancelled ticket/failed disk commit is not a successfully active grant.
+4. The consumed ticket still approves only its original operation, with normal
+   post-approval reauthorization, target revalidation and mandatory approval audit.
+   If final policy persistence fails, that one-time decision may already have run;
+   the future project grant is rolled back and failure is reported. Rollback
+   persistence failure latches the runtime stopped. Revocation removes the exact
+   workspace/operation pair without replacing unrelated current owner rules.
+5. Header and inline chat use the same tray controller and broker; renderer cannot
+   manufacture the subject digest. Pending Strict Mode/mandatory requests have no
+   remember-project action. Runtime settings list persisted grants and support
+   explicit revocation. Legacy policy updates that omit grants preserve them;
+   explicitly supplying an empty grant list clears them.
+
+### AD-47. Bounded owner project inspection through Core
+
+The fixed owner RPC `projects.inspect` accepts no path, command or project ID.
+It holds CoreHolder's idle-switch barrier for its entire multi-step workflow;
+ProductRuntime correlates a cancellable, non-replayable `$project.inspect` task.
+The Core reads only `package.json`, `pyproject.toml` and `Dockerfile` through
+FileSystemService and the existing ExecutionGuard. Runtime deny, Strict Mode,
+mandatory approvals, workspace and protected-path ceilings remain effective.
+No package scripts, imports, package managers, Docker builds or commands found
+in a manifest are executed. JSON is bounded to 64 KiB (and the configured Core
+read limit), parse errors are generic, and only a fixed dependency-name/stack
+allowlist is returned. Python/Docker detection means manifest presence, not a
+claim that TOML is valid or an interpreter/image is installed. Symlink manifests
+are not followed; non-files and oversized files are explicitly reported.
+
+Port observation is a separate guarded `process.project_ports` operation with
+`process.manage` and the active resolved workspace path. The Linux implementation
+observes `/proc` TCP LISTEN sockets in the service network namespace and matches
+socket descriptors to same-user processes whose canonical cwd is inside that
+workspace. It never reads environment variables, command lines or process memory.
+PID start time and cwd are rechecked before publishing. PID/FD/project-process
+counts, table sizes and elapsed scan time are bounded; the owner response contains
+at most 512 unique listeners and reports partial if truncated. Inaccessible, oversized
+or truncated observations report partial/unavailable, never "all ports free".
+This is a point-in-time association, not proof of future port availability,
+exclusive project ownership, network authorization or discovery of another
+network namespace. No network connection or remote host scan is made.
+
+The current native port observer is Linux-only. Other OSes return an explicit
+unavailable state, not fabricated listeners. Native macOS/Windows observation
+and qualification remain acceptance work. The renderer displays the actual
+manifest evidence and observer status after an explicit Inspect project action;
+there is no hidden script execution on navigation or automatic widening of
+network permissions. These observations do not implement the outstanding L1
+application-secret filename policy.
+
+
+### AD-48. Prepare compositor routing before trusted pointer input
+
+A real Chromium regression exposed a scroll/OOPIF routing race: DOM geometry and
+hit tests already located a button in a cross-origin shadow iframe, but the first
+pointerdown still reached its parent iframe element and pointerup reached the
+button. No click was generated. A broad pointer-count delivery probe incorrectly
+accepted that partial input as click completion. Test-only isolated-world event
+evidence reproduces the different trusted down/up recipients; it is never shipped
+or used as a privileged production page-reading API.
+
+After ordinary enabled/visibility/coverage checks, actionablePoint now sends a
+move only, gives compositor routing a bounded 100 ms preparation interval, and
+rechecks position, enabled state and coverage before any press. A moved, disabled
+or covered target is refused, not clicked at its former coordinates. This is
+preparation, not a retry of input; a possibly delivered press is never repeated.
+Click delivery requires a trusted activation (click/auxclick/contextmenu/dblclick),
+not merely pointer events split across documents. Drag retains the pointer-event
+probe. A failed delivery no longer claims nothing changed: it warns that partial
+input may have happened and asks for inspection before any decision to retry.
+Existing navigation/document replacement uncertainty is unchanged. The probe is
+not an assertion that a site's business operation succeeded.
+
+The real regression checks trusted pointerdown, pointerup and click on the actual
+shadow-frame button in addition to its server event. Unit tests separately
+serialize and execute the isolated-world probe, reject fake/untrusted clicks and
+split pointer-only completion, revalidate hover-induced layout/coverage/disabled
+changes, and assert that failure never replays a press.
+
+
+### AD-49. Native owner folder choice and acknowledged workspace switching
+
+The fixed ui.pickProjectFolder owner action opens Electron's actual OS directory
+chooser; the renderer supplies no path or dialog configuration. One picker is
+admitted at a time, including registration and selection. Cancellation, multiple
+paths, relative paths and NUL-containing paths do not mutate the registry. The
+service still canonicalizes/registers the directory and enforces its idle Core
+switch barrier. The action reports success only after projects.open and
+projects.select both acknowledge the same service-issued project id. Errors
+release the picker lock, not Core restrictions. A failed select can leave an
+owner-registered directory in the registry; it does not change the active project
+or falsely report a successful switch.
+
+The Linux qualification launches the shipped, non-smoke Electron app against a
+real CrotService. X11 input cancels one actual GTK chooser, then chooses a folder
+with spaces via the native Open button. It checks unchanged registry/Core after
+cancel, selected Core root, refreshed shipped UI and real audit events. It never
+stubs the dialog, returns a fabricated native choice, or adds a renderer bypass.
+An isolated GTK setting stabilizes the test desktop's control layout. This is
+Linux GUI evidence, not macOS/Windows dialog or application-secret L1 qualification.
+The standalone qualification requires Xvfb, xdotool and Electron's GUI libraries;
+it refuses unsupported hosts rather than silently passing.
+
+### AD-50. Keep a guarded inspection response across UI replacement, never replay it
+
+A full browser regression exposed a workspace-view refresh replacing the DOM
+while an explicitly requested project inspection was pending. The old callback
+correctly refused to write to detached nodes, but the replacement page lost the
+request/result. Merely retrying the test or repeating the Core request on every
+render would hide the race and repeat guarded operations.
+
+The renderer now keeps one bounded inspection promise/result for the exact
+selected project id and canonical workspace. Replacement views subscribe to that
+same promise or render its completed point-in-time result. Response workspace
+must match the captured workspace; detached or superseded consumers cannot paint.
+A project switch discards the snapshot. Rendering, language changes and navigation
+never request another inspection; an explicit Inspect project or error Retry can.
+Pending clicks share the admitted request. The cache is presentation state only,
+not permission state, authorization, a background scan or proof that ports are free.
+
+The shipped-UI/real-service test withholds an actual inspection response, forces
+a language-driven rerender, releases the response and checks the result. It then
+navigates away/back without another request, switches workspaces and checks cache
+invalidation, and verifies that a subsequent explicit inspection makes exactly
+one new request. No production IPC method or authorization path is added.
+
+
+### AD-51. Native same-owner project TCP observation, not cwd inference
+
+The process.project_ports guard remains the sole authorization entry. NativeHost
+now supplies an optional read-only Platform observer on macOS/Windows. Core's
+Linux /proc implementation remains the fallback; no renderer/native direct RPC,
+actor-selected command, debug privilege or network probe is added.
+
+Darwin uses fixed /usr/sbin/lsof NUL field output for TCP listeners/current
+working directory, and libproc proc_pidinfo(PROC_PIDTBSDINFO) for effective UID
+and microsecond kernel creation identity. No shell, PATH lookup, environment or
+command-line inspection is used. Windows uses GetExtendedTcpTable owner-PID
+listener rows, a read-only process handle, equal owner-token SIDs and kernel
+creation FILETIME. It admits only a native 64-bit process ABI; bounded
+ReadProcessMemory follows PBI.PebBaseAddress, PEB.ProcessParameters and the
+CurrentDirectory UNICODE_STRING only. Executable location and .NET WorkingDirectory
+are not guesses for the real cwd. WOW64/emulated or inaccessible processes remain
+unobserved/partial. Windows libraries other than kernel32 KnownDLL are loaded
+from GetSystemDirectoryW, not the project directory or actor PATH.
+
+The shared observer canonicalizes cwd, excludes outside/sibling-prefix roots,
+intersects a second listener table, then rechecks creation identity and cwd before
+publishing. Limits are 128 listener PIDs, 512 unique returned listeners, bounded
+native tables/output, and a three-second observation deadline/cancellation signal.
+Errors and incompleteness report partial/unavailable, never fabricated free ports.
+This is point-in-time evidence, not a permission decision, live guarantee or L1
+secret protection. Foreign/unreadable process metadata is never returned to UI.
+
+Pure parser/identity, PID reuse, changed cwd, closed listener, cap, cancellation
+and guard-before-platform tests run on every host. The existing actual listener
+integration is enabled on macOS/Windows as well as Linux and exercises the real
+native bindings directly before the guarded Core result. Linux tests do not
+qualify the other OS ABIs; a green native CI run is still required before claiming
+the macOS/Windows observer qualified. General project-secret L1 enforcement and
+complete Stage A acceptance remain separate gates.
+
+### AD-52. Project secret-file mandatory policy and macOS native candidate
+
+`permissions.projectSecrets.allow` is an immutable, bounded list of exact
+project-relative secret files bound to an absolute canonical workspace. It is
+not a recursive directory grant, runtime `allow`, project-operation approval or
+capability override. The shared PermissionEngine denies `.env`, `.env.*`,
+`*.pem`, `*.key` (including case variants and sensitive directory components)
+unless that exact file was opted in by the owner configuration. Symlink grants
+are refused rather than silently granting a different target. Existing CROT
+service-secret protection still takes precedence. Ordinary filesystem tool
+requests use the same guard and audit; no second execution authorizer exists.
+Core pathname checks do not protect arbitrary child processes or hardlink aliases
+and must never be described as L1 protection.
+
+The macOS candidate adds a fixed, escaped, workspace-anchored Seatbelt filename
+rule, including files created after admission. Exact literal exceptions do not
+allow a subtree. Existing sensitive symlink targets are protected and ambiguous
+pre-existing secret hardlinks refuse admission; actor-created link/linkat calls
+are denied by inherited kernel policy. Trusted host processes must not create
+new public hardlink aliases to secret inodes while an actor is running: pathname
+policies are not inode information-flow control. This limitation is explicit,
+not a watcher-based security claim. Hardlink denial also changes toolchain
+compatibility and is subject to the existing actual-macOS toolchain tests.
+
+A Docker daemon is outside Seatbelt and reads the original host tree. The macOS
+mediated endpoint therefore refuses host bind sources other than the mediated endpoint socket,
+including read-only project binds, rather than exposing future secrets through a container. The
+positive mediated daemon byte stream remains supported. An exact secret-file
+opt-in does not restore directory bind mounts.
+
+This slice supplies configuration opt-in and a fresh sandbox after old sandbox
+drain; it does not yet supply live owner IPC/UI grant/revoke. Linux and Windows
+backends do not yet implement this general project-secret filename policy.
+Their existing L1 status must not be interpreted as qualification of this new
+requirement. Static masks, preflight scans and UI filters are insufficient for
+future-file protection. The added macOS native tests must pass on actual macOS
+before its kernel rule is qualified. Until remaining native backends, live
+owner controls and their acceptance tests exist, Stage A and PR #5 remain WIP.
+
+
+### AD-53. Owner secret-file grant/revoke and immutable Core retirement
+
+Authenticated owner product RPCs `security.secretFiles.status` and
+`security.secretFiles.set` expose the exact workspace-bound AD-52 policy. The
+renderer confirms each grant/revoke and warns that current tasks and chat
+will stop. The Core path policy is not protection for unconfined commands;
+Linux/Windows general secret-file L1 remains incomplete. These controls do not
+weaken capability, CROT-secret, native confinement or mandatory approval gates.
+
+The existing ControlCenter serialization owns the transition. After schema,
+exact-current-workspace and canonical-path validation, an exclusive CoreHolder
+lease blocks new adapter/workflow admission. ExecutionGuard retirement is
+irreversible, including held references to the old capability services. A
+protected atomic pending record is written before cancellation. Product chat,
+server clients and tasks are interrupted; the old Core cancels approvals,
+terminates processes (including actors with already-open secret descriptors),
+closes native confinement and drains operations. A nonzero activity count or
+any drain failure refuses acknowledgement. Only then is a new immutable Core
+built with the explicit policy, audited, committed to the owner state file and
+installed. No second authorizer or renderer execution path is introduced.
+
+`project-secret-access.json` is protected service state, unreadable/unwritable
+through agent capabilities. A crash with a pending record recovers deny-all,
+not the previous grant or a half-published widening. Missing state uses the
+owner configuration baseline; malformed/non-private/non-regular state refuses
+startup. If the initial protected write itself fails, existing durable state
+cannot be assumed changed: the live service halts and reports failure, never
+successful revocation. All other transition failures likewise latch the service
+halted and keep admission closed; no rollback revives an old actor. An owner
+must repair the failure before restarting. A completed revocation cannot
+retrieve bytes already disclosed to an actor; its guarantee is stopping old
+work and denying subsequent access under the replacement policy.
+
+Tests cover exact scope, old-reference retirement, pending recovery, protected
+write/build/audit/commit/drain failures, a real service actor holding an open
+secret descriptor, restart persistence, and the shipped renderer's explicit
+confirmation/cancel/grant/revoke path through a real service. These are separate
+from native backend qualification and do not close Stage A's remaining gates.
+
+
+### AD-54. Actual native folder-dialog qualification, not a renderer substitute
+
+The existing Linux Electron/GTK fixture is generalized with test-only native
+control drivers. All hosts launch the shipped Electron entry against a real
+isolated CrotService and exercise the unchanged `showOpenDialog` →
+ProjectFolderPicker → projects.open/select path. Cancellation must preserve the
+registry and Core; a folder containing spaces must become the real Core root,
+be visible in the shipped renderer and have both audit records. No dialog
+return value, IPC response or service acknowledgement is mocked.
+
+Linux retains X11/GTK keyboard and native-window control. macOS inspects the
+visible NSOpenPanel in the test Electron main process through AppKit. Native
+Go to Folder navigation and AXPress run in a bounded external Accessibility
+helper with existing OS trust, exact chooser identity and nested-sheet checks;
+proxy directoryURL is diagnostic only, never evidence of native navigation.
+Cancellation uses the public native cancel action. No forbidden programmatic
+NSSavePanel OK, TCC change, System Events or permission bypass is used. Windows UIAutomation is restricted to a single visible native `#32770` chooser
+whose process or native owner belongs to the test Electron PID. Win32 enumeration
+resolves its real handle before UIAutomation; the chooser need not be exposed as
+a direct desktop automation child. Ambiguous owned dialogs refuse execution. ValuePattern edits its real folder field
+and InvokePattern uses the native Cancel/Select controls; no registry policies,
+security settings or provider values are changed. The real service result must
+still equal the fixture directory after the native callback.
+
+The macOS/Windows fixture runs as a mandatory test on those hosts in the
+existing Node/OS matrix; Linux's existing actual GTK qualification remains a
+separate command. Host-inapplicable execution is explicit, not qualification.
+A successful Linux run and static review cannot prove the AppKit/Windows driver
+works. Actual native CI must pass before closing either acceptance gate.
+
+### AD-55. Owner-authorized zero-fee Windows secret-view investigation
+
+**Decision before code; supersedes only AD-29's blanket third-party-filesystem
+exclusion for this investigation.** The owner authorizes a free, commercially
+compatible native mediator for Stage A, not a relaxation of the secret policy.
+MIT/Apache/BSD/ISC and dynamically linked LGPL components are eligible; strict
+GPL without a proprietary-compatible exception is not. CROT stays private and
+UNLICENSED. WinFsp's proprietary paid route is not selected, and no dependency
+or CROT source is silently relicensed. LGPL distribution requires notices,
+corresponding library source/replacement/relinking and other applicable duties;
+a library import DLL is not statically embedded in CROT.
+
+No EV certificate, paid signing or locally rebuilt kernel driver is authorized.
+A driver candidate must be an unchanged pinned official Microsoft-signed release,
+verified on the actual CI host with kernel-signing policy and the exact installed
+binary/catalog identity. A GitHub commit signature or installer signature alone
+is insufficient. No test-signing, Secure Boot bypass or host-security weakening.
+Installation is confined to disposable hosted Windows CI. Production must never
+silently download/install a driver; missing/invalid/unsupported components require
+explicit unavailable diagnostics and refusal, never an unprotected command retry.
+
+The first candidate revisits the **composite** of the official Dokan 2.3.1
+LGPL DLL/driver and a zero-capability AppContainer/owned Job, not AD-27's rejected
+WRITE_RESTRICTED Low actor. Historical raw-control-open failures remain intact.
+AD-28's negative raw-device probes without projected data access are NOT sufficient:
+the same effective actor must actually read/write the live projected backing while
+raw control opens remain denied through both Win32 and absolute NT aliases,
+including literal zero DesiredAccess, before AND after data access. The device
+DACL/label must not be lowered or granted package access as a shortcut. Projected
+file security is separate from raw control-device security. Unknown results,
+namespace absence, loader failure and cleanup failure are not access-denial proof.
+
+This is a fresh isolated native CI fixture, not a production backend registration.
+A positive feasibility result must be followed by dynamic `.env`/`.env.*`/PEM/KEY
+and case/alias/link/rename/reparse tests, exact owner grants/revokes, inherited
+children, retained descriptors, same-backing write/atomic replace/sharing,
+kill/crash/unmount/recovery, original security preservation and final CrotService
+integration. Scans/watchers/Detours hooks, cached hydration or snapshot/copy-back
+are not a kernel filename barrier. No green feasibility test alone closes A,
+OD-9's untested OS/architecture matrix or Linux's separate future-secret gate.
+
+References: [Dokan pinned source/license](https://github.com/dokan-dev/dokany/tree/v2.3.1.1000),
+[LGPL terms](https://github.com/dokan-dev/dokany/blob/v2.3.1.1000/license.lgpl.txt),
+[AppContainer](https://learn.microsoft.com/en-us/windows/win32/secauthz/implementing-an-appcontainer).
+
+Pinned experiment downloads are not a production prohibition on an owner's
+interface-compatible LGPL DLL replacement. Before distribution, packaging must
+satisfy replacement/relinking rights and notices without weakening protection
+against agent modification of trusted runtime files. Runtime candidate readiness
+and licensing/distribution completion are separate, mandatory gates.
+
+**AD-55 follow-up decision, before code — scoped data-directory capability.**
+Actual `cc244740` Windows Node20/22 refused absolute mounted data opens with
+Win32 ACCESS_DENIED before any create callback (both AppContainer and LPAC).
+Upstream pinned `sys/event.c` sets `FILE_DEVICE_SECURE_OPEN` whenever a volume
+SD is supplied. This explains why projected-file SD grants alone cannot admit
+this path while the raw device remains private. Dropping the volume SD is not
+accepted: upstream's default `sys/dokan.h` SD includes Everyone/Restricted Code,
+and tightening it after mounting does not revoke previously opened handles.
+No raw package grant, broader initial ACL, driver fork or security downgrade.
+
+The next isolated experiment delegates exactly one **data root directory file
+handle**, opened by the controller using a temporary exact-self-PID/root-only
+read/traverse admission, via the explicit Windows process HANDLE_LIST. No raw
+Dokan disk/control handle is inherited. The AppContainer/LPAC child must verify
+the inherited object is a disk directory, issue relative `NtCreateFile` for the
+fixed public file through that handle, and perform the same live backing writes
+while all raw Win32/NT probes remain denied. Exact token identity/owned Job gates
+remain for child create callbacks. Root capability ownership lasts through Job
+drain, with cleanup failures refusing readiness. A directory capability is not
+permission to bypass future filename checks; those remain in the mediator.
+
+This only tests the data/control mechanism. General Win32 absolute paths, Node/
+cmd/PowerShell compatibility, process cwd/descendants, path/secret/link/rename
+policies and production integration remain independent unimplemented gates.
+A relative-capability result must never be reported as full tool compatibility.
+Reference: pinned upstream `sys/event.c`, `sys/dokan.h`, `sys/fscontrol.c` and
+Microsoft process attribute `PROC_THREAD_ATTRIBUTE_HANDLE_LIST` documentation.
+
+**AD-55 observed relative-capability result — rejected.** Source
+`da34dce8c8bbc5e730bd9b64271da7db1fe79ea6` completed nine of eleven checks
+successfully. Both Windows Node20/22 checks failed with the same actual
+AppContainer and LPAC result: relative data open returned Win32 error 5,
+zero create callbacks and zero authorized callbacks. The inherited directory
+capability did not bypass the device secure-open restriction. Raw probes stayed
+denied; readiness correctly failed. No general data path, filename barrier or
+tool compatibility was established. Do not build a Detours compatibility shim
+on this unproven data route, widen the raw ACL, omit the initial private volume
+SD, or reclassify this mandatory positive test as an expected failure/skip.
+
+The CI synthetic merge `e901677f228ca639be784ab6a41cf2b2830f3423` and the
+feature source have identical tree `3abd91ff202a6d96087d93620902cd3d24efdd62`.
+Bounded component proofs, check links and decoded native failures are retained in
+[the exact-source evidence](docs/evidence/windows-l1-ad55/da34dce8-component-summary.json).
+This rejects this Dokan data/control topology, not every possible Windows
+filesystem architecture. Production backend adoption and missing-component
+fail-closed integration remain unimplemented, not implicitly qualified.
+
+### AD-56 — alternative Windows runtime licensing gate; no Pismo adoption
+
+**Decision before any alternative runtime installation or implementation.**
+The owner's AD-55 authorization permits free, commercially compatible options;
+it does not authorize purchasing a runtime license, redistribution prohibited
+by its license, or accepting an unproven kernel-signing/security boundary.
+Pismo FSR/PFM is researched as an alternative, not selected or registered.
+
+The official build 24X SDK has permissive copyright/permission-notice terms.
+The SDK archive/header inspection is not an installation, driver signature
+verification or an actual isolated read/write test. Downloaded research copies
+remain outside the repository and all product packages. No SDK source, DLL,
+installer or runtime is bundled with CROT by this decision.
+
+The separate PFM 24X runtime license permits use but expressly prohibits
+redistribution (including copying/storing/installing to enable other users).
+The official FSR licensing page separately describes per-application fees for
+commercial integration/distribution. Therefore a free SDK is NOT evidence that
+CROT may ship or automatically install the runtime for commercial customers.
+An independently user-installed runtime may be a research topology, but its
+commercial integration rights are not established here; do not mark the
+licensing gate passed without authoritative clarification for that exact use.
+No vendor contact, agreement acceptance on the owner's behalf, purchase or
+end-user installation is authorized/performed by this research record.
+
+If a legally admissible topology is established, subsequent isolated CI must
+verify the actual installed kernel component's Microsoft hardware-publisher
+signature and kernel-signing policy, exact versions/hashes and dynamic API
+loading. An installer vendor signature alone is insufficient. It must then
+prove live original-backing read/write by the actual zero-capability
+AppContainer AND LPAC, isolation of all raw/control entry points, original
+security preservation, ownership/drain and missing-component refusal. The
+new SDK's Fsr interfaces must be assessed directly; older online Pfm API
+examples are not treated as the downloaded SDK's ABI or security contract.
+No WorldRead/WorldWrite, capability broadening, device ACL weakening or
+user-space hooks may substitute for this proof. No production fallback may
+be introduced when a component is absent, invalid or unqualified.
+
+Research archive SHA256s (not adoption or independent publisher attestation):
+SDK `bf07cf47952ecb7fc46f53d75b43acff63540df352fcd96d1f1996ceca63cd07`;
+PFM installer `df0ceb3eb0c5f6275547915976f4a5216b9a227a06e8ef283c7001b662f2ea10`.
+The installer was downloaded for examination only, not executed. Windows
+future-secret L1 remains open; Stage A/PR #5 remains Draft, B/C unstarted.
+
+Primary terms: [FSR SDK license](https://pismotec.com/download/fsrkit-24X-license.txt),
+[PFM runtime license](https://pismotec.com/download/pfm-24X-license.html),
+[commercial FSR licensing](https://pismotec.com/fsr/license/).
+
+### AD-57 — driver-free native projection: hard security gates, not watcher enforcement
+
+**Owner directive; decision before code.** Restore AD-29's exclusion of
+third-party filesystem drivers from product packaging, host preparation and
+active CI provisioning. AD-55/56 are historical, rejected/unqualified research.
+Remove the active Dokan SDK/MSI downloader/compiler/installer and retire its unused
+new helper implementations to comment-only historical markers; Pismo was never installed, bundled or registered. Preserve
+past evidence and the mandatory unqualified native acceptance gate, not a green
+reclassification or expected-failure/skip. A disabled legacy experiment must
+refuse explicitly before downloading, installing or executing anything.
+
+The owner proposes same-volume native hardlinks into a private projection,
+original source hidden by OS confinement, and secret names excluded with locked
+stubs. This is a **candidate**, not established AppContainer/LPAC compatibility
+or future-secret protection. The exact native process identities, source-path
+bypass, control-channel denial, file identity and lifetime must still be proved.
+Neither the failed Dokan topology nor Pismo license research proves that every
+third-party implementation has the same limitation; they do not change this
+owner-selected driver prohibition.
+
+**Non-negotiable constraints found before adoption:**
+
+1. A hardlink shares the underlying file's security metadata and identity.
+   Windows DACL grants/denials or POSIX chmod on the projected file affect the
+   original, not an independent projected ACL. Package read/write grants must
+   not accidentally permit the original path. A private parent-directory DACL
+   is not proof of known-path denial with traverse-bypass privileges. Test the
+   actual effective AppContainer/LPAC before claiming isolation; do not change
+   source permissions or remove native identity guards speculatively.
+2. Creating a temporary file and renaming it over the projected path breaks
+   its original hardlink identity. Host atomic replacement breaks identity in
+   the other direction. Direct in-place writes work; transparent atomic-save,
+   new-file/rename/delete compatibility is **not** supplied by hardlinks alone.
+   No watcher-based copy-back is an approved replacement for the direct-write
+   invariant.
+3. Existing stubs enumerate finite names, not the infinite `.env*`, `*.pem`,
+   `*.key` language. An agent allowed to create names can create/open/write a
+   new matching name before a watcher callback applies a deny. Observing it
+   later cannot revoke retained file handles. `0000` on an owner-writable inode
+   is not immutable enforcement against chmod; a `/dev/null` read returning
+   EOF is not EACCES. A missing excluded path (ENOENT) is not the demanded
+   EACCES proof. Read-only namespace mounts or mandatory interception need
+   their own positive tool-compatibility and refusal tests.
+4. Keeping an old public hardlink after a trusted host renames its source to
+   a secret name can expose subsequently written secret content through the
+   stale public name. Do not present source watcher synchronization as atomic
+   inode/name reclassification. Inherited/retained descriptors and grants on
+   revocation still require task drain before acknowledging a policy change.
+
+Add deterministic real-filesystem regression experiments for these native
+hardlink/stub properties on the existing OS CI matrix. They test the proposed
+building blocks, **not** confined AppContainer/LPAC/L1 admission. A passing
+counterexample test is rejection evidence, not a passing projection backend.
+Keep the native acceptance gate unqualified/red until a real replacement meets
+it. No native backend availability claim, service launcher registration,
+full Stage A completion, or B/C start follows from these tests.
+
+Implement the owner's literal `.env*` filename rule consistently in shared
+Core policy and macOS native compiler (including `.envrc`/`.environment` and
+case variants); this tightens existing policy, not arbitrary-process Windows/
+Linux L1. Exact workspace/file owner opt-ins remain exact, never prefix grants.
+
+Linux userns/mountns with native Landlock/seccomp notification is an allowed
+future investigation. FUSE can be considered only under the owner's Linux
+exception, with licensing/deployment and actual confinement gates. A Linux
+primitive is not Windows qualification. On Windows, if no native mandatory
+operation guard can be proved, future-secret-protected arbitrary commands
+must refuse rather than use a watcher, silently downgrade isolation or call
+legacy local-unconfined fallback. This is a required admission contract, not
+a claim that the new backend or its production fail-closed integration exists.
+
+**Status:** architectural safety blocker, not implementation acceptance.
+An alternative restricted Windows contract (file mutations through checked
+Core operations, no arbitrary writable-workspace command access) requires owner
+approval; it is not silently substituted for transparent native execution.
+The owner has not authorized weakening EACCES guarantees or atomic/direct-write
+requirements. PR #5 stays Draft and must not be merged as complete Stage A.
+
+
+AD-57 primary native references: [Microsoft hard links](https://learn.microsoft.com/en-us/windows/win32/fileio/hard-links-and-junctions),
+[CreateHardLink security descriptor semantics](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-createhardlinkw),
+[Linux link(2) shared permissions/ownership](https://man7.org/linux/man-pages/man2/link.2.html),
+[inotify event/race limitations](https://man7.org/linux/man-pages/man7/inotify.7.html).
+The local counterexamples use real Linux filesystem operations, not simulated
+Win32 access checks; the new Windows DACL case must run on actual Windows CI.
+
+### AD-58 — protected service commands; source mutations only through checked Core
+
+**Owner-approved contract, recorded before implementation.** Supersedes AD-57's
+requirement for transparent command writes/hardlink projection. CrotService
+always enables a protected command composition on every OS and in every
+permission preset, including Full Control. The live workspace remains the
+boundary for authorized Core file operations; process/shell/MCP child transports
+receive a separate, empty, per-Core owner-private workspace. No source files,
+hardlinks, secret opt-ins, Git metadata, tokens or control context are copied
+there, and there is no automatic commit/copy-back/import. It is an isolated
+command scratch space, not a transparent project worktree or a driver mount.
+An actor may produce its own scratch files, but these are not source files and
+never become project changes implicitly. Project changes must use the ordinary
+Core file tools with the same authorization, approvals, secret guard and audit.
+
+The underlying native backend must deny the entire canonical source_root as
+well as the existing private control/state paths. Future source entries,
+rename/atomic replacements inside that denied tree do not enter the scratch
+space. Launch and executable resolution map only the authorized source-root cwd
+to the private root; non-root cwd is explicitly refused in this first contract,
+not guessed, mirrored by a watcher or created by privileged code in an
+actor-writable tree. Absolute source paths in argv get no special exemption.
+No source writable Docker bind is allowed. There is no third-party driver.
+
+Protected-service process launch ALWAYS requires available native L1. Neither
+local principal, Full Control, missing components, failed preparation nor a
+post-admission native error permits an unconfined retry. No provider or MCP
+adapter can disable this composition. The embedding-only CrotCore API retains
+its existing low-level contract when the host does not enable protected
+commands; it is not the protected CrotService or AD-58 qualification. Native
+backend component tests can still exercise their raw platform contracts; new
+AD-58 acceptance must exercise the new Core composition and service wiring.
+
+Core file mutations stay on source_root and reject secret names before I/O,
+including both endpoints of moves/atomic replacements. AD-53's exact,
+authenticated owner secret-file opt-ins remain distinct from agent runtime
+allow/ask rules; they do not expose any source files to child commands. Checked
+source file operations additionally serialize agent-controlled filesystem
+changes, reject symlink/special/multiple-link objects where their semantics
+cannot be proved, and avoid truncation before descriptor validation. Directory
+moves/deletes must not silently move/delete denied secret descendants. Unsafe
+host-command helpers such as generic Git/Docker operations must refuse in the
+protected service until they have a separately checked source-operation
+contract; a broad permission grant is not that proof. Read-only project
+inspection must not execute workspace-controlled hooks/plugins.
+
+Core is trusted, and an adversarial host process with the owner's privileges
+is outside the sandbox threat model. The owner must not deliberately inject
+secret bytes into a previously public file or create external public hardlink
+aliases to secrets while exposing those aliases to an actor. No pathname
+sandbox can recover bytes already disclosed before reclassification. This
+residual host boundary does not permit an agent-controlled source bypass.
+
+Lifecycle: allocate fresh private scratch only, no path adoption; unavailable
+or overlapping source/scratch storage refuses. Native actor drain precedes ACL
+restoration and scratch cleanup; failed cleanup closes admission and is not
+success. Existing kill-switch, scoped-token revocation and AD-53 immutable Core
+retirement/drain include these actors. Status explicitly labels core-only source
+access; the old 'Full Control commands unconfined' note must not describe this
+service composition.
+
+The abandoned AD-55 driver-positive fixture may now be retired/replaced by
+mandatory AD-58 native acceptance, not skipped to hide a failed replacement.
+Acceptance: actual native child scratch writes succeed; Core checked public
+writes modify the original; existing/future source secrets, absolute source
+reads/writes, rename/atomic replacements and control paths are denied; source
+remains unchanged after private command writes. Missing/failed L1 refuses
+before any process, in all modes. Run actual Linux/macOS/Windows cases and all
+11 existing CI jobs; do not promote PR #5 until observed green results and the
+new gates pass. No merge by the agent; B/C remain after Stage A.
+
+AD-58 transaction detail: checked filesystem mutations serialize with command
+admission. Before source I/O the native command generation is drained and
+closed (including Windows source-identity sharing guards), then its private
+scratch is removed. Any drain/restore/cleanup failure refuses the source write
+and further commands. A later command receives a fresh empty generation; a
+resolved executable from an older generation is refused. Reads do not require
+this rotation. This deliberately interrupts running commands on a checked file
+mutation; scratch artifacts are discarded, never imported. On Windows trusted
+owner rename of a pinned source identity during an active lease may safely fail
+with a sharing error; Core rename/atomic replacement occurs after verified drain,
+not by relaxing the actor ACL. Native tests must prove post-commit fresh command
+admission as well as the negative source/control probes.
+
+Browser file import uses the same checked source-mutation barrier, including
+identity/secret revalidation after actor drain. Protected-service uploads refuse
+multiple-link source descriptors so a public hardlink alias cannot bypass the
+source file policy. Legacy raw BrowserFiles component fixtures are not protected
+service acceptance. Windows scratch provisioning creates a new private child
+through the native ACL provider rather than asking it to adopt/re-ACL mkdtemp's
+already-existing container; readiness verifies that new child's owner-only ACL.

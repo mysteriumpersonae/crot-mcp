@@ -332,7 +332,7 @@ describe("WP-22: tray approval provider over the control channel", () => {
     expect(JSON.stringify(await auditRecords())).not.toContain('"subject"');
   });
 
-  it("approves file, shell, Git and network operations end to end through the tray", async () => {
+  it("approves checked operations but never overrides AD-58 command/Git boundaries", async () => {
     execFileSync("git", ["init", "-q"], { cwd: dirs.workspace });
     await writeFile(path.join(dirs.workspace, "f.txt"), "x");
     const command = serveCommand({
@@ -366,7 +366,6 @@ describe("WP-22: tray approval provider over the control channel", () => {
     const cases: [string, Record<string, unknown>, string][] = [
       ["fs_create_directory", { path: "d" }, "filesystem.write"],
       ["shell_run", { script: "echo approved" }, "shell.execute"],
-      ["git_add", { paths: ["f.txt"] }, "git.write"],
       ["network_request", { url: `http://127.0.0.1:${targetPort}/` }, "network.access"],
     ];
     for (const [index, [tool, args, capability]] of cases.entries()) {
@@ -379,8 +378,14 @@ describe("WP-22: tray approval provider over the control channel", () => {
         subjectDigest: request.subjectDigest,
       });
       const result = await running;
-      expect(result.isError, `${tool}: ${JSON.stringify(result.body)}`).toBe(false);
+      if (tool === "shell_run" && !service.core.confinementStatus().available) {
+        expect(result.isError).toBe(true);
+        expect(JSON.stringify(result.body)).toContain("CONFINEMENT_UNAVAILABLE");
+      } else expect(result.isError, `${tool}: ${JSON.stringify(result.body)}`).toBe(false);
     }
+    const git = await call(mcp, "git_add", { paths: ["f.txt"] });
+    expect(git.isError).toBe(true);
+    expect(JSON.stringify(git.body)).toContain("PERMISSION_DENIED");
     await waitFor(
       async () =>
         (await auditRecords()).filter(

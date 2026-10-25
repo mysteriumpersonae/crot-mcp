@@ -113,22 +113,29 @@ it(
       args: [path.resolve("tests/fixtures/product-mcp.mjs")],
     });
     const connected = await rpc("mcpServers.connect", { id: added.server.id });
-    expect(connected.server.status, JSON.stringify(connected.server.logs)).toBe("Connected");
-    expect(connected.server.tools[0].name).toBe("echo");
-    expect(connected.server.resources).toHaveLength(1);
-    await expect(
-      rpc("mcpServers.callTool", { id: added.server.id, tool: "echo", arguments: { text: "test" } }),
-    ).rejects.toThrow();
-    await rpc("mcpServers.setToolPolicy", { id: added.server.id, tool: "echo", allowed: true });
-    expect(
-      JSON.stringify(
-        await rpc("mcpServers.callTool", { id: added.server.id, tool: "echo", arguments: { text: "roundtrip" } }),
-      ),
-    ).toContain("roundtrip");
-    await expect(
-      rpc("mcpServers.callTool", { id: added.server.id, tool: "echo", arguments: { text: 42 } }),
-    ).rejects.toThrow();
-    await rpc("mcpServers.disconnect", { id: added.server.id });
+    const confinement = (await call("crot_status")).confinement;
+    expect(confinement.sourceAccess).toBe("core-only");
+    if (confinement.available) {
+      expect(connected.server.status, JSON.stringify(connected.server.logs)).toBe("Connected");
+      expect(connected.server.tools[0].name).toBe("echo");
+      expect(connected.server.resources).toHaveLength(1);
+      await expect(
+        rpc("mcpServers.callTool", { id: added.server.id, tool: "echo", arguments: { text: "test" } }),
+      ).rejects.toThrow();
+      await rpc("mcpServers.setToolPolicy", { id: added.server.id, tool: "echo", allowed: true });
+      expect(
+        JSON.stringify(
+          await rpc("mcpServers.callTool", { id: added.server.id, tool: "echo", arguments: { text: "roundtrip" } }),
+        ),
+      ).toContain("roundtrip");
+      await expect(
+        rpc("mcpServers.callTool", { id: added.server.id, tool: "echo", arguments: { text: 42 } }),
+      ).rejects.toThrow();
+      await rpc("mcpServers.disconnect", { id: added.server.id });
+    } else {
+      expect(connected.server.status).not.toBe("Connected");
+      expect(JSON.stringify(connected.server.logs)).toContain("CONFINEMENT_UNAVAILABLE");
+    }
     const httpAdded = await rpc("mcpServers.add", {
       name: "HTTP fixture",
       transport: "http",
@@ -148,16 +155,25 @@ it(
       ),
     ).toContain("http-roundtrip");
     await rpc("mcpServers.disconnect", { id: httpAdded.server.id });
-    const started = await call("process_start", {
-      command: process.execPath,
-      args: ["-e", "setInterval(()=>{},1000)"],
-      cwd: second.project.path,
-    });
-    const tasks = await rpc("tasks.list");
-    const task = tasks.tasks.find((t: { processId?: string }) => t.processId === started.id);
-    expect(task.state).toBe("Running");
-    await rpc("tasks.cancel", { id: task.id });
-    expect((await rpc("tasks.list")).tasks.find((t: { id: string }) => t.id === task.id).state).toBe("Cancelled");
+    if (confinement.available) {
+      const started = await call("process_start", {
+        command: process.execPath,
+        args: ["-e", "setInterval(()=>{},1000)"],
+        cwd: second.project.path,
+      });
+      const tasks = await rpc("tasks.list");
+      const task = tasks.tasks.find((t: { processId?: string }) => t.processId === started.id);
+      expect(task.state).toBe("Running");
+      await rpc("tasks.cancel", { id: task.id });
+      expect((await rpc("tasks.list")).tasks.find((t: { id: string }) => t.id === task.id).state).toBe("Cancelled");
+    } else
+      await expect(
+        call("process_start", {
+          command: process.execPath,
+          args: ["-e", "setInterval(()=>{},1000)"],
+          cwd: second.project.path,
+        }),
+      ).rejects.toThrow("CONFINEMENT_UNAVAILABLE");
     await waitFor(async () =>
       JSON.stringify(await rpc("monitoring.queryAudit", { project: second.project.id })).includes(
         "filesystem.write_file",
@@ -184,13 +200,15 @@ it(
       requestsPerMinute: 100,
       revoked: false,
     });
-    const revokeProcess = await call("process_start", {
-      command: process.execPath,
-      args: ["-e", "setInterval(()=>{},1000)"],
-      cwd: second.project.path,
-    });
+    const revokeProcess = confinement.available
+      ? await call("process_start", {
+          command: process.execPath,
+          args: ["-e", "setInterval(()=>{},1000)"],
+          cwd: second.project.path,
+        })
+      : undefined;
     const revokeTask = (await rpc("tasks.list")).tasks.find(
-      (t: { processId?: string }) => t.processId === revokeProcess.id,
+      (t: { processId?: string }) => revokeProcess && t.processId === revokeProcess.id,
     );
     await rpc("agents.configure", {
       id: agent.id,
@@ -199,7 +217,10 @@ it(
       requestsPerMinute: 100,
       revoked: true,
     });
-    expect((await rpc("tasks.list")).tasks.find((t: { id: string }) => t.id === revokeTask.id).state).toBe("Cancelled");
+    if (revokeProcess)
+      expect((await rpc("tasks.list")).tasks.find((t: { id: string }) => t.id === revokeTask.id).state).toBe(
+        "Cancelled",
+      );
     await rpc("agents.configure", {
       id: agent.id,
       projects: [],

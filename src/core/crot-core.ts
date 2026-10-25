@@ -1,3 +1,8 @@
+import { openCommandWorkspace } from "./platform/command-workspace.js";
+import { ProjectSecretPolicy } from "./permissions/project-secrets.js";
+import { inspectProject } from "./capabilities/projects/inspect.js";
+import type { AuthContext } from "./auth/principal.js";
+import type { RuntimePermissionState } from "./permissions/runtime.js";
 import { BrowserFiles } from "./capabilities/browser/files.js";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -37,6 +42,7 @@ import { createChildEnvironment, type ChildEnvironmentSummary } from "./platform
 import { unavailableConfinement } from "./platform/confinement.js";
 import { createNodePlatform } from "./platform/node-platform.js";
 import type {
+  ConfinementScope,
   ConfinementStatus,
   CoreConfinement,
   Platform,
@@ -73,8 +79,8 @@ export interface CrotStatus {
   /**
    * Command confinement L1 of the children of shell.execute and
    * process.manage (ARCHITECTURE.md §27 AD-20 point 12). In full_control L1
-   * does not apply to local principals; remote principals always need it
-   * (WP-31). The note in detail says so.
+   * does not apply to local principals in the legacy embedding contract.
+   * AD-58 protected service commands always require it; sourceAccess reports that contract.
    */
   readonly confinement: ConfinementStatus;
   /** Approval gates: configured rules and whether an approval UI is registered (never pending requests). */
@@ -99,6 +105,9 @@ export const CORE_VERSION = "0.1.0";
 const SHUTDOWN_DRAIN_MS = 2_000;
 
 export interface CrotCoreOptions {
+  /** Composition-root only: CrotService always enables AD-58, not a request/config toggle. */
+  readonly checkedCommands?: boolean;
+  readonly runtimePermissions?: RuntimePermissionState;
   readonly additionalAuthorization?: (context: import("./auth/principal.js").AuthContext, operation: string) => void;
   /** Override the audit sink derived from configuration (embedding, tests). */
   readonly auditSink?: AuditSink;
@@ -272,7 +281,11 @@ export class CrotCore {
       ...(config.browser.enabled ? [uploadRoot, downloadRoot] : []),
     ]);
     const protectedPaths = await resolveAll([...guarded, ...secretPaths]);
+    const projectSecrets = await ProjectSecretPolicy.create(workspace, config.permissions.projectSecrets);
     const permissions = new PermissionEngine(policy, {
+      projectSecrets,
+      workspaceRoot: workspace.root,
+      ...(options.runtimePermissions ? { runtime: options.runtimePermissions } : {}),
       protectedPaths,
       secretPaths,
       contains: (a, c) => workspace.contains(a, c),
@@ -297,7 +310,14 @@ export class CrotCore {
     for (const provider of options.approvalProviders ?? []) approvalBroker.register(provider);
     const exposure = options.exposure ?? new ExposureTracker(remoteExposure ? { remote: remoteExposure } : {});
     const guard = new ExecutionGuard(permissions, audit, {
-      ...(options.additionalAuthorization ? { additionalAuthorization: options.additionalAuthorization } : {}),
+      additionalAuthorization: (context, operation) => {
+        options.additionalAuthorization?.(context, operation);
+        if (options.checkedCommands && /^(git|docker)\./.test(operation))
+          throw new CrotError(
+            "PERMISSION_DENIED",
+            "AD-58: generic Git/Docker source helpers need a checked source-operation contract; use Core filesystem operations",
+          );
+      },
       approvals: approvalBroker,
       exposure,
       // Step 4 of a gated operation: every path must still resolve to the same place.
@@ -311,7 +331,22 @@ export class CrotCore {
     // Git operations and CROT writes into the Git directories they use never run at the same time
     // (AD-1 point 6, AD-2); git.write operations on one repository are also serialized.
     const gitLock = new GitMetadataLock((a, c) => workspace.contains(a, c));
-    const filesystem = new FileSystemService({ workspace, guard, limits: config.limits, gitLock });
+    const filesystem = new FileSystemService({
+      workspace,
+      guard,
+      limits: config.limits,
+      gitLock,
+      ...(options.checkedCommands
+        ? {
+            checkedSource: projectSecrets,
+            sourceMutation: <T>(execute: () => Promise<T>): Promise<T> => {
+              if (!confinement.withSourceMutation)
+                throw new CrotError("CONFINEMENT_FAILED", "AD-58 source transaction is unavailable");
+              return confinement.withSourceMutation(execute);
+            },
+          }
+        : {}),
+    });
     // Children of process tools and Git start from the allowlisted environment (AD-18); Docker keeps its own list (AD-3).
     const childEnvironment = createChildEnvironment(
       platform.baseEnvironment,
@@ -326,22 +361,26 @@ export class CrotCore {
     for (const [name, value] of Object.entries(platform.baseEnvironment)) {
       if (DOCKER_FORWARDED_ENV.has(name.toUpperCase())) dockerEnvironment[name] = value;
     }
-    const confinement: CoreConfinement = platform.confinement
-      ? await platform.confinement.open({
-          workspace: workspace.root,
-          protectedPaths,
-          network: confinementNetwork,
-          dockerEnvironment,
-          audit: (event) => {
-            audit
-              .record({ kind: "confinement", id: newAuditEventId(), timestamp: new Date().toISOString(), ...event })
-              .catch(
-                options.onAuditError ??
-                  ((e) => process.stderr.write(`crot: audit write failed: ${(e as Error).message}\n`)),
-              );
-          },
-        })
-      : unavailableConfinement(confinementNetwork);
+    const confinementScope: ConfinementScope = {
+      workspace: workspace.root,
+      projectSecretAllowedPaths: projectSecrets.allowedPaths,
+      protectedPaths,
+      network: confinementNetwork,
+      dockerEnvironment,
+      audit: (event) => {
+        audit
+          .record({ kind: "confinement", id: newAuditEventId(), timestamp: new Date().toISOString(), ...event })
+          .catch(
+            options.onAuditError ??
+              ((e) => process.stderr.write(`crot: audit write failed: ${(e as Error).message}\n`)),
+          );
+      },
+    };
+    const confinement: CoreConfinement = options.checkedCommands
+      ? await openCommandWorkspace(platform, workspace, confinementScope)
+      : platform.confinement
+        ? await platform.confinement.open(confinementScope)
+        : unavailableConfinement(confinementNetwork);
     const processes = new ProcessService({
       workspace,
       guard,
@@ -349,9 +388,11 @@ export class CrotCore {
       limits: config.limits,
       baseEnv: childEnvironment.base,
       confinement,
+      requireConfinement: options.checkedCommands ?? false,
       modeFor: (context) => permissions.modeFor(context),
     });
     const git = new GitService({
+      refuseUncheckedSource: options.checkedCommands ?? false,
       workspace,
       guard,
       platform,
@@ -368,7 +409,22 @@ export class CrotCore {
       secretPaths,
     });
     const browser = new BrowserService({
-      files: new BrowserFiles(workspace, uploadRoot, downloadRoot, platform.privateFiles),
+      files: new BrowserFiles(
+        workspace,
+        uploadRoot,
+        downloadRoot,
+        platform.privateFiles,
+        options.checkedCommands
+          ? {
+              policy: projectSecrets,
+              mutate: <T>(execute: () => Promise<T>): Promise<T> => {
+                if (!confinement.withSourceMutation)
+                  throw new CrotError("CONFINEMENT_FAILED", "AD-58 source transaction unavailable");
+                return confinement.withSourceMutation(execute);
+              },
+            }
+          : undefined,
+      ),
       onDialogDismissed: (event) => {
         void audit
           .record({
@@ -416,6 +472,43 @@ export class CrotCore {
     );
   }
 
+  /** Owner-only emergency brake. Keep audit/control alive; resuming requires a service restart. */
+  emergencyStop(): Promise<void> {
+    // Latch synchronously before any await: pending approvals and new operations cannot race the stop.
+    this.permissions.runtime.stop();
+    this.approvalBroker.cancelAll("shutdown");
+    this.browser.shutdown();
+    this.network.shutdown();
+    return this.stopWork();
+  }
+
+  private emergencyWork: Promise<void> | undefined;
+  private stopWork(): Promise<void> {
+    return (this.emergencyWork ??= (async () => {
+      const forceErrors: unknown[] = [];
+      for (const stop of [
+        () => this.processes.terminateAllSync(),
+        () => this.git.terminateAllSync(),
+        () => this.docker.terminateAllSync(),
+      ]) {
+        try {
+          stop();
+        } catch (error) {
+          forceErrors.push(error);
+        }
+      }
+      const results = await Promise.allSettled([
+        this.processes.shutdown(),
+        this.git.shutdown(),
+        this.docker.shutdown(),
+      ]);
+      await this.guard.drain(SHUTDOWN_DRAIN_MS);
+      if (forceErrors.length) throw forceErrors[0];
+      const failure = results.find((r) => r.status === "rejected");
+      if (failure?.status === "rejected") throw failure.reason;
+    })());
+  }
+
   /**
    * Release resources, in order: cancel every pending approval request (so
    * none uses up the drain window and none can be approved afterwards); stop accepting browser operations and cancel
@@ -427,6 +520,7 @@ export class CrotCore {
    * The browser bridge itself is closed by the host after this returns.
    */
   shutdown(): Promise<void> {
+    this.guard.closeAdmission();
     this.shuttingDown ??= (async () => {
       this.approvalBroker.cancelAll("shutdown");
       this.browser.shutdown();
@@ -452,6 +546,10 @@ export class CrotCore {
     this.confinement.closeSync();
     this.git.terminateAllSync();
     this.docker.terminateAllSync();
+  }
+
+  inspectProject(context: AuthContext) {
+    return inspectProject(this, context);
   }
 
   status(): CrotStatus {
@@ -486,7 +584,7 @@ export class CrotCore {
   /** Last reported L1 state (AD-20 point 12); no checks run. */
   confinementStatus(): ConfinementStatus {
     const s = this.confinement.status();
-    if (this.permissions.mode !== "full_control") return s;
+    if (s.sourceAccess === "core-only" || this.permissions.mode !== "full_control") return s;
     return { ...s, detail: s.detail ? `${FULL_CONTROL_CONFINEMENT_NOTE}; ${s.detail}` : FULL_CONTROL_CONFINEMENT_NOTE };
   }
 

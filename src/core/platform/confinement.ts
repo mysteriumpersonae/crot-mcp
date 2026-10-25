@@ -42,7 +42,9 @@ export function confinementUnavailableError(status: ConfinementStatus): CrotErro
   return new CrotError(
     "CONFINEMENT_UNAVAILABLE",
     `Command confinement L1 is not available on this machine (${status.reason ?? "unknown"}); ` +
-      "shell and process operations of remote clients are refused in workspace mode.",
+      (status.sourceAccess === "core-only"
+        ? "AD-58: all service command launches are refused; install/repair native L1, with no unconfined fallback."
+        : "shell and process operations of remote clients are refused in workspace mode."),
     { reason: status.reason, network: status.network },
   );
 }

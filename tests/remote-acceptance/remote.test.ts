@@ -26,11 +26,17 @@ describe("WP-32 HTTPS OAuth → WSS → CrotService acceptance", () => {
           await c.call("fs_write_file", { path: "written.txt", content: "WP32_OUTPUT_CANARY" }),
         ).not.toHaveProperty("error");
         expect(await readFile(path.join(h.workspace, "written.txt"), "utf8")).toBe("WP32_OUTPUT_CANARY");
-        for (const name of ["git_status", "git_diff", "git_log"])
-          expect(await c.call(name, {})).not.toHaveProperty("error");
-        expect(await c.call("git_add", { paths: ["written.txt"] })).not.toHaveProperty("error");
-        expect(await c.call("git_commit", { message: "WP32 remote commit" })).not.toHaveProperty("error");
-        expect(await c.call("git_branch_create", { name: "wp32-branch" })).not.toHaveProperty("error");
+        // AD-58: generic host Git helpers are not checked source operations;
+        // remote permissions must never turn them into a sandbox bypass.
+        for (const [name, args] of [
+          ["git_status", {}],
+          ["git_diff", {}],
+          ["git_log", {}],
+          ["git_add", { paths: ["written.txt"] }],
+          ["git_commit", { message: "refuse host hook" }],
+          ["git_branch_create", { name: "must-not-create" }],
+        ] as const)
+          expect(JSON.stringify(await c.call(name, args))).toContain("PERMISSION_DENIED");
         const auditBeforeInvalid = await h.audit();
         const missing = await c.call("browser_snapshot", {});
         expect(JSON.stringify(missing)).toContain("INVALID_INPUT");

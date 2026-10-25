@@ -117,8 +117,19 @@ describe("crot-mcp shutdown (built)", () => {
       arguments: { command: process.execPath, args: ["-e", "setInterval(()=>{},1000)"] },
     })) as CallToolResult;
     const first = started.content[0];
-    const pid = first?.type === "text" ? (JSON.parse(first.text) as { pid: number }).pid : NaN;
-    expect(isAlive(pid)).toBe(true);
+    const statusResult = (await client.callTool({ name: "crot_status", arguments: {} })) as CallToolResult;
+    const statusText = statusResult.content[0];
+    const status = JSON.parse(statusText?.type === "text" ? statusText.text : "{}");
+    expect(status.confinement.sourceAccess).toBe("core-only");
+    const pid: number | undefined =
+      status.confinement.available && first?.type === "text" ? JSON.parse(first.text).pid : undefined;
+    if (status.confinement.available) {
+      expect(started.isError).not.toBe(true);
+      expect(isAlive(pid!)).toBe(true);
+    } else {
+      expect(started.isError).toBe(true);
+      expect(JSON.stringify(started)).toContain("CONFINEMENT_UNAVAILABLE");
+    }
     return { transport, client, pid, auditFile, serverPid: transport.pid!, stderr: () => stderr };
   }
 
@@ -137,7 +148,7 @@ describe("crot-mcp shutdown (built)", () => {
     expect(Date.now() - closing).toBeLessThan(2_000);
     expect(s.stderr()).toMatch(/shutting down \((stdin|transport) closed\)/);
     await waitFor(() => !isAlive(s.serverPid), 10_000);
-    await waitFor(() => !isAlive(s.pid), 5_000);
+    if (s.pid !== undefined) await waitFor(() => !isAlive(s.pid!), 5_000);
     expect(await auditedOperations(s.auditFile)).toContain("process.start");
   });
 
@@ -145,7 +156,7 @@ describe("crot-mcp shutdown (built)", () => {
     const s = await serveWithBackgroundProcess();
     process.kill(s.serverPid, "SIGHUP");
     await waitFor(() => !isAlive(s.serverPid), 10_000);
-    await waitFor(() => !isAlive(s.pid), 5_000);
+    if (s.pid !== undefined) await waitFor(() => !isAlive(s.pid!), 5_000);
     expect(s.stderr()).toContain("shutting down (SIGHUP)");
     expect(await auditedOperations(s.auditFile)).toContain("process.start");
     await s.client.close().catch(() => undefined);
@@ -155,7 +166,7 @@ describe("crot-mcp shutdown (built)", () => {
     const s = await serveWithBackgroundProcess();
     process.kill(s.serverPid, "SIGTERM");
     await waitFor(() => !isAlive(s.serverPid), 10_000);
-    await waitFor(() => !isAlive(s.pid), 5_000);
+    if (s.pid !== undefined) await waitFor(() => !isAlive(s.pid!), 5_000);
     expect(s.stderr()).toContain("shutting down (SIGTERM)");
     await s.client.close().catch(() => undefined);
   });

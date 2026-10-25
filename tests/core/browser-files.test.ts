@@ -3,6 +3,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { BrowserFiles, BROWSER_FILE_BYTES_MAX } from "../../src/core/capabilities/browser/files.js";
 import { createPrivateFileProtection } from "../../src/core/platform/private-files.js";
+import { ProjectSecretPolicy } from "../../src/core/permissions/project-secrets.js";
 import { Workspace } from "../../src/core/workspace/workspace.js";
 import { makeTempDirs, linkDirectory, type TempDirs } from "../helpers.js";
 
@@ -28,6 +29,43 @@ describe("BrowserFiles descriptor-bound staging", () => {
     await writeFile(file, body);
     return { lease, file, size: Buffer.byteLength(body) };
   };
+  it("AD-58 refuses secret/hardlink upload aliases and imports downloads through the source transaction", async () => {
+    await files.close();
+    let commits = 0;
+    files = new BrowserFiles(
+      ws,
+      path.join(dirs.outside, "checked-uploads"),
+      path.join(dirs.outside, "checked-downloads"),
+      createPrivateFileProtection(false),
+      {
+        policy: await ProjectSecretPolicy.create(ws, { allow: [] }),
+        mutate: async (fn) => {
+          commits++;
+          return fn();
+        },
+      },
+    );
+    await writeFile(path.join(ws.root, ".env"), "private");
+    await link(path.join(ws.root, ".env"), path.join(ws.root, "public-alias"));
+    await expect(files.upload([await ws.resolve(".env")])).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+    // The native Windows descriptor opener rejects multiple links BEFORE it
+    // returns a handle to Core. Preserve that earlier, stricter rejection;
+    // POSIX reaches the checked Core nlink guard. Neither may stage bytes.
+    await expect(files.upload([await ws.resolve("public-alias")])).rejects.toMatchObject(
+      process.platform === "win32"
+        ? { code: "OPERATION_FAILED", message: expect.stringContaining("Windows hardlink") }
+        : { code: "PERMISSION_DENIED" },
+    );
+    expect(await readdir(files.uploadRoot)).toEqual([]);
+    const s = await stage("checked public download");
+    await expect(
+      files.publish(s.lease, "file.bin", s.size, await ws.resolve(".env.created"), false),
+    ).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+    await files.publish(s.lease, "file.bin", s.size, await ws.resolve("public.txt"), false);
+    expect(commits).toBe(2);
+    expect(await readFile(path.join(ws.root, "public.txt"), "utf8")).toBe("checked public download");
+    expect(await readFile(path.join(ws.root, ".env"), "utf8")).toBe("private");
+  });
   it("keeps a read-only independent copy until explicit document release", async () => {
     await writeFile(path.join(ws.root, "fixture.txt"), "original");
     const upload = await files.upload([await ws.resolve("fixture.txt")]);

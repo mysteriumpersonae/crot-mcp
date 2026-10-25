@@ -48,6 +48,8 @@ import {
 } from "./schemas.js";
 
 export interface GitServiceDeps {
+  /** AD-58: refuse/audit before repository metadata discovery. */
+  readonly refuseUncheckedSource?: boolean;
   readonly workspace: Workspace;
   readonly guard: ExecutionGuard;
   readonly platform: Pick<Platform, "launcher" | "environment" | "baseEnvironment">;
@@ -341,6 +343,17 @@ export class GitService {
     details: Record<string, unknown>,
     body: (repo: Repository, deadline: number) => Promise<T>,
   ): Promise<T> {
+    if (this.deps.refuseUncheckedSource)
+      return this.deps.guard.run(
+        context,
+        {
+          operation,
+          capability: "git.read",
+        },
+        async () => {
+          throw new CrotError("PERMISSION_DENIED", "AD-58 unchecked host Git source operation refused");
+        },
+      );
     const timeout = this.timeout(timeoutMs);
     const start = await this.deps.workspace.resolve(cwdInput);
     const discovered = await discoverRepository(this.deps.workspace, start);
@@ -529,6 +542,17 @@ export class GitService {
     details: Record<string, unknown>,
     body: (repo: Repository, deadline: number) => Promise<T>,
   ): Promise<T> {
+    if (this.deps.refuseUncheckedSource)
+      return this.deps.guard.run(
+        context,
+        {
+          operation,
+          capability: "git.write",
+        },
+        async () => {
+          throw new CrotError("PERMISSION_DENIED", "AD-58 unchecked host Git source operation refused");
+        },
+      );
     const timeout = this.timeout(timeoutMs);
     const start = await this.deps.workspace.resolve(cwdInput);
     const discovered = await discoverRepository(this.deps.workspace, start);

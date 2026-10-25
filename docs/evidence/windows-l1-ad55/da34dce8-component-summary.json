@@ -1,0 +1,191 @@
+{
+  "sourceHead": "da34dce8c8bbc5e730bd9b64271da7db1fe79ea6",
+  "ciMergeCommit": "e901677f228ca639be784ab6a41cf2b2830f3423",
+  "sameGitTree": "3abd91ff202a6d96087d93620902cd3d24efdd62",
+  "qualification": "rejected-relative-data-access-not-production",
+  "dataRoute": "inherited-directory-relative-nt",
+  "absoluteWin32Qualified": false,
+  "checks": [
+    {
+      "name": "L1 / ubuntu-22.04-arm",
+      "conclusion": "success",
+      "url": "https://github.com/crotMcp/crot/actions/runs/40160063191/job/121069552227"
+    },
+    {
+      "name": "L1 / ubuntu-22.04",
+      "conclusion": "success",
+      "url": "https://github.com/crotMcp/crot/actions/runs/40160063191/job/121069552218"
+    },
+    {
+      "name": "L1 / ubuntu-24.04",
+      "conclusion": "success",
+      "url": "https://github.com/crotMcp/crot/actions/runs/40160063191/job/121069552172"
+    },
+    {
+      "name": "Node 22 / windows-latest",
+      "conclusion": "failure",
+      "url": "https://github.com/crotMcp/crot/actions/runs/40160063194/job/121069552170"
+    },
+    {
+      "name": "Node 22 / ubuntu-latest",
+      "conclusion": "success",
+      "url": "https://github.com/crotMcp/crot/actions/runs/40160063194/job/121069552081"
+    },
+    {
+      "name": "Node 22 / macos-latest",
+      "conclusion": "success",
+      "url": "https://github.com/crotMcp/crot/actions/runs/40160063194/job/121069552075"
+    },
+    {
+      "name": "Node 20 / macos-latest",
+      "conclusion": "success",
+      "url": "https://github.com/crotMcp/crot/actions/runs/40160063194/job/121069552059"
+    },
+    {
+      "name": "Node 20 / ubuntu-latest",
+      "conclusion": "success",
+      "url": "https://github.com/crotMcp/crot/actions/runs/40160063194/job/121069552058"
+    },
+    {
+      "name": "L1 / ubuntu-24.04-arm",
+      "conclusion": "success",
+      "url": "https://github.com/crotMcp/crot/actions/runs/40160063191/job/121069552046"
+    },
+    {
+      "name": "real-chromium",
+      "conclusion": "success",
+      "url": "https://github.com/crotMcp/crot/actions/runs/40160063197/job/121069552028"
+    },
+    {
+      "name": "Node 20 / windows-latest",
+      "conclusion": "failure",
+      "url": "https://github.com/crotMcp/crot/actions/runs/40160063194/job/121069551953"
+    }
+  ],
+  "components": [
+    {
+      "checkId": 121069551953,
+      "proof": {
+        "signer": "CN=Microsoft Windows Hardware Compatibility Publisher, O=Microsoft Corporation, L=Redmond, S=Washington, C=US",
+        "version": "2.3.1.1000",
+        "signatureStatus": "Valid",
+        "dynamicImportVerified": true,
+        "driverSha256": "9549A20E63C22A2B068E635600B65F6B55D8BE5122A6623997B1274A1A1F6235",
+        "thumbprint": "80340186207957ED96BDFDAD23F87AE9358C0D2B",
+        "architecture": "x64",
+        "kernelPolicyVerified": true
+      },
+      "checkout": "e901677f228ca639be784ab6a41cf2b2830f3423"
+    },
+    {
+      "checkId": 121069552170,
+      "proof": {
+        "signer": "CN=Microsoft Windows Hardware Compatibility Publisher, O=Microsoft Corporation, L=Redmond, S=Washington, C=US",
+        "version": "2.3.1.1000",
+        "signatureStatus": "Valid",
+        "dynamicImportVerified": true,
+        "driverSha256": "9549A20E63C22A2B068E635600B65F6B55D8BE5122A6623997B1274A1A1F6235",
+        "thumbprint": "80340186207957ED96BDFDAD23F87AE9358C0D2B",
+        "architecture": "x64",
+        "kernelPolicyVerified": true
+      },
+      "checkout": "e901677f228ca639be784ab6a41cf2b2830f3423"
+    }
+  ],
+  "failures": [
+    {
+      "checkId": 121069551953,
+      "dataDiagnostics": [
+        {
+          "actor": "appContainer",
+          "phase": "open",
+          "win32Error": 5,
+          "errorSaturated": false,
+          "createCallbacks": 0,
+          "authorizedCallbacks": 0,
+          "lastCreateStatus": "00000000"
+        },
+        {
+          "actor": "lpac",
+          "phase": "open",
+          "win32Error": 5,
+          "errorSaturated": false,
+          "createCallbacks": 0,
+          "authorizedCallbacks": 0,
+          "lastCreateStatus": "00000000"
+        }
+      ],
+      "packet": {
+        "protocolVersion": "ad55-v1",
+        "ownerControls": true,
+        "ownerNtLiteralZero": "access-denied",
+        "rawDevicePackageGrant": false,
+        "appContainer": {
+          "ready": true,
+          "win32Zero": "access-denied",
+          "win32Read": "access-denied",
+          "ntMetadata": "access-denied",
+          "ntRead": "access-denied",
+          "ntLiteralZero": "access-denied",
+          "liveDataReadWrite": false
+        },
+        "lpac": {
+          "ready": true,
+          "win32Zero": "access-denied",
+          "win32Read": "access-denied",
+          "ntMetadata": "access-denied",
+          "ntRead": "access-denied",
+          "ntLiteralZero": "access-denied",
+          "liveDataReadWrite": false
+        }
+      }
+    },
+    {
+      "checkId": 121069552170,
+      "dataDiagnostics": [
+        {
+          "actor": "appContainer",
+          "phase": "open",
+          "win32Error": 5,
+          "errorSaturated": false,
+          "createCallbacks": 0,
+          "authorizedCallbacks": 0,
+          "lastCreateStatus": "00000000"
+        },
+        {
+          "actor": "lpac",
+          "phase": "open",
+          "win32Error": 5,
+          "errorSaturated": false,
+          "createCallbacks": 0,
+          "authorizedCallbacks": 0,
+          "lastCreateStatus": "00000000"
+        }
+      ],
+      "packet": {
+        "protocolVersion": "ad55-v1",
+        "ownerControls": true,
+        "ownerNtLiteralZero": "access-denied",
+        "rawDevicePackageGrant": false,
+        "appContainer": {
+          "ready": true,
+          "win32Zero": "access-denied",
+          "win32Read": "access-denied",
+          "ntMetadata": "access-denied",
+          "ntRead": "access-denied",
+          "ntLiteralZero": "access-denied",
+          "liveDataReadWrite": false
+        },
+        "lpac": {
+          "ready": true,
+          "win32Zero": "access-denied",
+          "win32Read": "access-denied",
+          "ntMetadata": "access-denied",
+          "ntRead": "access-denied",
+          "ntLiteralZero": "access-denied",
+          "liveDataReadWrite": false
+        }
+      }
+    }
+  ]
+}
