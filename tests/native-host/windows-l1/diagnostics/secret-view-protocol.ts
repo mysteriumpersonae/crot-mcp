@@ -21,3 +21,23 @@ export function decodeSecretViewCandidate(hex: string) {
     lpac: profile(old.lpac),
   };
 }
+
+/** Numeric child/callback failure evidence, never used as an admission signal. */
+export function decodeSecretViewData(line: string) {
+  const match = /^CROT_VIEW_DATA:([01]):([0-8]):(\d{1,3}):(\d{1,10}):(\d{1,10}):([0-9a-f]{8})\r?$/.exec(line);
+  if (!match) return undefined;
+  const error = Number(match[3]),
+    creates = Number(match[4]),
+    authorized = Number(match[5]);
+  if (error > 255 || creates > 0xffffffff || authorized > creates) return undefined;
+  const phases = ["complete", "open", "read", "content", "seek", "write", "truncate", "flush", "close"] as const;
+  return {
+    actor: match[1] === "1" ? "lpac" : "appContainer",
+    phase: phases[Number(match[2])],
+    win32Error: error,
+    errorSaturated: error === 255,
+    createCallbacks: creates,
+    authorizedCallbacks: authorized,
+    lastCreateStatus: match[6],
+  };
+}

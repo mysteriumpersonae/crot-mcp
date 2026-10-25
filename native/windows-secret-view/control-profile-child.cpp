@@ -73,19 +73,27 @@ int wmain(int argc,wchar_t** argv) {
   const std::wstring mount=argv[3];
   if (mount.size()>32000 || mount.find(L'"')!=std::wstring::npos || mount.size()<3 || mount.substr(1,2)!=L":\\") return 7;
   const auto publicFile=mount+L"\\public.txt";
+  DWORD dataError=0; unsigned dataStage=1;
   HANDLE data=CreateFileW(publicFile.c_str(),GENERIC_READ|GENERIC_WRITE,0,nullptr,OPEN_EXISTING,0,nullptr);
-  if (data!=INVALID_HANDLE_VALUE) {
+  if (data==INVALID_HANDLE_VALUE) dataError=GetLastError();
+  else {
     char before[32]{}; DWORD read=0,written=0;
     const char initial[]="CROT-AD55-BEFORE", after[]="CROT-AD55-AFTER";
-    const bool content=ReadFile(data,before,sizeof(before),&read,nullptr) &&
-      ((read==sizeof(initial)-1 && !memcmp(before,initial,read)) || (read==sizeof(after)-1 && !memcmp(before,after,read)));
     LARGE_INTEGER zero{};
-    const bool changed=content && SetFilePointerEx(data,zero,nullptr,FILE_BEGIN) &&
-      WriteFile(data,after,sizeof(after)-1,&written,nullptr) && written==sizeof(after)-1 &&
-      SetEndOfFile(data) && FlushFileBuffers(data);
-    const bool closed=!!CloseHandle(data);
-    if (changed && closed) bits|=0x100;
+    if (!(dataStage=2,ReadFile(data,before,sizeof(before),&read,nullptr))) dataError=GetLastError();
+    else if (!(dataStage=3,((read==sizeof(initial)-1 && !memcmp(before,initial,read)) ||
+             (read==sizeof(after)-1 && !memcmp(before,after,read))))) dataError=0;
+    else if (!(dataStage=4,SetFilePointerEx(data,zero,nullptr,FILE_BEGIN))) dataError=GetLastError();
+    else if (!(dataStage=5,WriteFile(data,after,sizeof(after)-1,&written,nullptr))) dataError=GetLastError();
+    else if (written!=sizeof(after)-1) dataError=ERROR_WRITE_FAULT;
+    else if (!(dataStage=6,SetEndOfFile(data))) dataError=GetLastError();
+    else if (!(dataStage=7,FlushFileBuffers(data))) dataError=GetLastError();
+    else dataStage=0;
+    if (!CloseHandle(data)) { dataStage=8; dataError=GetLastError(); }
+    if (!dataStage) bits|=0x100;
   }
   bits|=rawChecks(); // data access must not unlock raw control aliases
-  return static_cast<int>(0x43520000u|bits);
+  // New research-only exit protocol: 0x55, bounded Win32 error, stage, raw/data
+  // bits. This is deliberately distinct from historical AD-28's NUL protocol.
+  return static_cast<int>(0x55000000u|((dataError<255?dataError:255)<<16)|(dataStage<<12)|bits);
 }

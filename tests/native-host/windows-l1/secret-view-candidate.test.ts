@@ -10,7 +10,7 @@ import { currentUserSid, windowsTools } from "../../../src/native-host/windows-a
 import { loadViewJobObjectApi } from "../../../src/native-host/windows-job.js";
 import { createOwnedWorkspaceView } from "../../../src/native-host/windows-l1/workspace-view.js";
 import { snapshotWorkspaceDescriptor } from "./diagnostics/workspace-view-security.js";
-import { decodeSecretViewCandidate } from "./diagnostics/secret-view-protocol.js";
+import { decodeSecretViewCandidate, decodeSecretViewData } from "./diagnostics/secret-view-protocol.js";
 import { buildSecretViewFixture } from "./diagnostics/secret-view-build.js";
 import { isWindows, makeTempDirs } from "../../helpers.js";
 
@@ -30,6 +30,12 @@ describe.runIf(isWindows)("AD-55 signed Windows data/control candidate", () => {
         signatureStatus: "Valid",
       });
       expect(proof.signer).toContain("Microsoft Windows Hardware Compatibility Publisher");
+      // Preserve component verification even when the independent data/control
+      // gate fails later. This record alone is never backend qualification.
+      appendFileSync(
+        inject("stage6aEvidence"),
+        JSON.stringify({ title: "CROT-AD55-component", value: { proof, checkout: process.env.GITHUB_SHA } }) + "\n",
+      );
       const platform = await createNodePlatform();
       const privateRoot = path.join(dirs.outside, "private-view");
       await mkdir(privateRoot);
@@ -84,6 +90,7 @@ describe.runIf(isWindows)("AD-55 signed Windows data/control candidate", () => {
         "AD-55 native candidate failed: " +
           JSON.stringify({
             nativeError,
+            dataDiagnostics: nativeError.split("\n").map(decodeSecretViewData).filter(Boolean),
             packet: packet ? decodeSecretViewCandidate(packet) : undefined,
             cause: String(cause),
           }),

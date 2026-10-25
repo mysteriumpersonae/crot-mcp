@@ -167,6 +167,9 @@ std::vector<unsigned char> tokenInfo(HANDLE token,TOKEN_INFORMATION_CLASS type) 
 std::mutex candidateLock;
 PSID candidatePackage = nullptr;
 HANDLE candidateJob = nullptr;
+// Bounded research diagnostics only; no names, contents, tokens or control IOCTLs.
+std::atomic<unsigned> candidateCreates{0}, candidateAuthorized{0};
+std::atomic<NTSTATUS> candidateCreateStatus{STATUS_SUCCESS};
 #include "control-profile-probe.h"
 void authorize(PDOKAN_FILE_INFO fi) {
   std::lock_guard<std::mutex> actor(candidateLock);
@@ -190,7 +193,7 @@ void authorize(PDOKAN_FILE_INFO fi) {
       !*reinterpret_cast<DWORD*>(ac.data()) || !actual || !IsValidSid(actual) || !EqualSid(actual,candidatePackage) ||
       reinterpret_cast<TOKEN_GROUPS*>(caps.data())->GroupCount ||
       !IsValidSid(label) || *GetSidSubAuthorityCount(label)!=1 || *GetSidSubAuthority(label,0)!=4096) deny();
-
+  ++candidateAuthorized;
 }
 struct File {
   Handle handle;
@@ -210,6 +213,7 @@ template<class Fn> NTSTATUS status(Fn fn) noexcept {
 }
 NTSTATUS DOKAN_CALLBACK create(LPCWSTR name,PDOKAN_IO_SECURITY_CONTEXT,ACCESS_MASK access,
     ULONG attributes,ULONG,ULONG disposition,ULONG options,PDOKAN_FILE_INFO fi) {
+  ++candidateCreates;
   bool openedExisting=false;
   auto outcome=status([&] {
     authorize(fi);
@@ -251,6 +255,7 @@ NTSTATUS DOKAN_CALLBACK create(LPCWSTR name,PDOKAN_IO_SECURITY_CONTEXT,ACCESS_MA
     inspect(f->handle.h,f->directory);
     fi->IsDirectory=f->directory; fi->Context=reinterpret_cast<ULONG64>(f.release());
   });
+  candidateCreateStatus=outcome;
   return outcome==STATUS_SUCCESS && openedExisting ? STATUS_OBJECT_NAME_COLLISION : outcome;
 }
 void DOKAN_CALLBACK cleanup(LPCWSTR,PDOKAN_FILE_INFO fi) {

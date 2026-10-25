@@ -757,3 +757,24 @@ smoke skip because this restored host lacked Xvfb. Test dependencies were
 restored and that exact smoke rerun passed 1/0. Neither result is a Windows
 qualification. Seven new protocol tests passed. After adding original security
 readback assertions, lint/typecheck and that targeted set passed again.
+
+
+AD-55 `94ede67b4e00a8b99a2f4d9ef4b577b7981aa307` completed **8/11**
+checks successfully, NOT acceptance. Both actual Windows Node 20/22 builds
+reached real AppContainer/LPAC entry, but both returned `c0000000`: all raw
+opens denied, neither actor could read/write live projected data. The native
+readiness gate correctly rejected the candidate. Driver signing/dynamic-import
+preconditions ran before that gate; no production dependency is adopted.
+The next diagnostic records only numeric data-operation stages, bounded Win32
+errors and create/authorization callback counts. It does not grant raw-device
+access, modify original security, or weaken admission.
+
+The remaining failed check was macOS Node 22's unrelated real-socket heartbeat
+test: a 150ms wall-clock lease expired under native CI load. Its follow-up uses
+the existing injected protocol clock and actual PING/PONG transport, with 20
+heartbeat cycles (600ms protocol time), plus a paired no-PONG test requiring
+closure exactly at 150ms. No timeout increase or production behavior change.
+All 12 integration tests passed locally; the three liveness tests additionally
+passed five repeated runs. Lint/typecheck passed. The restored-dependency full
+check of `94ede67` also passed main 2350 /223 host skips and extension 196.
+Final follow-up full checks and actual native CI remain pending.

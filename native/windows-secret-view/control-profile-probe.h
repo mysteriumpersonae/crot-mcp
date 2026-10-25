@@ -65,7 +65,7 @@ unsigned ownedLiteralControl(const std::wstring& device) {
   if (status==static_cast<NTSTATUS>(0xc0000034) || status==static_cast<NTSTATUS>(0xc000003a)) return 2;
   return 3;
 }
-// v2: 0..2047 = entry + five 2-bit opens and NUL bit; 2048+stage = NOT ready.
+// AD-55: 0..2047 = entry + raw opens + live data bit; 2048+stage = NOT ready.
 DWORD oneControlProfile(const std::wstring& device,const std::wstring& source,
     const std::wstring& directory,const std::wstring& package,bool lpac) {
   const auto originalProjected=projected;
@@ -176,17 +176,26 @@ DWORD oneControlProfile(const std::wstring& device,const std::wstring& source,
       projected=dataSd; candidatePackage=packageSid; candidateJob=probeJob.h;
     }
     // Restore only after all actor requests settle below, before freeing SD/SID.
+    candidateCreates=0; candidateAuthorized=0; candidateCreateStatus=STATUS_SUCCESS;
     outcome=0x805;
     if (ResumeThread(thread.h)!=1) deny();
     outcome=0x806;
     if (WaitForSingleObject(process.h,3000)!=WAIT_OBJECT_0) deny();
     DWORD exit=0; outcome=0x807;
     if (!GetExitCodeProcess(process.h,&exit)) deny();
-    if ((exit&0xfffff800u)!=0x43520000u) {
+    if ((exit&0xff000800u)!=0x55000000u) {
       // Differentiate common loader failure from failed child protocol.
       outcome=exit==0xc0000142u?0x808:0x809; deny();
     }
     outcome=exit&0x7ff;
+    const DWORD dataStage=(exit>>12)&15, dataError=(exit>>16)&255;
+    // Numeric fixed-size diagnostics only; original paths/content never leave
+    // the child. A reported failure can never become a live-data success.
+    if (dataStage && (outcome&0x100)) { outcome=0x809; deny(); }
+    fprintf(stderr,"CROT_VIEW_DATA:%u:%lu:%lu:%u:%u:%08lx\n",lpac?1u:0u,
+        dataStage,dataError,candidateCreates.load(),candidateAuthorized.load(),
+        static_cast<DWORD>(candidateCreateStatus.load()));
+    fflush(stderr);
   } catch (...) { /* fixed bounded stage only; never native message/path */ }
   if (process.valid()) {
     if (!TerminateJobObject(probeJob.h,1) || WaitForSingleObject(process.h,3000)!=WAIT_OBJECT_0) jobSettled=false;

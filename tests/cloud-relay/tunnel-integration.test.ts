@@ -95,12 +95,34 @@ describe("liveness (AD-22 point 9)", () => {
     expect(h.logs).toContainEqual(expect.objectContaining({ event: "tunnel.dead" }));
   });
 
-  it("a device answering PINGs stays online", async () => {
-    h = await new RelayHarness().start({ timing: { pingAfterIdleMs: 30, deadAfterMs: 150 } });
-    const { paired, device } = await h.ready();
-    await sleep(500);
-    expect(device.closed).toBeUndefined();
-    expect(h.relay.isOnline(paired.deviceId)).toBe(true);
+  it.each([true, false])("a device with autoPong=%s obeys the idle deadline over real sockets", async (autoPong) => {
+    // Advance the existing injected clock, not wall time: an overloaded native CI
+    // worker must not expire a 150ms lease before its socket callbacks can run.
+    // No HTTP traffic or client PINGs can refresh lastReceived in this scenario.
+    let now = Date.now();
+    h = await new RelayHarness().start({ now: () => now, timing: { pingAfterIdleMs: 30, deadAfterMs: 150 } });
+    const { paired, device } = await h.ready({ autoPong });
+    const pingCount = () => device.frames.filter((frame) => frame.type === FrameType.PING).length;
+    for (let cycle = 1; cycle <= (autoPong ? 20 : 4); cycle++) {
+      now += 30;
+      await waitFor(() => pingCount() === cycle || device.closed !== undefined);
+      expect(device.closed).toBeUndefined();
+      expect(pingCount()).toBe(cycle);
+      expect(h.relay.isOnline(paired.deviceId)).toBe(true);
+    }
+    if (autoPong) {
+      // 600ms of protocol time: four complete dead intervals, not merely READY.
+      expect(pingCount()).toBe(20);
+      expect(h.logs).not.toContainEqual(expect.objectContaining({ event: "tunnel.dead" }));
+    } else {
+      // Same clock, timing and transport, only PONG is absent. The exact 150ms
+      // boundary must close the tunnel; increasing the deadline cannot pass.
+      now += 30;
+      await device.whenClosed();
+      await waitFor(() => !h.relay.isOnline(paired.deviceId));
+      expect(pingCount()).toBe(4);
+      expect(h.logs).toContainEqual(expect.objectContaining({ event: "tunnel.dead" }));
+    }
   });
 });
 

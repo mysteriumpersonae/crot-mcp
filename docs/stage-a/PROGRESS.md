@@ -51,7 +51,8 @@ No B/C work or merge is authorized by this progress record.
   protection remains distinct. The macOS AD-52 native rule passed both actual
   macOS CI jobs at `cb71d2b`; its documented hardlink/host constraints remain.
   AD-53 adds owner IPC/UI access/revocation; current-slice qualification is separate.
-- Native macOS/Windows folder-picker smoke. The project-owned port observers
+- Native macOS/Windows folder-picker smoke passed actual CI at `7e217890`
+  (AD-54); final-head native qualification is still required. The project-owned port observers
   (AD-51) passed the actual-OS matrix at `48420e9`. Darwin uses libproc identity and fixed
   lsof fields; Windows uses owner-PID TCP tables and bounded same-owner cwd reads.
   Linux parser tests do not qualify either native ABI. Results are point-in-time
@@ -125,3 +126,12 @@ project-secret L1 availability claim. Missing-component fail-closed integration,
 actual dynamic secret patterns/exact grants/revocation and final CrotService
 qualification remain mandatory before the candidate can replace a backend.
 Native Windows CI evidence is pending; Linux tests are not Windows proof.
+
+
+AD-55 first actual Windows run (`94ede67`, Node 20/22) **FAILED** live-data
+access while preserving raw-device denial; it is not a usable backend or Pass.
+A bounded numeric diagnostic follow-up localizes open/read/write/flush refusal
+and whether the request reached native callbacks, without widening permissions.
+The unrelated macOS heartbeat wall-clock race is covered by paired controlled-
+clock real-socket positive/negative tests. Missing-component production
+fail-closed integration and the Linux/Windows future-secret barrier remain open.
