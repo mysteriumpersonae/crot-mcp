@@ -171,29 +171,35 @@ describe("stdio shim and CROT service (built, WP-20)", () => {
         clients: { stdio: 4 },
       });
 
-      // Concurrent tool calls of all clients, including commands.
+      // AD-58: writes are concurrent across clients, but finish BEFORE the
+      // positive command phase. A checked source mutation deliberately drains
+      // active commands and invalidates resolved specs; overlapping the phases
+      // would test cancellation, not successful concurrent client execution.
+      const writes = await Promise.all(
+        shims.map((s, i) => s.call("fs_write_file", { path: `client-${i}.txt`, content: `c${i}` })),
+      );
+      for (let i = 0; i < 4; i++) {
+        expect(writes[i]!.isError, text(writes[i]!)).toBeFalsy();
+        expect(await readFile(path.join(dirs.workspace, `client-${i}.txt`), "utf8")).toBe(`c${i}`);
+      }
       const results = await Promise.all(
-        shims.flatMap((s, i) => [
-          s.call("fs_write_file", { path: `client-${i}.txt`, content: `c${i}` }),
+        shims.map((s, i) =>
           s.call("process_exec", {
             command: process.execPath,
             args: ["-e", `setTimeout(() => console.log("done ${i}"), 300)`],
           }),
-        ]),
+        ),
       );
       const confinement = statuses[0]!.confinement;
       expect(confinement.sourceAccess).toBe("core-only");
       for (let i = 0; i < 4; i++) {
-        expect(results[i * 2]!.isError).toBeFalsy();
-        if (confinement.available) expect(results[i * 2 + 1]!.isError).toBeFalsy();
-        else {
-          expect(results[i * 2 + 1]!.isError).toBe(true);
-          expect(text(results[i * 2 + 1]!)).toContain("CONFINEMENT_UNAVAILABLE");
+        if (confinement.available) {
+          expect(results[i]!.isError, text(results[i]!)).toBeFalsy();
+          expect(text(results[i]!)).toContain(`done ${i}`);
+        } else {
+          expect(results[i]!.isError).toBe(true);
+          expect(text(results[i]!)).toContain("CONFINEMENT_UNAVAILABLE");
         }
-      }
-      for (let i = 0; i < 4; i++) {
-        expect(await readFile(path.join(dirs.workspace, `client-${i}.txt`), "utf8")).toBe(`c${i}`);
-        if (confinement.available) expect(text(results[i * 2 + 1]!)).toContain(`done ${i}`);
       }
       // Credentials never reach child processes (environment or arguments) or client output.
       const env = await shims[0]!.call("process_exec", {
