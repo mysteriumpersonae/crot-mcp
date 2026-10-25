@@ -1,6 +1,7 @@
 /** AD-58 real native acceptance shared by the three mandatory platform suites. */
 import { access, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { writeSync } from "node:fs";
 import { expect } from "vitest";
 import type { CrotCore } from "../../src/core/crot-core.js";
 import type { ManagedProcess } from "../../src/core/platform/types.js";
@@ -151,4 +152,25 @@ export async function qualifyCheckedSource(): Promise<void> {
     await build?.cleanup();
     await d.cleanup();
   }
+  // Emit only after every real actor/Core assertion AND teardown succeeded.
+  // A skipped host wrapper cannot emit this record. No mocked/native claims.
+  writeSync(
+    1,
+    `\n::notice title=CROT-AD58-native::${JSON.stringify({
+      platform: process.platform,
+      arch: process.arch,
+      node: process.version,
+      contract: "AD-58 core-only source; private scratch; no import",
+      result: "passed",
+      gates: [
+        "source-and-control-denied",
+        "existing-and-future-secrets-denied",
+        "scratch-write",
+        "checked-core-commit",
+        "fresh-generation",
+        "teardown",
+      ],
+      lpacQualified: false,
+    })}\n`,
+  );
 }

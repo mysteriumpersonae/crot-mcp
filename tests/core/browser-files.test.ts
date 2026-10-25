@@ -47,8 +47,16 @@ describe("BrowserFiles descriptor-bound staging", () => {
     );
     await writeFile(path.join(ws.root, ".env"), "private");
     await link(path.join(ws.root, ".env"), path.join(ws.root, "public-alias"));
-    for (const name of [".env", "public-alias"])
-      await expect(files.upload([await ws.resolve(name)])).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+    await expect(files.upload([await ws.resolve(".env")])).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+    // The native Windows descriptor opener rejects multiple links BEFORE it
+    // returns a handle to Core. Preserve that earlier, stricter rejection;
+    // POSIX reaches the checked Core nlink guard. Neither may stage bytes.
+    await expect(files.upload([await ws.resolve("public-alias")])).rejects.toMatchObject(
+      process.platform === "win32"
+        ? { code: "OPERATION_FAILED", message: expect.stringContaining("Windows hardlink") }
+        : { code: "PERMISSION_DENIED" },
+    );
+    expect(await readdir(files.uploadRoot)).toEqual([]);
     const s = await stage("checked public download");
     await expect(
       files.publish(s.lease, "file.bin", s.size, await ws.resolve(".env.created"), false),

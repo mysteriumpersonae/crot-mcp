@@ -183,3 +183,40 @@ not provide synchronous name creation enforcement. These are not simulated
 AppContainer/L1 acceptance. No watcher is adopted as a security boundary.
 A provable native guard or owner-approved restricted Windows execution contract
 is still required before activation; Linux/Windows future-secret L1 remains open.
+
+
+### AD-58 — owner-approved Core-only source contract
+
+AD-58 supersedes the impossible AD-57 transparent writable hardlink contract.
+CrotService requires native L1 for commands even in Full Control, gives children
+empty private scratch, and protects the entire live source and Core context.
+No source projection/import/copyback is performed. Project edits use checked Core
+operations. Secret masks and multiple-link file aliases are refused before I/O;
+exact authenticated owner grants apply only to Core, never arbitrary children.
+Checked source mutations serialize against command admission, drain native actors
+before ACL restoration, discard scratch and invalidate stale resolved commands.
+Subsequent commands receive a fresh generation. Drain failures are fail-closed.
+Browser downloads share that transaction; uploads reject secret/hardlink aliases.
+Unchecked generic Git/Docker helpers are intentionally refused. No driver added.
+
+Mandatory native tests now exercise the actual running child against existing,
+future and reclassified source secrets, source reads/writes/atomic replacement,
+Core control canaries, positive scratch writes, checked Core commits and fresh
+generations on Linux, macOS and Windows AppContainer. This is NOT LPAC qualification.
+The native gate emits a bounded record only after assertions and teardown succeed.
+
+Pre-final source `f6fe41789c5378666a21fbd5535ef590186cbec9` passed local full
+check: **2374 passed /226 host-inapplicable skips**, extension **196 passed**;
+real Chromium **58 passed /3 explicit platform placeholders**. Its nine non-Windows
+CI checks passed. An earlier Windows run exposed an incorrect error-code expectation
+in a new negative browser-upload test: native Windows rejects hardlinks earlier
+with `OPERATION_FAILED: Windows hardlink`, before a handle/bytes reach Core. The
+correction requires this exact native refusal and empty staging, not an arbitrary
+failure; positive checked downloads remain mandatory. The concurrency regression
+separates source-write and positive-command phases because AD-58 intentionally
+drains commands on mutation. Neither correction relaxes a native security gate.
+
+Final exact-head qualification remains pending at publication of this entry;
+no prior 9/11 result is Stage A Pass. PR #5 stays Draft until all eleven checks
+and the new native gates pass. Final observed results are recorded in the PR
+acceptance report. No merge; B/C unstarted; domain crot.network unchanged.
