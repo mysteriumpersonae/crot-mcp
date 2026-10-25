@@ -5789,3 +5789,70 @@ policies and production integration remain independent unimplemented gates.
 A relative-capability result must never be reported as full tool compatibility.
 Reference: pinned upstream `sys/event.c`, `sys/dokan.h`, `sys/fscontrol.c` and
 Microsoft process attribute `PROC_THREAD_ATTRIBUTE_HANDLE_LIST` documentation.
+
+**AD-55 observed relative-capability result — rejected.** Source
+`da34dce8c8bbc5e730bd9b64271da7db1fe79ea6` completed nine of eleven checks
+successfully. Both Windows Node20/22 checks failed with the same actual
+AppContainer and LPAC result: relative data open returned Win32 error 5,
+zero create callbacks and zero authorized callbacks. The inherited directory
+capability did not bypass the device secure-open restriction. Raw probes stayed
+denied; readiness correctly failed. No general data path, filename barrier or
+tool compatibility was established. Do not build a Detours compatibility shim
+on this unproven data route, widen the raw ACL, omit the initial private volume
+SD, or reclassify this mandatory positive test as an expected failure/skip.
+
+The CI synthetic merge `e901677f228ca639be784ab6a41cf2b2830f3423` and the
+feature source have identical tree `3abd91ff202a6d96087d93620902cd3d24efdd62`.
+Bounded component proofs, check links and decoded native failures are retained in
+[the exact-source evidence](docs/evidence/windows-l1-ad55/da34dce8-component-summary.json).
+This rejects this Dokan data/control topology, not every possible Windows
+filesystem architecture. Production backend adoption and missing-component
+fail-closed integration remain unimplemented, not implicitly qualified.
+
+### AD-56 — alternative Windows runtime licensing gate; no Pismo adoption
+
+**Decision before any alternative runtime installation or implementation.**
+The owner's AD-55 authorization permits free, commercially compatible options;
+it does not authorize purchasing a runtime license, redistribution prohibited
+by its license, or accepting an unproven kernel-signing/security boundary.
+Pismo FSR/PFM is researched as an alternative, not selected or registered.
+
+The official build 24X SDK has permissive copyright/permission-notice terms.
+The SDK archive/header inspection is not an installation, driver signature
+verification or an actual isolated read/write test. Downloaded research copies
+remain outside the repository and all product packages. No SDK source, DLL,
+installer or runtime is bundled with CROT by this decision.
+
+The separate PFM 24X runtime license permits use but expressly prohibits
+redistribution (including copying/storing/installing to enable other users).
+The official FSR licensing page separately describes per-application fees for
+commercial integration/distribution. Therefore a free SDK is NOT evidence that
+CROT may ship or automatically install the runtime for commercial customers.
+An independently user-installed runtime may be a research topology, but its
+commercial integration rights are not established here; do not mark the
+licensing gate passed without authoritative clarification for that exact use.
+No vendor contact, agreement acceptance on the owner's behalf, purchase or
+end-user installation is authorized/performed by this research record.
+
+If a legally admissible topology is established, subsequent isolated CI must
+verify the actual installed kernel component's Microsoft hardware-publisher
+signature and kernel-signing policy, exact versions/hashes and dynamic API
+loading. An installer vendor signature alone is insufficient. It must then
+prove live original-backing read/write by the actual zero-capability
+AppContainer AND LPAC, isolation of all raw/control entry points, original
+security preservation, ownership/drain and missing-component refusal. The
+new SDK's Fsr interfaces must be assessed directly; older online Pfm API
+examples are not treated as the downloaded SDK's ABI or security contract.
+No WorldRead/WorldWrite, capability broadening, device ACL weakening or
+user-space hooks may substitute for this proof. No production fallback may
+be introduced when a component is absent, invalid or unqualified.
+
+Research archive SHA256s (not adoption or independent publisher attestation):
+SDK `bf07cf47952ecb7fc46f53d75b43acff63540df352fcd96d1f1996ceca63cd07`;
+PFM installer `df0ceb3eb0c5f6275547915976f4a5216b9a227a06e8ef283c7001b662f2ea10`.
+The installer was downloaded for examination only, not executed. Windows
+future-secret L1 remains open; Stage A/PR #5 remains Draft, B/C unstarted.
+
+Primary terms: [FSR SDK license](https://pismotec.com/download/fsrkit-24X-license.txt),
+[PFM runtime license](https://pismotec.com/download/pfm-24X-license.html),
+[commercial FSR licensing](https://pismotec.com/fsr/license/).

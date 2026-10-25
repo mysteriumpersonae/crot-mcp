@@ -36,3 +36,15 @@ rights. Child creates still require the actual AppContainer SID/token/owned Job.
 Live data is attempted with relative NtCreateFile through that capability; raw
 controls are probed unchanged. It is not proof of general absolute Win32/Node/
 PowerShell compatibility or a production backend. See AD-55 follow-up decision.
+
+## Observed result of the scoped-directory follow-up
+
+`da34dce8` failed both actual Windows jobs: both effective actors reached data
+open but received ACCESS_DENIED before any create/authorization callback. A
+valid inherited data-directory handle did not establish a usable relative data
+route. All raw probes remained denied and the mandatory positive readiness gate
+correctly rejected the candidate. The test is not skipped or converted to an
+expected failure. See [bounded evidence](../../docs/evidence/windows-l1-ad55/da34dce8-component-summary.json).
+No driver/component is adopted in production; no Detours shim is justified by
+this result. AD-56 separately records why Pismo's free SDK is not runtime
+commercial redistribution permission; Pismo is not installed or adopted.

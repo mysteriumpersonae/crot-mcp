@@ -800,3 +800,24 @@ The next candidate tests a single explicit inherited data-directory handle;
 no raw device handle or new raw ACL grant is supplied. Positive relative NT
 access, if observed, will not qualify general absolute Win32/Node tool paths.
 Actual follow-up native CI remains required.
+
+### AD-55 relative-capability result: actual failure, not acceptance
+
+Source `da34dce8c8bbc5e730bd9b64271da7db1fe79ea6`, synthetic CI merge
+`e901677f228ca639be784ab6a41cf2b2830f3423`, identical tree
+`3abd91ff202a6d96087d93620902cd3d24efdd62`: **9/11 SUCCESS**.
+Both Windows Node20/22 failed live relative data open with Win32 error 5,
+zero create callbacks, zero authorized callbacks, for both actual effective
+AppContainer and LPAC. Raw before/after probes stayed denied. No successful
+live data path or arbitrary-tool compatibility is proved. Component signature,
+kernel-policy and dynamic-import checks passed independently; they do not
+convert the failed positive data gate into readiness.
+
+[Bounded exact-source evidence](../evidence/windows-l1-ad55/da34dce8-component-summary.json)
+contains every check URL and the two component/native records. Full local
+`npm run check` passed **2359 /223 host-inapplicable skips**, extension **196**.
+The previous real-Chromium 58/3 and UI QA 81/29/0 results are prior-source
+results; no new production browser code changed. Documentation updates are
+not a fresh native/whole-Stage-A qualification. The Windows gate remains red,
+not skipped/expected-failure; PR stays Draft. AD-56 is license/source inspection
+only, not a tested Pismo backend or runtime adoption.

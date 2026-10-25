@@ -144,3 +144,22 @@ actors. It is not a filename callback defect. The next AD-55 experiment tests
 an explicitly inherited, root-only data directory capability, preserving the
 raw device ACL and every raw-denial gate. It is relative-NT feasibility only,
 not general Win32 tool compatibility, activation or Stage A completion.
+
+### AD-55 final scoped-directory observation / AD-56 licensing gate
+
+The relative-capability head `da34dce8` also completed **9/11 SUCCESS**, with
+both actual Windows jobs failing data open (error 5, zero create callbacks)
+for AppContainer and LPAC. Its directory-handle workaround is rejected; no
+backend is adopted. The source and CI merge have an identical Git tree; see
+[exact-source evidence](../evidence/windows-l1-ad55/da34dce8-component-summary.json).
+Local full check passed 2359 tests /223 host skips, extension 196. This is not
+Windows acceptance. The previously successful native folder chooser remains
+qualified at its recorded source; it is not an outstanding chooser experiment.
+
+AD-56 records the licensing gate for alternative Pismo research: permissive
+SDK does not grant redistribution rights for the separate runtime. No runtime
+was executed/installed, bundled or adopted. Commercial integration rights,
+Microsoft kernel signature and actual AppContainer/LPAC data/control isolation
+are unqualified. Linux/Windows future-secret barriers and new-backend production
+fail-closed integration remain open. Stage A is NOT Pass; PR #5 stays Draft,
+no agent merge, B/C unstarted. Domain remains crot.network / mcp.crot.network.
