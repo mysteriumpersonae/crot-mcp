@@ -4,6 +4,8 @@ import path from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { CDP_ALLOWED_METHODS } from "../../extension/src/cdp.js";
 import * as h from "./harness.js";
+import { ControlClient } from "../../src/service/control-client.js";
+import { createPrivateFileProtection } from "../../src/core/platform/private-files.js";
 
 /**
  * REAL end-to-end test of browser contract v1 (ARCHITECTURE.md §27 AD-16,
@@ -361,6 +363,49 @@ describe.runIf(linux)("browser v1 E2E (AD-16): refs, trusted input, frames, shad
       });
       expect(again.activated).toBeUndefined();
     } finally {
+      await h.ok(client(), "browser_tab_close", { tabId: other.tabId });
+    }
+  });
+
+  it("owner tab policies are enforced through Core, native bridge and the real extension", async () => {
+    const owner = await ControlClient.connect({
+      stateDir: path.join(sb.stateHome, "crot"),
+      privateFiles: createPrivateFileProtection(false),
+    });
+    expect(owner).toBeDefined();
+    const policy = (
+      mode: "active" | "targeted" | "background",
+      domains: string[] = [],
+      blockedDomains: string[] = [],
+    ) => owner!.request("browser.policy.set", { mode, domains, blockedDomains, sensitivePreset: false });
+    const other = await h.ok<ControlResult>(client(), "browser_tab_open", {
+      url: `${server.origin}/start.html?policy=1`,
+      active: false,
+      waitUntil: "load",
+    });
+    try {
+      await policy("active");
+      const listed = await h.ok<{ tabs: TabInfo[] }>(client(), "browser_tabs_list");
+      expect(listed.tabs.some((t) => t.tabId === other.tabId)).toBe(false);
+      expect((await h.fails(client(), "browser_page_read", { tabId: other.tabId })).code).toBe(
+        "BROWSER_PAGE_RESTRICTED",
+      );
+      await policy("targeted", ["127.0.0.1"], ["localhost"]);
+      expect(
+        (await h.ok<{ content: string }>(client(), "browser_page_read", { tabId: other.tabId })).content,
+      ).toBeTruthy();
+      expect(
+        (await h.fails(client(), "browser_tab_open", { url: `${server.crossOrigin}/start.html`, active: false })).code,
+      ).toBe("BROWSER_PAGE_RESTRICTED");
+      await policy("background", [], ["127.0.0.1"]);
+      expect((await h.fails(client(), "browser_page_read", { tabId: other.tabId })).code).toBe(
+        "BROWSER_PAGE_RESTRICTED",
+      );
+      const filtered = await h.ok<{ tabs: TabInfo[] }>(client(), "browser_tabs_list");
+      expect(filtered.tabs.some((t) => t.tabId === other.tabId)).toBe(false);
+    } finally {
+      await policy("background");
+      owner!.close();
       await h.ok(client(), "browser_tab_close", { tabId: other.tabId });
     }
   });

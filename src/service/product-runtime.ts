@@ -553,9 +553,9 @@ export class ProductRuntime {
             ports,
             bridge: core.status().browser,
             project: inspection,
-            commandsAllowed: l1.available,
+            nativeCommandPrerequisiteMet: l1.available,
             detail: l1.available
-              ? "Native L1 ready"
+              ? "Native L1 ready; permissions, approvals and halt state still apply"
               : "Commands refused: install/repair native L1; no unconfined retry",
           },
         };

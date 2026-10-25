@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { SECTIONS, PROJECT_TABS, SETTINGS, CONNECTORS, PRIMARY_SECTIONS } from "../../src/tray/product.js";
 import { TRAY_ASSETS, TRAY_CSP } from "../../src/tray/assets.js";
 import { UI_TOOLS, validateUiTool } from "../../src/tray/tool-client.js";
+import { CONNECTOR_MANIFESTS } from "../../src/service/connector-manifests.js";
 import { TOOLS } from "../../src/adapters/mcp/tools.js";
 
 describe("Control Center product architecture", () => {
@@ -23,7 +24,8 @@ describe("Control Center product architecture", () => {
     expect(PROJECT_TABS).toHaveLength(7);
     expect(SETTINGS).toHaveLength(11);
     expect(SECTIONS.indexOf("Agents")).not.toBe(SECTIONS.indexOf("MCP Servers"));
-    expect(CONNECTORS).toHaveLength(10);
+    expect(CONNECTORS).toEqual(CONNECTOR_MANIFESTS.map((m) => [m.id, m.category, m.kind]));
+    expect(new Set(CONNECTORS.map(([id]) => id)).size).toBe(CONNECTOR_MANIFESTS.length);
   });
   it("ships an auth gate with local admission and no SSO", () => {
     const html = TRAY_ASSETS["/index.html"]!.body;

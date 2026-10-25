@@ -507,7 +507,7 @@ export function createCommandHandlers(api: ChromeApi, options: CommandOptions = 
         ? (await api.tabs.query({ active: true, lastFocusedWindow: true }))[0]?.id === tab.id
         : tab.active === true;
     if (context?.tabPolicy && !tabPolicyAllows(context.tabPolicy, tab.url ?? "", active))
-      throw new ExtensionError("PERMISSION_DENIED", "Tab is excluded by owner browser policy");
+      throw new ExtensionError("BROWSER_PAGE_RESTRICTED", "Tab is excluded by owner browser policy");
   }
 
   /** True when the load finishes; false on close or loadWaitMs expiry. Never rejects. */
@@ -1302,7 +1302,7 @@ export function createCommandHandlers(api: ChromeApi, options: CommandOptions = 
           typeof params.url === "string" &&
           !tabPolicyAllows(context.tabPolicy, params.url, name === "tabs.open" ? params.active === true : true)
         )
-          throw new ExtensionError("PERMISSION_DENIED", "Destination is excluded by owner browser policy");
+          throw new ExtensionError("BROWSER_PAGE_RESTRICTED", "Destination is excluded by owner browser policy");
         const dispatch = async (): Promise<unknown> => {
           if (exempt.has(name as BrowserCommand)) return handler(params, context);
           const tab = await targetTab(optionalTabIdParam(params), expectParam(params), context, true);

@@ -347,15 +347,15 @@ export interface ConfinementScope {
  * operation.
  */
 export interface CoreConfinement {
-  /** AD-58 composition only: serialize source writes with launch admission,
-   * drain actors and release native source guards before executing checked I/O.
-   * Failure must prevent I/O. Native backend interfaces do not grant this hook. */
   /** AD-59: drain actors, capture selected files, commit via checked Core; clean only after success. */
   artifactState?(): { pending: boolean; recoveryDirectory?: string };
   exportArtifacts?<T>(
     files: readonly string[],
     commit: (files: import("./workspace-artifacts.js").ArtifactSnapshot[]) => Promise<T>,
   ): Promise<T>;
+  /** AD-58 composition only: serialize source writes with launch admission,
+   * drain actors and release native source guards before executing checked I/O.
+   * Failure must prevent I/O. Native backend interfaces do not grant this hook. */
   withSourceMutation?<T>(execute: () => Promise<T>): Promise<T>;
   /** Optional sticky post-admission failure guard. Does not run readiness checks. */
   assertAdmission?(): void;

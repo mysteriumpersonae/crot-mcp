@@ -40,6 +40,7 @@ export const KNOWN_OPERATIONS: readonly string[] = [
   "filesystem.move",
   "filesystem.read_file",
   "filesystem.stat",
+  "filesystem.sync_workspace_artifacts",
   "filesystem.write_file",
   "git.add",
   "git.branch",
