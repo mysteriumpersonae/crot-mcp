@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 import { createServer, type Server } from "node:http";
-import { readFile, writeFile } from "node:fs/promises";
+import { access, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, expect, inject, it } from "vitest";
 import { TrayToolClient } from "../../src/tray/tool-client.js";
@@ -139,6 +139,10 @@ it(
       path: path.join(dirs.outside, "project-two"),
       name: "Second project",
     });
+    await rpc("projects.create", { path: path.join(dirs.outside, "project-three") });
+    const overLimit = path.join(dirs.outside, "project-four-denied");
+    await expect(rpc("projects.create", { path: overLimit })).rejects.toThrow("up to 3");
+    await expect(access(overLimit)).rejects.toThrow();
     await rpc("projects.select", { id: second.project.id });
     expect((await rpc("browser.policy.get")).policy).toEqual(policy);
     await call("fs_write_file", { path: "real.txt", content: "real workspace content" });

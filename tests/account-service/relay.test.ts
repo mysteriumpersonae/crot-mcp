@@ -77,6 +77,31 @@ describe("WP-36 actual cloud admission and owner API", () => {
     });
     expect((await owner("/trial", { body: {} })).status).toBe(409);
   });
+  it("accepts only named Pro billing terms, never client amounts, price IDs or malformed terms", async () => {
+    const accounts = new AccountService();
+    const checkout = vi.fn(async () => "https://checkout.stripe.com/test");
+    h = await new RelayHarness().start({
+      accounts,
+      billing: { checkout, verifyAndResolve: async () => undefined },
+      portalClientIds: [portal],
+    });
+    for (const term of ["monthly", "annual", "founderAnnual"]) {
+      expect((await owner("/checkout", { body: { plan: "pro", term } })).status).toBe(200);
+      expect(checkout).toHaveBeenLastCalledWith("user_01", "pro", term);
+      expect(accounts.snapshot("user_01").entitled).toBe(false);
+    }
+    checkout.mockClear();
+    for (const body of [
+      { plan: "pro", term: "weekly" },
+      { plan: "pro", term: ["annual"] },
+      { plan: "pro", term: null },
+      { plan: "team", term: "annual" },
+      { plan: "pro", amount: 1 },
+      { plan: "pro", priceId: "price_fake" },
+    ])
+      expect((await owner("/checkout", { body })).status).toBe(400);
+    expect(checkout).not.toHaveBeenCalled();
+  });
   it("simultaneous actual pairing requests cannot exceed account quota", async () => {
     const accounts = await start();
     await accounts.startTrial("user_01");
@@ -276,6 +301,7 @@ describe("WP-36 actual cloud admission and owner API", () => {
         plan: "trial",
         entitled: true,
         deviceCount: 1,
+        expiresAt: accounts.snapshot("user_01").expiresAt,
       });
       const requests = sent.length;
       await identity.refreshCommercialIfNeeded();

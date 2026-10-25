@@ -3,6 +3,7 @@
  * `crot-cloud-relay --config <file>`; deployment environments are WP-38
  * (staging) and WP-39 (production).
  */
+import type { BillingPrices } from "../account-service/catalog.js";
 import { versionAtLeast } from "./versions.js";
 import { relayLimits, type RelayLimits } from "./limits.js";
 import { isRelayHost } from "../identity/device-id.js";
@@ -27,7 +28,7 @@ export interface RelayConfig {
   readonly billing?: {
     secretKeyFile: string;
     webhookSecretFile: string;
-    prices: { pro: string; team: string };
+    prices: BillingPrices;
     returnUrl: string;
   };
   readonly workosSecretFile?: string;
@@ -114,7 +115,9 @@ export function parseRelayConfig(value: unknown): RelayConfig {
       typeof b.webhookSecretFile !== "string" ||
       !b.webhookSecretFile ||
       !b.prices ||
-      Object.keys(b.prices).sort().join(",") !== "pro,team" ||
+      Object.keys(b.prices).some((key) => !["pro", "team", "proAnnual", "proFounderAnnual"].includes(key)) ||
+      Object.values(b.prices).some((id) => typeof id !== "string" || !/^price_[A-Za-z0-9]+$/.test(id)) ||
+      new Set(Object.values(b.prices)).size !== Object.values(b.prices).length ||
       typeof b.prices.pro !== "string" ||
       typeof b.prices.team !== "string" ||
       typeof b.returnUrl !== "string" ||
