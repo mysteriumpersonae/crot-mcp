@@ -1,3 +1,4 @@
+import { SocialProviderSchema } from "./social/account-secrets.js";
 import { SkillSchema } from "./connector-manifests.js";
 import { SyncArtifactsSchema } from "../core/platform/workspace-artifacts.js";
 /** Owner-only product configuration RPCs. Tool execution is never accepted as arbitrary RPC. */
@@ -20,6 +21,27 @@ const filter = z
   })
   .strict();
 export const PRODUCT_SCHEMAS = {
+  "accounts.list": z.object({}).strict(),
+  "accounts.configure": z
+    .object({
+      provider: SocialProviderSchema,
+      clientId: z
+        .string()
+        .min(1)
+        .max(512)
+        .regex(/^[^\r\n\0]+$/),
+      clientSecret: z
+        .string()
+        .min(1)
+        .max(2560)
+        .regex(/^[^\r\n\0]+$/)
+        .optional(),
+    })
+    .strict(),
+  "accounts.connect": z.object({ provider: SocialProviderSchema }).strict(),
+  "accounts.check": z.object({ provider: SocialProviderSchema }).strict(),
+  "accounts.cancel": z.object({ provider: SocialProviderSchema }).strict(),
+  "accounts.disconnect": z.object({ provider: SocialProviderSchema }).strict(),
   "chat.testConnection": z.object({ provider: ChatProviderSchema }).strict(),
   "skills.list": z.object({}).strict(),
   "skills.create": SkillSchema,

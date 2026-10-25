@@ -7,6 +7,7 @@
  *
  * Logs are JSON lines on stderr without tokens, headers, bodies or paths.
  */
+import { NotionOAuthBroker } from "../account-service/notion-oauth-broker.js";
 import { AccountService } from "../account-service/service.js";
 import { StripeBillingProvider, WorkOSRevoker } from "../account-service/billing.js";
 import { readFile } from "node:fs/promises";
@@ -38,7 +39,15 @@ async function main(): Promise<void> {
     : undefined;
   const metricsToken = config.metricsTokenFile ? (await readFile(config.metricsTokenFile, "utf8")).trim() : undefined;
   if (metricsToken !== undefined && metricsToken.length < 32) throw new Error("metrics token is too short");
+  const notionOAuthBroker = config.notionOAuth
+    ? new NotionOAuthBroker({
+        publicOrigin: `https://${config.relayHost}`,
+        clientId: config.notionOAuth.clientId,
+        clientSecret: (await readFile(config.notionOAuth.clientSecretFile, "utf8")).trim(),
+      })
+    : undefined;
   const relay = new CloudRelay({
+    notionOAuthBroker,
     artifactDirectory: config.artifactDirectory,
     accounts,
     billing,

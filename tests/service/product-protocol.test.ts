@@ -87,3 +87,18 @@ it("project inspection never accepts arbitrary paths or commands", () => {
   for (const params of [{ path: "/etc" }, { command: "node" }, { project: "other" }])
     expect(parseProduct("projects.inspect", params)).toBeUndefined();
 });
+
+it("account owner RPC never accepts access/refresh tokens, endpoint overrides or unknown providers", () => {
+  expect(
+    parseProduct("accounts.configure", { provider: "github", clientId: "app", clientSecret: "secret" }),
+  ).toMatchObject({ provider: "github" });
+  for (const method of ["accounts.list", "accounts.connect", "accounts.disconnect", "accounts.check"])
+    expect(parseProduct(method, { provider: "github", access_token: "forbidden" })).toBeUndefined();
+  expect(parseProduct("accounts.connect", { provider: "instagram" })).toBeUndefined();
+  expect(
+    parseProduct("accounts.connect", { provider: "github", endpoint: "https://attacker.example" }),
+  ).toBeUndefined();
+  expect(
+    parseProduct("accounts.configure", { provider: "github", clientId: "app", clientSecret: "a\nb" }),
+  ).toBeUndefined();
+});

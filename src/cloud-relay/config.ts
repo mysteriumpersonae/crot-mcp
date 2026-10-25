@@ -25,6 +25,7 @@ export interface RelayConfig {
   readonly portalClientIds: readonly string[];
   readonly minimumDeviceVersion?: string;
   readonly minimumClientVersion?: string;
+  readonly notionOAuth?: { readonly clientId: string; readonly clientSecretFile: string };
   readonly billing?: {
     secretKeyFile: string;
     webhookSecretFile: string;
@@ -42,6 +43,7 @@ const FIELDS = [
   "accountFile",
   "portalClientIds",
   "billing",
+  "notionOAuth",
   "workosSecretFile",
   "metricsTokenFile",
   "minimumDeviceVersion",
@@ -104,6 +106,24 @@ export function parseRelayConfig(value: unknown): RelayConfig {
     throw new Error("invalid workosSecretFile");
   if (v.metricsTokenFile !== undefined && (typeof v.metricsTokenFile !== "string" || !v.metricsTokenFile))
     throw new Error("invalid metricsTokenFile");
+  let notionOAuth: RelayConfig["notionOAuth"];
+  if (v.notionOAuth !== undefined) {
+    const n = v.notionOAuth as Record<string, unknown>;
+    if (
+      !n ||
+      typeof n !== "object" ||
+      Array.isArray(n) ||
+      Object.keys(n).sort().join(",") !== "clientId,clientSecretFile" ||
+      typeof n.clientId !== "string" ||
+      !n.clientId ||
+      /[\r\n\0]/.test(n.clientId) ||
+      typeof n.clientSecretFile !== "string" ||
+      !n.clientSecretFile ||
+      v.relayHost !== "mcp.crot.network"
+    )
+      throw new Error("invalid Notion OAuth configuration");
+    notionOAuth = { clientId: n.clientId, clientSecretFile: n.clientSecretFile };
+  }
   let billing: RelayConfig["billing"];
   if (v.billing !== undefined) {
     const b = v.billing as NonNullable<RelayConfig["billing"]>;
@@ -133,6 +153,7 @@ export function parseRelayConfig(value: unknown): RelayConfig {
     accountFile,
     portalClientIds,
     billing,
+    notionOAuth,
     workosSecretFile: v.workosSecretFile as string | undefined,
     metricsTokenFile: v.metricsTokenFile as string | undefined,
     minimumDeviceVersion: v.minimumDeviceVersion as string | undefined,

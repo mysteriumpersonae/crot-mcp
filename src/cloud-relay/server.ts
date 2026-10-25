@@ -16,6 +16,7 @@
  * pairing (AD-22 point 4), the tunnel endpoint (AD-22 points 2–3) and a
  * minimal health check.
  */
+import type { NotionOAuthBroker } from "../account-service/notion-oauth-broker.js";
 import { ReleaseDownloads } from "./downloads.js";
 import type { AuthorizationServerMetadata } from "../identity/authorization-server.js";
 import { AccountService, type CommercialService } from "../account-service/service.js";
@@ -109,6 +110,7 @@ export interface CloudRelayOptions {
   readonly entitlement?: (record: DeviceRecord) => Entitlement | Promise<Entitlement>;
   readonly accounts?: CommercialService;
   readonly billing?: BillingProvider;
+  readonly notionOAuthBroker?: NotionOAuthBroker;
   readonly portalClientIds?: readonly string[];
   readonly portalMetadata?: () => Promise<AuthorizationServerMetadata>;
   readonly minimumDeviceVersion?: string;
@@ -457,6 +459,7 @@ export class CloudRelay {
     const q = target.indexOf("?");
     const pathname = q === -1 ? target : target.slice(0, q);
     // Resolve public HTML before every asynchronous API/download/MCP dispatcher.
+    if (this.options.notionOAuthBroker && (await this.options.notionOAuthBroker.handle(req, res, pathname))) return;
     if (this.accountHttp.handlePage(req, res, pathname)) return;
     if (await this.downloads.handle(req, res, pathname)) return;
     if (this.accountHttp.matches(pathname) && (await this.accountHttp.handle(req, res, pathname))) return;

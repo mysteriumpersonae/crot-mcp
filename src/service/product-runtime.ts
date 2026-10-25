@@ -1,3 +1,5 @@
+import type { SocialAccountRuntime } from "./social/runtime.js";
+import type { SocialProvider } from "./social/account-secrets.js";
 import { PLAN_CATALOG } from "../account-service/catalog.js";
 import { checkLoopbackPort } from "./system-check.js";
 import { parseTabPolicy, type BrowserTabPolicy } from "../core/capabilities/browser/tab-policy.js";
@@ -124,6 +126,7 @@ interface Vault {
 }
 export interface ProductHost {
   stateDir: string;
+  socialAccounts?: SocialAccountRuntime;
   secrets: SecretStore;
   privateFiles: PrivateFileProtection;
   core(): CrotCore;
@@ -148,6 +151,9 @@ const limited = <T>(values: T[], limit = 500): T[] => values.slice(-limit);
 export const productPaths = (dir: string) => [
   path.join(dir, "product-state.json"),
   path.join(dir, "product-vault.enc"),
+  path.join(dir, "oauth-secret-store.json"),
+  path.join(dir, "social-accounts.json"),
+  path.join(dir, "publications.json"),
 ];
 
 class PipeTransport implements Transport {
@@ -392,6 +398,7 @@ export class ProductRuntime {
       method === "security.status" ||
       (method.startsWith("chat.") && method !== "chat.configure") ||
       method.startsWith("tokens.") ||
+      method.startsWith("accounts.") ||
       method.endsWith(".list") ||
       method.startsWith("monitoring.") ||
       method === "connectors.testConnection" ||
@@ -476,6 +483,25 @@ export class ProductRuntime {
   }
   private async dispatch(method: ProductMethod, p: Record<string, unknown>): Promise<Record<string, unknown>> {
     const id = String(p.id ?? "");
+    if (method.startsWith("accounts.")) {
+      const social = this.host.socialAccounts;
+      if (!social) return fail("Social account runtime unavailable");
+      const provider = p.provider as SocialProvider;
+      switch (method) {
+        case "accounts.list":
+          return social.list();
+        case "accounts.configure":
+          return social.configure(provider, String(p.clientId), p.clientSecret as string | undefined);
+        case "accounts.connect":
+          return social.connect(provider);
+        case "accounts.check":
+          return social.check(provider);
+        case "accounts.cancel":
+          return social.cancel(provider);
+        case "accounts.disconnect":
+          return social.disconnect(provider);
+      }
+    }
     switch (method) {
       case "browser.policy.get":
         return { ok: true, policy: this.appliedTabPolicy ?? this.host.core().browser.getTabPolicy() };
@@ -951,6 +977,8 @@ export class ProductRuntime {
             secrets: "redacted; request/response bodies omitted",
           },
         };
+      default:
+        return fail("Unknown product request");
     }
   }
   private async testConnector(id: string): Promise<Record<string, unknown>> {

@@ -6163,3 +6163,78 @@ use the existing authenticated hosted account/Stripe portal flow. No real
 content publication, provider revocation, payment, or PR #7 merge is authorized
 by the instruction to implement them. Operator Stripe/DNS/TLS provisioning and
 live-provider qualification remain separate from fixture/CI evidence.
+
+### AD-62. Stage C OAuth and publication security foundations (not yet product-qualified)
+
+Account access/refresh tokens and OAuth application secrets use a separate
+system-store namespace. There is no owner-file or DPAPI-file fallback for these
+credentials: macOS Keychain, Linux Secret Service, and native Windows Credential
+Manager generic credentials are the only production backends. Writes are read
+back; disconnect attempts all deletions and verifies absence. Store/tool errors
+are sanitized. A locked/unavailable store is an explicit refusal, not a fallback.
+Tokens are not placed in product metadata, the product encrypted vault, audit
+records, renderer responses, command arguments or child environments. Existing
+service-token storage/migration remains unchanged.
+
+Native-app authorization uses a per-flow ephemeral 127.0.0.1 listener, exact
+Host/path, random state with constant-time checking, one-use code redemption,
+S256 and a bounded lifetime. Wrong state, duplicate code/state, cross-origin
+callbacks and replay fail closed. TikTok uses its documented hex S256 challenge
+and comma-separated scopes; the other supported direct providers use base64url.
+Authorization must be opened in the system browser, never a webview. Trusted
+local HTTP fixture adapters are an in-process composition seam, not renderer,
+MCP, persisted endpoint configuration or a production security bypass.
+
+Provider revocation uses the actual fixed endpoint and provider-specific
+credentials. Revocation failure does not retain tokens for a hidden retry:
+local credentials are still removed and the result explicitly reports failure.
+Google revocation can revoke the wider application grant/scopes; the future UI
+confirmation must explain that side effect. Generation invalidation and abort
+signals prevent an old active account lease from surviving disconnect. A secret
+cleanup failure disables credential use and reports a restricted/error state.
+
+Core publication is two phase. Preparation creates no send authority. An owner
+transport session receives a random short-lived confirmation bound by HMAC to
+the draft, project, account generation, destination and immutable media identity.
+The confirmation is consumed synchronously before asynchronous I/O. Privacy has
+no default, terms must be accepted, and commercial disclosure needs at least one
+brand category. Only trusted recipient privacy choices are accepted. Account
+changes, session replacement, expiry and replay invalidate confirmation. The
+journal/audit sequence is pending_publication -> queued -> processing -> result;
+interrupted/uncertain delivery is failed/delivery_unknown and never auto-retried.
+Generic Core HTTP writes to the platform APIs (including redirect hops and
+method-override/GET-body attempts) are denied even under Full Control. This is
+not a claim that arbitrary external tools, browser clicks or unmanaged third-party
+MCP services are already fully integrated with the publication gate.
+
+Notion's documented public OAuth flow uses client-secret Basic authentication
+but does not document native PKCE. Passing extra PKCE-looking parameters is not
+evidence that Notion enforces them. Direct Notion OAuth therefore remains closed;
+a separately reviewed PKCE-protected CROT broker leg is required to meet the
+owner's native-client contract without pretending native provider support.
+Reference: https://developers.notion.com/docs/authorization . GitHub's documented
+web flow now supports S256 and code_verifier, but still requires the OAuth app
+secret: https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps .
+
+These modules are foundations, not full Stage C acceptance. At this commit the
+new lifecycle/publication engine is not yet wired into shipped owner RPC/UI,
+Notion broker, all production upload adapters or the positive end-to-end shipped
+publication dialog. Native store isolation from confined children also needs
+platform evidence. A memory store in HTTP tests is not OS-storage evidence.
+PR #7 must remain Draft until those requirements and exact-head CI are closed.
+
+### AD-63 — Notion native PKCE broker, separate from the upstream confidential flow
+
+Notion's documented authorization-code flow does not specify native PKCE. CROT must not claim that sending unused PKCE parameters to Notion provides that protection. The device-to-CROT leg instead uses S256 PKCE, a one-use broker code, exact random loopback callback and state; the independent CROT-to-Notion leg uses a separate random state and server-held confidential application credentials. The registered upstream callback is `https://mcp.crot.network/oauth/notion/callback`. No application secret is shipped in the desktop client.
+
+The optional Relay `notionOAuth` configuration contains only the registered app ID and an operator-owned secret-file path. The production broker is restricted to `https://mcp.crot.network`. Without its deployment configuration, there is no direct or non-PKCE fallback. Pending states and hashed broker-code indexes are memory-only, bounded to 500 flows, expire after five minutes and are lost safely on restart. Multi-instance deployment must route both legs to the same instance; there is no implicit shared store. The broker consumes the native grant before provider I/O, never retries ambiguous exchanges, forwards only validated token fields to the native Core TLS client, and never persists user access/refresh tokens. Refresh and revocation are fixed Notion operations, not arbitrary URL proxies. Browser redirects never carry user tokens.
+
+Actual local HTTP tests exercise the native listener, broker and provider as three separate servers: PKCE/state, redirect substitution, one-use redemption, refresh and remote revocation. This proves protocol composition, not that a production Notion application has been registered/deployed or that shipped account UI integration is complete. AD-62's direct-Notion refusal remains correct; this broker supersedes only its proposed missing native-PKCE transport. PR #7 remains Draft until the shipped Core/UI workflow and exact-head cross-platform CI are qualified.
+
+### AD-64 — Service-owned social account lifecycle on the authenticated owner channel
+
+`CrotService` now composes the social account runtime with lazy, OS-only credential access and owner-private `social-accounts.json` metadata. Its descriptor, account metadata and reserved publication journal paths are included in the protected service state. There is no OAuth endpoint/adapter override in CLI, persisted JSON, MCP arguments or owner RPC; local provider and memory-store fixtures exist only as trusted in-process test composition. Account configuration, connect/cancel/check/disconnect are a closed owner-RPC allowlist, not MCP tools. Administrative outcomes are content-free `social_account` control audit records.
+
+The shipped Accounts screen reads all five provider states from this runtime, exposes configuration and connection checks, and disconnects through an explicit confirmation. Configuration inputs accept application credentials, not externally supplied access/refresh tokens; fields are cleared immediately after submission. The Electron main process independently revalidates the service-generated provider endpoint, S256 challenge, random loopback callback and state before opening the system browser. The renderer cannot pass an arbitrary URL to `openExternal`; browser-open failure cancels the pending authorization. A pending loopback listener is closed on cancellation, emergency stop and service shutdown. Disconnect immediately invalidates session generations and aborts active credential leases before remote revocation/local cleanup.
+
+A real `CrotService` integration test uses its authenticated owner control connection and actual HTTP provider endpoints to connect, check, disconnect, verify metadata/vault token exclusion and inspect audit results. Its explicitly injected memory credential backend is not native OS-store qualification. This supersedes the earlier AD-62/AD-63 note that account RPC/UI composition was not yet installed; it does NOT claim completed protected avatar delivery, all platform-specific restricted-state mappings, production publication adapters or the required shipped publication Chromium workflow. PR #7 must remain Draft until those acceptance gaps and new-head CI are closed.
