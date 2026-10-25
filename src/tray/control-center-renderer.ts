@@ -135,7 +135,7 @@ export const CONTROL_CENTER_RENDERER =
         d.append(button('Save skill',async()=>{await rpc('skills.create',{id:id.input.value,name:name.input.value,command:command.input.value,args:JSON.parse(args.input.value),workingDirectory:cwd.input.value||'.'});d.close();renderPage();}),button('Cancel',()=>d.close()));
       });
     });
-    p.append(node('p','Skills run through Core in private scratch. An optional relative cwd stays inside scratch; traversal and links are forbidden. {{name}} placeholders remain literal argv entries. Export useful results before other Core writes.','muted'),create,out);root.append(p);
+    p.append(node('p','Skills run through Core in private scratch. An optional relative cwd stays inside scratch; traversal and links are forbidden. Skill checks and runs stop prior commands and stdio MCP sessions; reconnect those servers afterwards. {{name}} placeholders remain literal argv entries. Export useful results before other Core writes.','muted'),create,out);root.append(p);
     loadInto(out,async()=>{
       const r=await rpc('skills.list');clear(out);
       for(const skill of r.skills){

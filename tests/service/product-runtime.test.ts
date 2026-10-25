@@ -167,8 +167,24 @@ it(
     });
     const connected = await rpc("mcpServers.connect", { id: added.server.id });
     const confinement = (await call("crot_status")).confinement;
-    if (confinement.available) expect((await rpc("skills.test", { id: "custom-check" })).ok).toBe(true);
-    else await expect(rpc("skills.test", { id: "custom-check" })).rejects.toThrow();
+    if (confinement.available) {
+      expect((await rpc("skills.test", { id: "custom-check" })).ok).toBe(true);
+      // Canonical cwd selection drains prior native actors, including stdio MCP.
+      // Require the real disconnected state and an explicit successful reconnect.
+      await waitFor(
+        async () =>
+          (await rpc("mcpServers.list")).servers.find((s: { id: string }) => s.id === added.server.id)?.status ===
+          "Disconnected",
+      );
+      await expect(
+        rpc("mcpServers.callTool", {
+          id: added.server.id,
+          tool: "echo",
+          arguments: { text: "must not reuse drained transport" },
+        }),
+      ).rejects.toThrow("Connect the server first");
+      expect((await rpc("mcpServers.connect", { id: added.server.id })).server.status).toBe("Connected");
+    } else await expect(rpc("skills.test", { id: "custom-check" })).rejects.toThrow();
     expect(confinement.sourceAccess).toBe("core-only");
     if (confinement.available) {
       expect(connected.server.status, JSON.stringify(connected.server.logs)).toBe("Connected");
