@@ -40,7 +40,7 @@ export interface SeatbeltLayout {
 export function projectSecretRule(policy: NonNullable<SeatbeltLayout["projectSecrets"]>): string {
   const root = canonicalPath(policy.root);
   const escaped = root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const pattern = `^${escaped === "/" ? "" : escaped}/([^/]+/)*(\\.[eE][nN][vV](\\.[^/]*)?|[^/]*\\.([pP][eE][mM]|[kK][eE][yY]))(/.*)?$`;
+  const pattern = `^${escaped === "/" ? "" : escaped}/([^/]+/)*(\\.[eE][nN][vV][^/]*|[^/]*\\.([pP][eE][mM]|[kK][eE][yY]))(/.*)?$`;
   const exceptions = policy.allowedPaths.map((name) => {
     const target = canonicalPath(name),
       rel = path.posix.relative(root, target);

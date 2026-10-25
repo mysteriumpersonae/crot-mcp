@@ -51,6 +51,12 @@ describe("macOS Seatbelt profile compiler", () => {
       expect(rule).not.toContain("(subpath ");
       expect(rule).toContain('(regex "');
       expect(rule).not.toContain("(regex #");
+      const pattern = JSON.parse(/\(regex ("(?:[^"\\]|\\.)*")\)/.exec(rule)![1]!);
+      const names = new RegExp(pattern);
+      for (const name of [".env", ".envrc", ".ENVbackup", "nested/.environment", "nested/key.PEM"])
+        expect(names.test(root + "/" + name), name).toBe(true);
+      for (const name of ["environment.ts", "env", "key.pem.txt"])
+        expect(names.test(root + "/" + name), name).toBe(false);
       expect(() => projectSecretRule({ root, allowedPaths: [root + "-sibling/.env"] })).toThrow("outside workspace");
       expect(() => projectSecretRule({ root, allowedPaths: [root] })).toThrow("outside workspace");
       expect(projectSecretRule({ root: "/", allowedPaths: [] })).toContain("^/([^/]+/)*");

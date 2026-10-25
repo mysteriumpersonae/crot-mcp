@@ -109,7 +109,7 @@ describe.runIf(mac)("macOS production Seatbelt qualification", () => {
 const denied=(label,f)=>{try{f();throw Error('secret escaped: '+label)}catch(e){if(!['EPERM','EACCES'].includes(e.code))throw e}};
 console.log('READY');process.stdin.once('data',()=>{try{
 if(fs.readFileSync('public.txt','utf8')!=='public')throw Error('ordinary file broken');
-for(const name of ['.env.production','late.KEY','benign.txt'])denied(name+':read',()=>fs.readFileSync(name));
+for(const name of ['.env.production','.envrc','.ENVbackup','late.KEY','benign.txt'])denied(name+':read',()=>fs.readFileSync(name));
 denied('rename',()=>fs.renameSync('.env.production','renamed.txt'));
 denied('hardlink',()=>fs.linkSync('.env.production','linked.txt'));
 denied('write',()=>fs.writeFileSync('late.KEY','bad'));
@@ -138,6 +138,8 @@ console.log('FUTURE-SECRETS-DENIED');process.stdin.destroy();}catch(e){console.e
         });
       });
       await writeFile(path.join(workspace, ".env.production"), "future-private");
+      await writeFile(path.join(workspace, ".envrc"), "future-envrc");
+      await writeFile(path.join(workspace, ".ENVbackup"), "future-env-backup");
       await writeFile(path.join(workspace, "late.KEY"), "future-key");
       await symlink(path.join(workspace, ".env.production"), path.join(workspace, "benign.txt"));
       p.stdin!.end("go");

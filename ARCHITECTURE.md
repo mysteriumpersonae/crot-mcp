@@ -5856,3 +5856,89 @@ future-secret L1 remains open; Stage A/PR #5 remains Draft, B/C unstarted.
 Primary terms: [FSR SDK license](https://pismotec.com/download/fsrkit-24X-license.txt),
 [PFM runtime license](https://pismotec.com/download/pfm-24X-license.html),
 [commercial FSR licensing](https://pismotec.com/fsr/license/).
+
+### AD-57 — driver-free native projection: hard security gates, not watcher enforcement
+
+**Owner directive; decision before code.** Restore AD-29's exclusion of
+third-party filesystem drivers from product packaging, host preparation and
+active CI provisioning. AD-55/56 are historical, rejected/unqualified research.
+Remove the active Dokan SDK/MSI downloader/compiler/installer and retire its unused
+new helper implementations to comment-only historical markers; Pismo was never installed, bundled or registered. Preserve
+past evidence and the mandatory unqualified native acceptance gate, not a green
+reclassification or expected-failure/skip. A disabled legacy experiment must
+refuse explicitly before downloading, installing or executing anything.
+
+The owner proposes same-volume native hardlinks into a private projection,
+original source hidden by OS confinement, and secret names excluded with locked
+stubs. This is a **candidate**, not established AppContainer/LPAC compatibility
+or future-secret protection. The exact native process identities, source-path
+bypass, control-channel denial, file identity and lifetime must still be proved.
+Neither the failed Dokan topology nor Pismo license research proves that every
+third-party implementation has the same limitation; they do not change this
+owner-selected driver prohibition.
+
+**Non-negotiable constraints found before adoption:**
+
+1. A hardlink shares the underlying file's security metadata and identity.
+   Windows DACL grants/denials or POSIX chmod on the projected file affect the
+   original, not an independent projected ACL. Package read/write grants must
+   not accidentally permit the original path. A private parent-directory DACL
+   is not proof of known-path denial with traverse-bypass privileges. Test the
+   actual effective AppContainer/LPAC before claiming isolation; do not change
+   source permissions or remove native identity guards speculatively.
+2. Creating a temporary file and renaming it over the projected path breaks
+   its original hardlink identity. Host atomic replacement breaks identity in
+   the other direction. Direct in-place writes work; transparent atomic-save,
+   new-file/rename/delete compatibility is **not** supplied by hardlinks alone.
+   No watcher-based copy-back is an approved replacement for the direct-write
+   invariant.
+3. Existing stubs enumerate finite names, not the infinite `.env*`, `*.pem`,
+   `*.key` language. An agent allowed to create names can create/open/write a
+   new matching name before a watcher callback applies a deny. Observing it
+   later cannot revoke retained file handles. `0000` on an owner-writable inode
+   is not immutable enforcement against chmod; a `/dev/null` read returning
+   EOF is not EACCES. A missing excluded path (ENOENT) is not the demanded
+   EACCES proof. Read-only namespace mounts or mandatory interception need
+   their own positive tool-compatibility and refusal tests.
+4. Keeping an old public hardlink after a trusted host renames its source to
+   a secret name can expose subsequently written secret content through the
+   stale public name. Do not present source watcher synchronization as atomic
+   inode/name reclassification. Inherited/retained descriptors and grants on
+   revocation still require task drain before acknowledging a policy change.
+
+Add deterministic real-filesystem regression experiments for these native
+hardlink/stub properties on the existing OS CI matrix. They test the proposed
+building blocks, **not** confined AppContainer/LPAC/L1 admission. A passing
+counterexample test is rejection evidence, not a passing projection backend.
+Keep the native acceptance gate unqualified/red until a real replacement meets
+it. No native backend availability claim, service launcher registration,
+full Stage A completion, or B/C start follows from these tests.
+
+Implement the owner's literal `.env*` filename rule consistently in shared
+Core policy and macOS native compiler (including `.envrc`/`.environment` and
+case variants); this tightens existing policy, not arbitrary-process Windows/
+Linux L1. Exact workspace/file owner opt-ins remain exact, never prefix grants.
+
+Linux userns/mountns with native Landlock/seccomp notification is an allowed
+future investigation. FUSE can be considered only under the owner's Linux
+exception, with licensing/deployment and actual confinement gates. A Linux
+primitive is not Windows qualification. On Windows, if no native mandatory
+operation guard can be proved, future-secret-protected arbitrary commands
+must refuse rather than use a watcher, silently downgrade isolation or call
+legacy local-unconfined fallback. This is a required admission contract, not
+a claim that the new backend or its production fail-closed integration exists.
+
+**Status:** architectural safety blocker, not implementation acceptance.
+An alternative restricted Windows contract (file mutations through checked
+Core operations, no arbitrary writable-workspace command access) requires owner
+approval; it is not silently substituted for transparent native execution.
+The owner has not authorized weakening EACCES guarantees or atomic/direct-write
+requirements. PR #5 stays Draft and must not be merged as complete Stage A.
+
+
+AD-57 primary native references: [Microsoft hard links](https://learn.microsoft.com/en-us/windows/win32/fileio/hard-links-and-junctions),
+[CreateHardLink security descriptor semantics](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-createhardlinkw),
+[Linux link(2) shared permissions/ownership](https://man7.org/linux/man-pages/man2/link.2.html),
+[inotify event/race limitations](https://man7.org/linux/man-pages/man7/inotify.7.html).
+The local counterexamples use real Linux filesystem operations, not simulated
+Win32 access checks; the new Windows DACL case must run on actual Windows CI.

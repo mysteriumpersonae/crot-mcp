@@ -163,3 +163,23 @@ Microsoft kernel signature and actual AppContainer/LPAC data/control isolation
 are unqualified. Linux/Windows future-secret barriers and new-backend production
 fail-closed integration remain open. Stage A is NOT Pass; PR #5 stays Draft,
 no agent merge, B/C unstarted. Domain remains crot.network / mcp.crot.network.
+
+### AD-57 — driver ban restored; native projection is not yet qualified
+
+Removed active Dokan SDK/MSI provisioning and executable new helper implementations
+(comment-only historical markers remain);
+Pismo was never bundled/installed. The retired builder refuses explicitly,
+and the mandatory native positive gate is NOT skipped/converted to an expected
+failure. This change must not be reported as 11/11 qualification or Stage A Pass.
+
+The owner's broader `.env*` mask is applied to shared Core policy and the
+macOS Seatbelt compiler, with exact opt-in/non-prefix regression cases and
+actual-macOS future-file tests extended to `.envrc`/`.ENVbackup`.
+
+AD-57 records deterministic real-filesystem counterexamples: in-place hardlink
+writes are direct, but atomic saves break identity, source rename-to-secret
+retains a readable public alias, permissions are shared, and finite stubs do
+not provide synchronous name creation enforcement. These are not simulated
+AppContainer/L1 acceptance. No watcher is adopted as a security boundary.
+A provable native guard or owner-approved restricted Windows execution contract
+is still required before activation; Linux/Windows future-secret L1 remains open.

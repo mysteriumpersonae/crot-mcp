@@ -3,7 +3,7 @@ import { z } from "zod";
 import { CrotError } from "../errors.js";
 import type { ResolvedPath, Workspace } from "../workspace/workspace.js";
 
-export const isProjectSecretName = (name: string): boolean => /^(?:\.env(?:\..*)?|.*\.(?:pem|key))$/i.test(name);
+export const isProjectSecretName = (name: string): boolean => /^(?:\.env.*|.*\.(?:pem|key))$/i.test(name);
 export const ProjectSecretRelativePathSchema = z
   .string()
   .min(1)

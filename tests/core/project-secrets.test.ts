@@ -8,7 +8,16 @@ import { createTestCore, makeTempDirs, testContext } from "../helpers.js";
 
 describe("mandatory project secret-file policy", () => {
   it("recognizes environment variants and key files without broad extension guesses", () => {
-    for (const name of [".env", ".env.local", ".ENV.PRODUCTION", "server.pem", "private.KEY"])
+    for (const name of [
+      ".env",
+      ".env.local",
+      ".ENV.PRODUCTION",
+      ".envrc",
+      ".environment",
+      ".ENVbackup",
+      "server.pem",
+      "private.KEY",
+    ])
       expect(isProjectSecretName(name)).toBe(true);
     for (const name of ["environment.ts", "env", "key.txt", "file.pem.txt", "safe"])
       expect(isProjectSecretName(name)).toBe(false);
@@ -48,7 +57,7 @@ describe("mandatory project secret-file policy", () => {
         projectGrants: [{ workspace: dirs.workspace, operation: "filesystem.read_file" }],
       });
       await mkdir(path.join(dirs.workspace, "certs"));
-      for (const name of [".env", ".env.local", "certs/server.pem", "private.KEY"]) {
+      for (const name of [".env", ".env.local", ".envrc", ".ENVbackup", "certs/server.pem", "private.KEY"]) {
         await writeFile(path.join(dirs.workspace, name), "unlogged-test-secret");
         await expect(core.filesystem.readFile(testContext, { path: name })).rejects.toMatchObject({
           code: "PERMISSION_DENIED",
@@ -75,8 +84,12 @@ describe("mandatory project secret-file policy", () => {
     try {
       await writeFile(path.join(dirs.workspace, ".env"), "approved");
       await writeFile(path.join(dirs.workspace, ".env.local"), "not-approved");
+      await writeFile(path.join(dirs.workspace, ".envrc"), "not-approved-either");
       expect((await core.filesystem.readFile(testContext, { path: ".env" })).content).toBe("approved");
       await expect(core.filesystem.readFile(testContext, { path: ".env.local" })).rejects.toMatchObject({
+        code: "PERMISSION_DENIED",
+      });
+      await expect(core.filesystem.readFile(testContext, { path: ".envrc" })).rejects.toMatchObject({
         code: "PERMISSION_DENIED",
       });
       await core.shutdown();

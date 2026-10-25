@@ -821,3 +821,28 @@ results; no new production browser code changed. Documentation updates are
 not a fresh native/whole-Stage-A qualification. The Windows gate remains red,
 not skipped/expected-failure; PR stays Draft. AD-56 is license/source inspection
 only, not a tested Pismo backend or runtime adoption.
+
+### AD-57 local observations — native-projection building blocks, NOT L1 Pass
+
+The driver-free directive removes active Dokan download/install/compile code;
+its helper implementations are retired to comment-only history markers. The
+old positive native gate is still blocked by an explicit AD-57 refusal, not
+skipped or made an expected failure. This prevents removal of a rejected
+runtime from masquerading as a qualified replacement. Pismo was never included.
+
+The local real-filesystem experiments positively observed same-inode direct
+in-place writes, and exposed atomic-save divergence in both directions, a
+stale public alias after source rename to a secret, finite-stub creation gaps
+and shared POSIX modes/owner chmod. A new Windows-only test checks shared DACL
+mutation through actual NTFS hardlinks; local Linux skips it and does not
+qualify that property for Windows. These tests intentionally demonstrate
+unsafe building blocks, not containment/entry of an AppContainer or L1 actor.
+
+Targeted checks passed **34 /1 host skip**. Full local `npm run check` passed
+**2366 /224 host skips**, extension **196**; lint, docs, formatting,
+types and both builds completed. Shared `.env*` and macOS compiler coverage
+now includes `.envrc`, `.environment`, `.ENVbackup` without broad owner opt-ins.
+The actual-macOS long-running-actor test additionally creates/denies `.envrc`
+and `.ENVbackup` after admission; this change requires fresh macOS CI.
+No fresh remote check result or full Windows/Linux future-secret L1 is claimed.
+PR #5 remains Draft, no agent merge, B/C unstarted.
