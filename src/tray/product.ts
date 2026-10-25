@@ -22,6 +22,7 @@ export const PROJECT_TABS = ["Overview", "Files", "Git", "Tasks", "Agents", "Con
 export const SETTINGS = [
   "General",
   "Device & Account",
+  "Subscription",
   "Remote Access",
   "Security",
   "Permissions",

@@ -6126,3 +6126,40 @@ of its resulting artifact. Composition mocks are not OS isolation evidence.
 Once the updated exact-head 11 CI checks pass, the owner explicitly authorizes
 marking PR #6 Ready and merging it. Stage C must start in a new branch/PR #7;
 this does not authorize publishing user content or merging PR #7 automatically.
+
+### AD-61. Stage C commercial contract and explicit qualification boundary
+
+Owner-approved public plans are Free (three projects, local agents/chat, full L1
+and audit, basic connectors) and Pro (USD 5/month, USD 39/year, or USD 29/year
+founder price). Security itself is never paywalled. Official production remains
+crot.network / mcp.crot.network under AD-60.
+
+Checkout accepts a named Pro term only: monthly, annual or founderAnnual. Amounts
+and Stripe price IDs are server configuration, never device authority. The cloud
+fetches the live Stripe price and requires exact active ID, USD amount, recurrence
+and interval count before creating Checkout. Optional annual price IDs must be
+distinct; an absent term configuration fails closed, without substituting another
+price. Configuring the founder price enables that offer; no automatic cohort or
+founder-eligibility system is claimed. The seven-day card-backed trial remains a
+monthly offer. A Checkout redirect grants no entitlement: only a signed webhook
+resolved against the current subscription can activate a configured plan.
+Legacy Team subscriptions retain compatibility; Team is not a new public offer.
+
+Stage C starts after PR #6 merge 7ddc8c06b48402a2bc99cd01b2bf8579ebf49cc5,
+whose exact head f8ca3f5 passed all 11 required checks. This decision does not
+claim completion of OAuth account lifecycle, provider revocation or human-only
+publication. Those require real Core integration and negative tests, not decorative UI.
+
+Project registration is serialized in the owner runtime, with a three-project
+Free cap checked before directory creation or registry mutation. Only the service's
+fresh verified active Pro/trial (or legacy Team) entitlement enables additional
+registrations; the device cannot supply that decision. Offline/unknown status
+cannot add beyond the Free cap, but never removes or disables existing projects,
+chat, L1 or audit. Existing registrations survive downgrade/restart. An explicit
+new launch workspace is also a registration, not a bypass. Desktop Subscription
+settings show verified plan/status and paid-through/trial-end timestamps only;
+paid-through is not fabricated as a promise of renewal. Plan changes/cancellation
+use the existing authenticated hosted account/Stripe portal flow. No real
+content publication, provider revocation, payment, or PR #7 merge is authorized
+by the instruction to implement them. Operator Stripe/DNS/TLS provisioning and
+live-provider qualification remain separate from fixture/CI evidence.

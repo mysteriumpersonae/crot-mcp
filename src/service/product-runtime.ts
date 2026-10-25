@@ -1,3 +1,4 @@
+import { PLAN_CATALOG } from "../account-service/catalog.js";
 import { checkLoopbackPort } from "./system-check.js";
 import { parseTabPolicy, type BrowserTabPolicy } from "../core/capabilities/browser/tab-policy.js";
 import { CONNECTOR_MANIFESTS, SkillSchema, type CustomSkill } from "./connector-manifests.js";
@@ -127,6 +128,8 @@ export interface ProductHost {
   privateFiles: PrivateFileProtection;
   core(): CrotCore;
   selectWorkspace(root: string): Promise<void>;
+  /** Service-verified current entitlement; absent/offline cannot grant new unlimited registrations. */
+  unlimitedProjects?(): Promise<boolean>;
   secretFiles?: { status(): Record<string, unknown>; set(input: unknown): Promise<Record<string, unknown>> };
   disconnectAgent?(id: string): Promise<void>;
   holdActivity?(work: () => Promise<unknown>): Promise<unknown>;
@@ -266,7 +269,10 @@ export class ProductRuntime {
     for (const a of r.state.agents) a.connected = false;
     for (const s of r.state.servers) s.status = "Disconnected";
     const root = await realpath(host.core().workspace.root);
-    if (!r.state.projects.some((p) => p.path === root)) r.state.projects.push(r.newProject(root));
+    if (!r.state.projects.some((p) => p.path === root)) {
+      await r.assertProjectAdmission();
+      r.state.projects.push(r.newProject(root));
+    }
     // An explicit CLI/config workspace change wins over the last UI selection.
     // Restarts with the same launch root restore the selected project.
     if (!r.state.active || (r.state.launchWorkspace && r.state.launchWorkspace !== root))
@@ -283,6 +289,13 @@ export class ProductRuntime {
   }
   get activeProject(): Project {
     return this.state.projects.find((p) => p.id === this.state.active)!;
+  }
+  private async assertProjectAdmission(): Promise<void> {
+    if (this.state.projects.length < PLAN_CATALOG.free.advertisedProjects) return;
+    if (await this.host.unlimitedProjects?.()) return;
+    fail(
+      "Free supports up to 3 registered projects. A current verified Pro entitlement is required to add more; existing projects and L1 remain available.",
+    );
   }
   private newProject(root: string, name?: string): Project {
     return {
@@ -651,7 +664,10 @@ export class ProductRuntime {
         const input = String(p.path);
         if (!path.isAbsolute(input)) fail("Project path must be absolute");
         // Owner explicitly registers directories. No tool or agent can invoke this configuration RPC.
-        if (method === "projects.create") await mkdir(input, { recursive: false, mode: 0o700 });
+        if (method === "projects.create") {
+          await this.assertProjectAdmission();
+          await mkdir(input, { recursive: false, mode: 0o700 });
+        }
         const root = await realpath(input);
         if (!(await stat(root)).isDirectory()) fail("Choose a directory");
         if (
@@ -659,9 +675,12 @@ export class ProductRuntime {
           (productPaths(this.host.stateDir).some((f) => f.startsWith(root + path.sep)) && root === this.host.stateDir)
         )
           fail("Service state cannot be a project");
-        const project =
-          this.state.projects.find((v) => v.path === root) ?? this.newProject(root, p.name as string | undefined);
-        if (!this.state.projects.includes(project)) this.state.projects.push(project);
+        let project = this.state.projects.find((v) => v.path === root);
+        if (!project) {
+          await this.assertProjectAdmission();
+          project = this.newProject(root, p.name as string | undefined);
+          this.state.projects.push(project);
+        }
         await this.persist();
         await this.event(method, project.id);
         return { ok: true, project };

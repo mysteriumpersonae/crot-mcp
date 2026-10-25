@@ -550,6 +550,16 @@ export class CrotService {
         },
       });
       this.product = await ProductRuntime.open({
+        unlimitedProjects: async () => {
+          await identity.refreshCommercialIfNeeded();
+          const status = identity.commercialStatus();
+          return (
+            status.state === "current" &&
+            status.entitled === true &&
+            status.status === "active" &&
+            ["pro", "trial", "team"].includes(status.plan ?? "")
+          );
+        },
         tokens: this.clientTokens,
         secretFiles: {
           status: () => ({
