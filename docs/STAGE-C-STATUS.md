@@ -35,3 +35,35 @@ has been performed in this implementation environment.
 
 PR #7 must stay Draft while these items remain incomplete. Never infer full
 Stage C Pass from pricing tests or mocks, and never merge PR #7 automatically.
+
+## OAuth/publication foundation work after 9d967eb (AD-62)
+
+Implemented modules, not yet connected to shipped owner RPC/UI:
+
+- Strict native loopback state/S256/one-use callback with real local HTTP tests.
+- Provider-specific token/profile/refresh/revoke adapters and four-state account
+  lifecycle, OS-store-only credentials, session abort and verified local deletion.
+- Windows Credential Manager FFI and a mandatory Windows-only native round-trip
+  test. Linux/macOS HTTP test store doubles are not OS qualification evidence.
+- Core two-phase publication, owner-session HMAC confirmation, explicit privacy,
+  consent/disclosure checks, durable transitions and replay/uncertain-send refusal.
+- Mandatory direct-social-write denial in the generic Core HTTP service, including
+  redirect/method-override attempts. Other managed channel integration is pending.
+
+Notion direct authorization is intentionally refused: native PKCE is not
+specified by its public API. A reviewed hosted CROT PKCE broker leg is still
+needed. No production token exchange, publication or revocation was performed.
+This is not a claim of full Stage C completion or a reason to mark PR #7 Ready.
+
+#### AD-63 implementation slice (not Stage C acceptance)
+
+- Added an optional production-domain-only Notion OAuth broker to Relay and a fixed native adapter; no downgrade to direct non-PKCE authorization.
+- Tested the actual three-server HTTP round trip, upstream confidential authentication, native PKCE, wrong-state/verifier/redirect rejection, replay, refresh and remote revocation.
+- Added strict account metadata restoration and durable restricted state after failed OS-secret cleanup. Account-secret backend selection has its own protected descriptor so unrelated generic-secret migrations cannot silently orphan OAuth credentials.
+- Still pending: service/product RPC and shipped account/publishing UI composition, immutable media + production publication adapters, full shipped Chromium positive workflow, native OS credential qualification and new exact-head 11/11 CI. The broker also needs operator app registration/configuration before real Notion sign-in; tests do not substitute for deployment.
+
+#### AD-64 account integration update
+
+The account runtime is now installed in `CrotService`, with strict owner RPC and shipped five-provider account cards. The system-browser destination is independently checked by Electron main; the owner cannot select arbitrary authorization endpoints. An actual service/control-channel/local-provider integration test covers PKCE connect, profile check, remote revocation, verified local cleanup and token-free persisted metadata/audit. Earlier “account RPC/UI not installed” notes above describe the preceding slice, not the current tree.
+
+Remaining Stage C acceptance gaps still include protected avatar rendering and provider-specific restriction diagnostics, service-bound publication composition, immutable media and real platform upload adapters, universal managed-channel bypass coverage, the complete shipped publication-dialog Chromium scenario, and exact-head 11/11 CI/native credential qualification. Do not mark the PR Ready based only on standalone publication-engine tests or the previous `9d967eb` CI.
