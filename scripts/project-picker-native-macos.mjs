@@ -2,6 +2,7 @@
 import process from "node:process";
 import { Buffer } from "node:buffer";
 import koffi from "koffi";
+import { isProjectChooser } from "./project-picker-native-scope.mjs";
 const pid = Number(process.argv[2]);
 const report = { status: "failed", nodes: [] };
 try {
@@ -100,7 +101,7 @@ try {
       const role = label(node, "AXRole"),
         title = label(node, "AXTitle"),
         description = label(node, "AXDescription");
-      const scope = inside || (["AXWindow", "AXSheet", "AXDialog"].includes(role) && title === "Open project folder");
+      const scope = inside || isProjectChooser(role, title, description);
       if (report.nodes.length < 48)
         report.nodes.push({ role, title: title.slice(0, 100), description: description.slice(0, 100), scope });
       if (

@@ -1,4 +1,5 @@
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import { ProjectFolderPicker } from "../../src/tray/project-picker.js";
 
@@ -93,5 +94,22 @@ describe("native owner project folder workflow", () => {
     const product = vi.fn().mockRejectedValue(new Error("workspace is busy"));
     await expect(picker.open({ choose: choice, product })).rejects.toThrow("workspace is busy");
     expect(await picker.open({ choose: choice, product: vi.fn().mockResolvedValue(success) })).toBe(true);
+  });
+});
+
+describe("native Accessibility panel identity", () => {
+  it.each([
+    ["AXSheet", "", "open project folder", true],
+    ["AXWindow", "Open project folder", "", true],
+    ["AXDialog", "OPEN PROJECT FOLDER", "", true],
+    ["AXSheet", "Another panel", "open project folder", false],
+    ["AXButton", "Open project folder", "", false],
+    ["AXWindow", "CROT Control Center", "", false],
+    ["AXSheet", "", "open project folder extra", false],
+    ["AXSheet", "", "", false],
+  ])("requires the exact chooser role/label: %s %s %s", async (role, title, description, expected) => {
+    const { isProjectChooser }: { isProjectChooser: (role: string, title: string, description: string) => boolean } =
+      await import(pathToFileURL(path.resolve("scripts/project-picker-native-scope.mjs")).href);
+    expect(isProjectChooser(String(role), String(title), String(description))).toBe(expected);
   });
 });

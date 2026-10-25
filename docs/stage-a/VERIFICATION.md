@@ -669,3 +669,14 @@ success audit assertions. This qualifies that native Windows workflow, NOT the
 still-missing Windows future-secret L1 policy.
 - https://github.com/crotMcp/crot/actions/runs/40143009644/job/121018491618
 - https://github.com/crotMcp/crot/actions/runs/40143009644/job/121018491598
+
+
+Actual `a0202f1` macOS AX permission is available and the helper sees the real
+AXSheet and Open/Cancel controls. It correctly refused to press anything:
+the OS exposes the chooser's exact label as lowercase AXDescription with an
+empty AXTitle, not a titled AXWindow. The next candidate matches only the
+exact normalized label on a window/sheet/dialog role, using description only
+when title is empty; arbitrary buttons, other windows, conflicting titles and
+substring labels remain rejected. Eight host-independent regressions cover
+this exact identity rule. The exact-PID, single enabled button, AX trust and
+real Core/UI/audit requirements are unchanged. Native CI remains required.
