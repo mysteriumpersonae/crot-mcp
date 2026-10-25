@@ -29,8 +29,8 @@ export async function runOnboardingScenarios({ evaluate, until, size, screenshot
       );
       await geometry("plans", ".plan-layout");
       assert(
-        await evaluate("document.querySelector('.plan-card.pro .price strong').textContent==='$3'"),
-        "Pro must be $3",
+        await evaluate("document.querySelector('.plan-card.pro .price strong').textContent==='$5'"),
+        "Pro must be $5",
       );
       await screenshot(`onboarding-02-plans-${lang}-${width}x${height}`);
       await click("start-trial");
