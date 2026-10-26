@@ -181,3 +181,11 @@ Earlier failed runs exposed necessary packaging permission and queue-metadata
 expectation updates and are not counted as passing evidence. New-head CI is
 still required. These results do not qualify arbitrary command egress or close
 Stage C's production activation barrier.
+
+
+CI `793c988` completed 9/11; both Windows jobs correctly refused an old generic
+process test's explicit `CROT_TEST_LITERAL` override under AD-67. That fixture
+now uses `NATIVE_TEST_LITERAL`; its PATH/private-temp/SystemRoot assertions and
+actual native process launch remain unchanged. The mandatory reserved-name
+guard is not relaxed. Other `CROT_*` secret-inheritance canaries are retained.
+A new-head native Windows run is required, not a blind retry of the failed head.
