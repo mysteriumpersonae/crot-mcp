@@ -4,6 +4,9 @@ import { afterEach, expect, it } from "vitest";
 import { ownerRequest, publicationFixture, fixtureImage } from "./fixture.js";
 import type { PublicationRecord } from "../../../src/core/publications/service.js";
 import { waitFor } from "../../helpers.js";
+import { connectChannel, MAX_SERVER_FRAME_BYTES } from "../../../src/service/channel.js";
+import { secretCredentialStore, serviceEndpoint } from "../../../src/service/endpoints.js";
+import { createPrivateFileProtection } from "../../../src/core/platform/private-files.js";
 const cleanup: Array<() => Promise<void>> = [];
 afterEach(async () => {
   for (const close of cleanup.splice(0)) await close();
@@ -134,5 +137,37 @@ it(
       state: "failed",
       error: "delivery_unknown",
     });
+  },
+);
+
+it(
+  "service/MCP credentials cannot authenticate owner-RPC or confirm a pending publication",
+  { timeout: 30000 },
+  async () => {
+    const f = await publicationFixture();
+    cleanup.push(f.close);
+    const draft = await f.prepare(undefined);
+    const opened = await ownerRequest<{ confirmation: string }>(f.owner, "publications.open", { id: draft.id });
+    const privateFiles = createPrivateFileProtection(process.platform === "win32");
+    const credentials = secretCredentialStore(f.stateDir, privateFiles);
+    const ownerToken = await credentials.read("control"),
+      serviceToken = await credentials.read("service");
+    if (!ownerToken || !serviceToken) throw Error("missing positive-control credentials");
+    await expect(
+      connectChannel(serviceEndpoint(f.stateDir, "control", ownerToken).path, {
+        channel: "control",
+        credential: serviceToken,
+        maxFrameBytes: MAX_SERVER_FRAME_BYTES,
+        timeoutMs: 2000,
+      }),
+    ).rejects.toThrow();
+    // Even knowing a real dialog permit does not turn an MCP tool call into owner authority.
+    const result = await f.agent.callTool({
+      name: "publications.confirm",
+      arguments: fields(draft.id, opened.confirmation),
+    });
+    expect(result.isError).toBe(true);
+    expect(f.writes()).toBe(0);
+    expect(await f.owner.request("ping")).toMatchObject({ state: "running" });
   },
 );
