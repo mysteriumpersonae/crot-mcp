@@ -6325,3 +6325,19 @@ negative qualification are still outstanding. No production activation, Ready
 status or PR merge is authorized by this partial checkpoint; the publication
 fail-closed barrier stays in place. No blanket shutdown of terminal/browser/MCP
 features is used to manufacture qualification.
+
+#### AD-61 native controller-file liveness clarification
+
+Windows fixed mutable controller files (`product-state.json`, `product-vault.enc`,
+`client-tokens.json`, `publications.json`) directly under the trusted state
+directory use the native private-state policy: exact owner-only protected DACL
+and Medium No-Read-Up, verified before launch. Atomic writer protects an empty
+temporary object before writing content, so replacements retain that isolation.
+These exact files must not also receive actor-lifetime no-delete identity pins: a
+real service task must atomically persist its result while its scratch generation
+still exists. Unexpected links, nonregular objects, descriptor/label failure or
+unavailable native protection refuse admission. External configs, project files,
+source roots, credentials, directories and all other protected paths keep their
+full identity guards; there is no user-configurable exception or syscall bypass.
+The mandatory native canary test also holds the same actor across a real owner
+vault replacement and requires continued read and owner-channel denial.

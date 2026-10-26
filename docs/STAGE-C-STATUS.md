@@ -228,3 +228,13 @@ produce explicit executable diagnostics instead of a generic setup timeout.
 An independent Node 22 Linux process test timed out in CI; the unchanged focused
 local process suite passed 29 tests / 11 skips. It is not claimed resolved.
 Production remains blocked pending native and final-head qualification.
+
+After workflow authorization, the Linux dependency change was pushed on
+`51f3b7a`. Full authenticated Windows logs showed `e655916` now closes cleanly,
+but the foreground task's own final persist still conflicted with fixed private
+controller-file identity pins. The corrected native policy retains verified
+owner-only/Medium No-Read-Up protection for those exact controller files, checks
+single-link regular identity and descriptors before launch, and keeps all other
+protected/source/credential identity guards unchanged. Native acceptance now
+also holds the same actor across a real atomic vault replacement. This is
+qualification work, not a claim of native pass or production activation.

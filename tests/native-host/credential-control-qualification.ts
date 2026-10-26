@@ -16,6 +16,7 @@ import { AccountSecrets } from "../../src/service/social/account-secrets.js";
 import { createCredentialManager } from "../../src/service/social/credential-manager.js";
 import { createKeychainBackend, createLibsecretBackend, stateKey } from "../../src/service/secrets/backends.js";
 import type { SecretName } from "../../src/service/secrets/types.js";
+import { writePrivateFileAtomic } from "../../src/core/platform/write-private-file.js";
 import { testContext, waitFor } from "../helpers.js";
 import { buildLocalShimFixture } from "./windows-l1/diagnostics/local-shim-build.js";
 import { buildCredentialProbe } from "./windows-l1/diagnostics/credential-probe-build.js";
@@ -160,10 +161,15 @@ export async function qualifyCredentialControl(): Promise<void> {
     if (!credential) throw Error("actual owner credential missing");
     const endpoint = serviceEndpoint(state, "control", credential).path;
     const credentialFile = path.join(state, "control-token");
-    expect((await readFile(credentialFile)).length).toBeGreaterThan(0);
+    const privatePaths = [
+      credentialFile,
+      path.join(state, "product-vault.enc"),
+      path.join(state, "product-state.json"),
+    ];
+    for (const file of privatePaths) expect((await readFile(file)).length).toBeGreaterThan(0);
     const code = `const cp=require('child_process'),p=require('path'),net=require('net'),fs=require('fs');
 for(const name of Object.keys(process.env)){if(/^(CROT_|OAUTH_|OWNER_RPC_|DBUS_SESSION_BUS_ADDRESS$)/i.test(name))throw Error('reserved service environment inherited')}
-try{fs.readFileSync(${JSON.stringify(credentialFile)});throw Error('owner credential file readable')}catch(e){if(!['EACCES','EPERM','ENOENT','ENOTDIR'].includes(e.code))throw e}
+for(const file of ${JSON.stringify(privatePaths)}){try{fs.readFileSync(file);throw Error('private controller credential readable')}catch(e){if(!['EACCES','EPERM','ENOENT','ENOTDIR'].includes(e.code))throw e}}
 ${secretScript!}
 const s=net.connect(${JSON.stringify(endpoint)});s.setTimeout(5000,()=>{console.error('owner probe timed out');process.exit(93)});s.on('connect',()=>{s.destroy();console.error('owner channel reachable');process.exit(94)});s.on('error',e=>{if(!['EACCES','EPERM','ENOENT','ENOTDIR'].includes(e.code)){console.error(e.code);process.exit(95)}console.log('CREDENTIAL-CONTROL-ISOLATED');});`;
     for (const kind of ["terminal", "custom-skill"]) {
@@ -182,6 +188,35 @@ const s=net.connect(${JSON.stringify(endpoint)});s.setTimeout(5000,()=>{console.
       expect(result.stdout, kind).toContain("CREDENTIAL-CONTROL-ISOLATED");
       expect(await read!()).toBe(canary);
       expect(await owner.request("ping")).toMatchObject({ state: "running" });
+    }
+    // Keep the SAME native actor alive across a real protected-empty atomic
+    // replacement. New file identity must not grant access or block the owner.
+    const delayed = await service.core.processes.openTransport(testContext, {
+      cwd: workspace,
+      command: process.platform === "win32" ? "node" : process.execPath,
+      args: ["-e", `process.stdin.resume();console.log('PRIVATE-READY');process.stdin.once('data',()=>{${code}});`],
+    });
+    let output = "",
+      errors = "";
+    delayed.stdout.on("data", (chunk) => {
+      output += String(chunk);
+    });
+    delayed.stderr.on("data", (chunk) => {
+      errors += String(chunk);
+    });
+    try {
+      await waitFor(() => output.includes("PRIVATE-READY"), 15000);
+      const vault = path.join(state, "product-vault.enc");
+      await writePrivateFileAtomic(vault, await readFile(vault), privateFiles);
+      delayed.stdin!.end("go\n");
+      const exited = await delayed.exited;
+      if (!delayed.stdout.readableEnded) await new Promise<void>((r) => delayed.stdout.once("end", r));
+      expect({ exited, errors, output }).toMatchObject({ exited: { code: 0 } });
+      expect(output).toContain("CREDENTIAL-CONTROL-ISOLATED");
+      expect(output + errors).not.toContain(canary);
+      expect(await read!()).toBe(canary);
+    } finally {
+      await delayed.terminate("force");
     }
     expect(await readFile(path.join(state, "audit.jsonl"), "utf8")).not.toContain(canary);
   } finally {
