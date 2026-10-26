@@ -1,6 +1,6 @@
 /** File-identity/TOCTOU tests; OS-private ACL qualification has its own native platform suites. */
 import { afterEach, expect, it } from "vitest";
-import { link, mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { link, mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { PublicationMedia } from "../../../src/core/publications/media.js";
@@ -30,6 +30,34 @@ async function setup() {
   const dir = path.join(dirs.outside, "publication-media");
   return { dirs, dir, store: await PublicationMedia.open(dir, protection) };
 }
+it("uses directory protection separately from a regular-file-only protector", async () => {
+  const dirs = await makeTempDirs();
+  cleanups.push(dirs.cleanup);
+  const directory = path.join(dirs.outside, "publication-media");
+  const protectedFiles: string[] = [];
+  const fileOnlyProtection: PrivateFileProtection = {
+    ...protection,
+    protectFile: async (file) => {
+      if (!(await stat(file)).isFile()) throw new Error("Not a regular file");
+      protectedFiles.push(file);
+    },
+  };
+  const store = await PublicationMedia.open(directory, fileOnlyProtection);
+  const snapshot = await store.capture("project", "image.png", png());
+  expect(protectedFiles.length).toBeGreaterThanOrEqual(2);
+  expect(protectedFiles).not.toContain(directory);
+  expect((await store.verified(snapshot.id, "project")).data).toEqual(png());
+});
+it.each([false, null] as const)("refuses staging when owner-only inspection returns %s", async (ownerOnly) => {
+  const dirs = await makeTempDirs();
+  cleanups.push(dirs.cleanup);
+  await expect(
+    PublicationMedia.open(path.join(dirs.outside, "publication-media"), {
+      ...protection,
+      inspect: async () => ({ mechanism: "inherited-acl", ownerOnly, detail: "not private" }),
+    }),
+  ).rejects.toThrow("protection unavailable");
+});
 it("owns input bytes, freezes metadata and verifies SHA-256 again after restart", async () => {
   const { dir, store } = await setup(),
     input = png(),

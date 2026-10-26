@@ -47,7 +47,6 @@ export class PublicationMedia {
     await protection.ensureDirectory(directory);
     const directoryEntry = await lstat(directory);
     if (!directoryEntry.isDirectory() || directoryEntry.isSymbolicLink()) throw new Error("Invalid snapshot directory");
-    await protection.protectFile?.(directory);
     if ((await protection.inspect(directory)).ownerOnly !== true)
       throw new Error("Private snapshot directory protection unavailable");
     const store = new PublicationMedia(directory, protection);
