@@ -1,3 +1,5 @@
+import { PublicationAuditSchema } from "../core/publications/service.js";
+import { AccountAvatars } from "./social/avatars.js";
 import type { SocialAccountRuntime } from "./social/runtime.js";
 import type { SocialProvider } from "./social/account-secrets.js";
 import { PLAN_CATALOG } from "../account-service/catalog.js";
@@ -127,6 +129,8 @@ interface Vault {
 export interface ProductHost {
   stateDir: string;
   socialAccounts?: SocialAccountRuntime;
+  /** Trusted composition lookup; unavailable until service initialization has completed. */
+  publications?(): import("./publications/runtime.js").PublicationRuntime | undefined;
   secrets: SecretStore;
   privateFiles: PrivateFileProtection;
   core(): CrotCore;
@@ -219,6 +223,7 @@ export class ProductRuntime {
   private poller: NodeJS.Timeout | undefined;
   private schemaValidator = new AjvJsonSchemaValidator();
   private readonly chat: ChatRuntime;
+  private readonly avatars = new AccountAvatars();
   private constructor(private host: ProductHost) {
     this.chat = new ChatRuntime({
       core: () => this.host.core(),
@@ -365,9 +370,35 @@ export class ProductRuntime {
         async () => undefined,
       );
   }
-  async request(method: ProductMethod, input: unknown): Promise<Record<string, unknown>> {
+  endOwnerSession(owner: object): void {
+    this.host.publications?.()?.endOwnerSession(owner);
+  }
+  async request(method: ProductMethod, input: unknown, owner?: object): Promise<Record<string, unknown>> {
     const params = parseProduct(method, input);
     if (!params) fail("Invalid product request");
+    if (method.startsWith("publications.")) {
+      const runtime = this.host.publications?.();
+      if (!runtime || !owner)
+        throw new CrotError("PERMISSION_DENIED", "Authenticated publication owner session unavailable");
+      const id = String(params!.id ?? "");
+      switch (method) {
+        case "publications.prepare":
+          return {
+            ok: true,
+            publication: await this.host.core().publications.preparePublication(this.context(), params),
+          };
+        case "publications.list":
+          return runtime.list(owner);
+        case "publications.open":
+          return runtime.openForOwner(owner, id);
+        case "publications.preview":
+          return runtime.preview(owner, params);
+        case "publications.confirm":
+          return runtime.confirm(owner, params);
+        case "publications.cancel":
+          return runtime.cancel(owner, id);
+      }
+    }
     if (method === "security.kill") {
       if (!this.host.emergencyStop) fail("Emergency stop unavailable in this host");
       return this.host.emergencyStop!();
@@ -490,6 +521,14 @@ export class ProductRuntime {
       switch (method) {
         case "accounts.list":
           return social.list();
+        case "accounts.avatar": {
+          const account = social.list().accounts.find((a) => a.provider === provider);
+          if (!account || (p.accountId && (p.accountId !== account.id || p.generation !== account.generation)))
+            return { ok: true };
+          const result = await this.avatars.get(account);
+          const current = social.list().accounts.find((a) => a.provider === provider);
+          return current?.generation === account.generation && current.state === account.state ? result : { ok: true };
+        }
         case "accounts.configure":
           return social.configure(provider, String(p.clientId), p.clientSecret as string | undefined);
         case "accounts.connect":
@@ -499,6 +538,11 @@ export class ProductRuntime {
         case "accounts.cancel":
           return social.cancel(provider);
         case "accounts.disconnect":
+          this.avatars.clear();
+          {
+            const accountId = social.list().accounts.find((a) => a.provider === provider)?.id;
+            if (accountId) this.host.publications?.()?.abortAccount(accountId);
+          }
           return social.disconnect(provider);
       }
     }
@@ -1369,9 +1413,18 @@ export class ProductRuntime {
       }
       const task = tasks.get(String(e.requestId));
       const details = object(e.details);
-      const project = task?.project ?? details.project;
+      let publication: import("zod").infer<typeof PublicationAuditSchema> | undefined;
+      if (e.action === "publication" && typeof e.value === "string" && Buffer.byteLength(e.value) <= 8192) {
+        try {
+          const parsed = PublicationAuditSchema.safeParse(JSON.parse(e.value));
+          if (parsed.success) publication = parsed.data;
+        } catch {
+          /* Invalid content never becomes display text. */
+        }
+      }
+      const project = task?.project ?? publication?.project ?? details.project;
       const agent = task?.agent ?? details.agent;
-      const type = e.operation ?? e.action ?? e.event ?? e.kind;
+      const type = e.operation ?? publication?.operation ?? e.action ?? e.event ?? e.kind;
       if (
         (p.from && String(e.timestamp) < String(p.from)) ||
         (p.to && String(e.timestamp) > String(p.to)) ||
@@ -1391,6 +1444,9 @@ export class ProductRuntime {
         project: project ?? null,
         agent: agent ?? null,
         errorCode: object(e.error).code ?? null,
+        ...(publication
+          ? { publicationId: publication.id, provider: publication.provider, publicationState: publication.state }
+          : {}),
       });
     }
     return result.slice(-Number(p.limit ?? 200)).reverse();
@@ -1428,6 +1484,7 @@ export class ProductRuntime {
     await this.persist();
   }
   async close(): Promise<void> {
+    this.avatars.close();
     await this.chat.close();
     clearInterval(this.poller);
     for (const controller of this.serverControllers.values()) controller.abort();

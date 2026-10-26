@@ -23,6 +23,7 @@ import { ClientTokenRegistry, clientTokenPath } from "./client-tokens.js";
 import { RuntimePermissionState } from "../core/permissions/runtime.js";
 import { newAuditEventId } from "../core/audit/audit.js";
 import { newLocalExposureScope } from "../core/auth/principal.js";
+import { PublicationRuntime } from "./publications/runtime.js";
 import { SocialAccountRuntime } from "./social/runtime.js";
 import { ProductRuntime, productPaths } from "./product-runtime.js";
 import type net from "node:net";
@@ -114,6 +115,11 @@ export interface ServiceOptions {
     import("./social/runtime.js").SocialRuntimeHost,
     "secrets" | "adapters" | "loopbackFixtures"
   >;
+  /** In-process publication integration fixture ONLY, never CLI/JSON configuration or production release input. */
+  readonly publicationFixture?: {
+    publisher: import("./publications/platforms.js").PlatformPublisher;
+    authorizePublication(): Promise<void>;
+  };
   readonly idleExitMs?: number;
   readonly firstClientTimeoutMs?: number;
   readonly windows?: boolean;
@@ -160,6 +166,7 @@ export class CrotService {
   private clientTokens: ClientTokenRegistry | undefined;
   private product: ProductRuntime | undefined;
   private socialAccounts: SocialAccountRuntime | undefined;
+  private publications: PublicationRuntime | undefined;
   private readonly runtimePermissions = new RuntimePermissionState();
   private killing: Promise<Record<string, unknown>> | undefined;
   private holder: CoreHolder | undefined;
@@ -448,6 +455,11 @@ export class CrotService {
         : undefined;
       const coreOptions: CrotCoreOptions = {
         checkedCommands: true,
+        preparePublication: (context, input) => {
+          if (!this.publications || !this.holder)
+            throw new CrotError("PERMISSION_DENIED", "Publication runtime unavailable");
+          return this.holder.hold(() => this.publications!.prepare(context, input));
+        },
         runtimePermissions: this.runtimePermissions,
         protectedPaths,
         secretPaths,
@@ -573,6 +585,7 @@ export class CrotService {
       });
       this.product = await ProductRuntime.open({
         socialAccounts: this.socialAccounts,
+        publications: () => this.publications,
         unlimitedProjects: async () => {
           await identity.refreshCommercialIfNeeded();
           const status = identity.commercialStatus();
@@ -606,6 +619,46 @@ export class CrotService {
           await control.selectWorkspace(root);
           activeWorkspace = root;
         },
+      });
+      this.publications = await PublicationRuntime.open({
+        stateDir,
+        privateFiles: servicePlatform.privateFiles,
+        core: () => holder.instance,
+        project: () => this.product!.activeProject.id,
+        accounts: this.socialAccounts,
+        authorizePublication: async () => {
+          if (this.runtimePermissions.halted) throw new CrotError("PERMISSION_DENIED", "Service is halted");
+          if (this.options.publicationFixture) {
+            await this.options.publicationFixture.authorizePublication();
+            return;
+          }
+          await identity.refreshCommercialIfNeeded();
+          const commercial = identity.commercialStatus();
+          if (!(
+            commercial.state === "current" &&
+            commercial.entitled === true &&
+            commercial.status === "active" &&
+            ["pro", "trial", "team"].includes(commercial.plan ?? "")
+          ))
+            throw new CrotError("PERMISSION_DENIED", "A current verified Pro entitlement is required for publication");
+          // Generic Core HTTP has a social-write boundary, but arbitrary subprocess and browser
+          // requests are NOT yet proven covered. Never default-allow the publisher on that evidence.
+          throw new CrotError(
+            "PERMISSION_DENIED",
+            "Publication unavailable: managed-channel anti-bypass qualification is incomplete",
+          );
+        },
+        ...(this.options.publicationFixture ? { publisher: this.options.publicationFixture.publisher } : {}),
+        audit: (event) =>
+          holder.composition.recordControlEvent({
+            kind: "control",
+            id: newAuditEventId(),
+            timestamp: new Date().toISOString(),
+            action: "publication",
+            actor: { channel: "control" },
+            outcome: event.state === "failed" ? "failed" : "applied",
+            value: JSON.stringify(event),
+          }),
       });
       control.product = this.product;
       holder.operation = (member, method, args, run) => this.product!.execute(member, method, args, run);
@@ -1091,6 +1144,7 @@ export class CrotService {
     await this.tunnel?.close();
     if (this.http) await this.http.close();
     await this.clientTokens?.close();
+    await this.publications?.close();
     await this.socialAccounts?.close();
     await this.product?.close();
     if (this.holder) await this.holder.instance.shutdown();
@@ -1118,6 +1172,7 @@ export class CrotService {
     const results = await Promise.allSettled([
       core.emergencyStop(),
       this.product?.abortAll(),
+      this.publications?.close(),
       this.socialAccounts?.close(),
       this.tunnel?.close(),
       this.http?.close(),

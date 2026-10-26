@@ -79,3 +79,57 @@ The runtime is not yet installed in shipped CrotService/owner RPC/UI. No real ac
 The exact-head run completed 10/11 successfully, including Windows Node 20 and Chromium. Windows Node 22 refused the native actor-drain acceptance test because `WTSEnumerateProcessesExW` returned an inventory row without a verifiable user SID (`unknown inventory user SID`). The existing guard refused cleanup rather than treating that partial inventory as proof of absence. The failing annotation is in `appcontainer-process-native.test.ts`; no SID check, test or fail-closed rule is being relaxed. This documents the incident and requests one fresh-runner full qualification through the documentation commit (the connected GitHub tool set has no workflow-rerun operation). A repeat refusal must be investigated rather than retried until green. This is not a Stage C Pass or permission to mark PR #7 Ready.
 
 The fresh `130fb46` run passed Windows Node 22's native SID inventory test without changing its guard. macOS Node 20 then exposed a genuine publication visibility race: the asynchronous list endpoint could show `published` before the durable audit callback completed. The engine is corrected to keep terminal results externally `processing` until its save/audit work finishes; result IDs/errors are not exposed early. A deterministic barrier test holds the terminal audit callback and proves the ordering, rather than weakening the HTTP acceptance assertion or relying on a timing retry. A new-head full qualification is required for this fix.
+
+
+#### AD-66 service/owner/dialog integration checkpoint (current work)
+
+This supersedes the earlier “publication runtime not installed” notes: it is now
+installed in `CrotService`, lifecycle shutdown and emergency stop, a guarded
+MCP preparation-only capability, authenticated owner RPC, and the shipped
+publication review modal. Real transport-owned session identity binds permits;
+JSON never selects an owner, credential, upload endpoint or snapshot path.
+Owner disconnect, pending cancellation, active abort, source-file replacement,
+account substitution and replay have deterministic integration coverage using
+actual local OAuth/platform HTTP. The journal exposes only validated,
+content-free publication operation/status identifiers, never post bodies/tokens.
+
+Protected avatar delivery is implemented with provider-pinned HTTPS, no
+redirects, raster magic/MIME/dimension/streaming size checks, bounded cache and
+local fallback. Dialog avatars bind to the frozen recipient generation.
+Snapshot preview uses owner chunks and a renderer SHA-256 check before the
+human confirmation button is enabled. Privacy has no default; consent is
+unchecked. Unsupported adapter settings are disabled. TikTok inbox metadata
+and commercial fields are explicitly finalization reminders, not falsely
+advertised direct-post settings.
+
+The first full local regression passed **2449 main tests / 228 platform skips**
+and **198 extension tests**; the new real Chromium shipped-dialog scenario
+passed, including trusted mouse input, snapshot substitution, privacy/consent
+blocking, real upload, live processing/final status and journal visibility.
+Further response-budget/avatar-binding hardening requires its own final-head
+regression/CI; this paragraph is not a claim that CI already passed that head.
+
+**Still blocking Ready:** production-wide terminal/Custom Skill/browser
+anti-bypass implementation and negative qualification, remaining provider
+restriction diagnostics and exact-head cross-platform CI. Production publishing
+therefore stays **fail-closed**, even with Pro, rather than silently trusting
+an unproven channel boundary. Only explicit in-process fixture composition
+activates local HTTP sending in tests; it is not a release/configuration option.
+No terminal/browser product features were disabled to manufacture a Pass.
+No real external account/post was used. PR #7 remains Draft and unmerged.
+
+
+Final local hardened-tree validation: `npm run check` passed **2450 main tests /
+228 platform skips**, **198 extension tests**, lint/docs/formatting, both
+TypeScript checks and both builds. The new Chromium scenario was separately
+typechecked with the repository's strict/index-safety settings. Cross-platform
+CI and the entire Chromium regression must be read from their final-head run,
+not inferred from these local Linux results. The production anti-bypass barrier
+above remains unresolved regardless of green regression checks.
+
+Final local Chromium regression on this implementation passed **60 tests / 3
+explicit skips** (11 test files), including the new shipped publication-dialog
+scenario and existing native-extension/service/browser acceptance workflows.
+The publication E2E also verifies disclosure-category validation after DOM
+tampering and rejects account/file substitution through the owner IPC bridge.
+These checks do not qualify the outstanding production-wide anti-bypass barrier.

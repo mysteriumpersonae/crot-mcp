@@ -1,3 +1,4 @@
+import { PublicationPreparationService, type PreparePublicationHandler } from "./capabilities/publications/service.js";
 import { openCommandWorkspace } from "./platform/command-workspace.js";
 import { ProjectSecretPolicy } from "./permissions/project-secrets.js";
 import { inspectProject } from "./capabilities/projects/inspect.js";
@@ -153,6 +154,8 @@ export interface CrotCoreOptions {
    * information supplied by the host; Core never acts on it.
    */
   readonly serviceStatus?: () => ServiceStatus;
+  /** Trusted service preparation only. Owner confirmation is deliberately not part of Core/MCP. */
+  readonly preparePublication?: PreparePublicationHandler;
   /**
    * The exposure state of every scope (AD-12, AD-15 point 8), handed over
    * from a previous Core of the same service when the service builds a new
@@ -222,6 +225,7 @@ export class CrotCore {
     readonly docker: DockerService,
     readonly browser: BrowserService,
     readonly network: NetworkService,
+    readonly publications: PublicationPreparationService,
     readonly platform: Platform,
     private readonly approvalBroker: ApprovalBroker,
     private readonly audit: AuditSink,
@@ -476,6 +480,7 @@ export class CrotCore {
       docker,
       browser,
       network,
+      new PublicationPreparationService(guard, options.preparePublication),
       platform,
       approvalBroker,
       audit,

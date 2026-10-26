@@ -1,3 +1,4 @@
+import { PublicationRequestSchema } from "../../core/publications/schemas.js";
 import type { CallToolResult, ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import type { AuthContext } from "../../core/auth/principal.js";
@@ -109,6 +110,16 @@ export const TOOLS: readonly ToolDefinition[] = [
       await core.refreshConfinement();
       return core.status();
     },
+  }),
+
+  tool({
+    name: "publication_prepare",
+    title: "Request human-reviewed publication",
+    description:
+      "Create an immutable publication draft for the active project and connected account. NEVER sends content or returns credentials/confirmation authority. The owner must explicitly choose privacy and consent in the separate authenticated publication dialog. Publication availability and checked media-read permissions are enforced by Core.",
+    inputSchema: PublicationRequestSchema,
+    annotations: { readOnlyHint: false, openWorldHint: false },
+    call: (core, ctx, input) => core.publications.preparePublication(ctx, input),
   }),
 
   // Filesystem

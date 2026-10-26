@@ -33,7 +33,35 @@ export const ConfirmPublicationSchema = z
 export type PreparePublication = z.infer<typeof PreparePublicationSchema>;
 export type PublicationFields = Omit<z.infer<typeof ConfirmPublicationSchema>, "id" | "confirmation">;
 export type PublicationState =
-  "pending_publication" | "queued" | "processing" | "published" | "draft_uploaded" | "failed";
+  "pending_publication" | "queued" | "processing" | "published" | "draft_uploaded" | "failed" | "cancelled";
+/** Content-free, closed publication audit payload for the owner journal. */
+export const PublicationAuditSchema = z
+  .object({
+    operation: z.enum([
+      "publication.pending_publication",
+      "publication.queued",
+      "publication.processing",
+      "publication.published",
+      "publication.draft_uploaded",
+      "publication.failed",
+      "publication.cancelled",
+      "publication.interrupted",
+    ]),
+    id: z.string().uuid(),
+    project: z.string().min(1).max(4096),
+    provider: Provider,
+    state: z.enum([
+      "pending_publication",
+      "queued",
+      "processing",
+      "published",
+      "draft_uploaded",
+      "failed",
+      "cancelled",
+    ]),
+    error: z.enum(["send_failed", "delivery_unknown"]).optional(),
+  })
+  .strict();
 export interface PublicationAccount {
   id: string;
   generation: string;
@@ -99,7 +127,15 @@ const JournalEntrySchema = z
     id: z.string().uuid(),
     project: z.string().min(1).max(4096),
     createdAt: z.number().int().nonnegative(),
-    state: z.enum(["pending_publication", "queued", "processing", "published", "draft_uploaded", "failed"]),
+    state: z.enum([
+      "pending_publication",
+      "queued",
+      "processing",
+      "published",
+      "draft_uploaded",
+      "failed",
+      "cancelled",
+    ]),
     request: PreparePublicationSchema,
     account: AccountSnapshotSchema,
     fields: ConfirmPublicationSchema.omit({ id: true, confirmation: true }).optional(),
@@ -208,7 +244,10 @@ export class PublicationService {
         const visible = clone(record);
         // A platform response is not a durably audited terminal outcome yet. The async owner UI
         // must not announce completion (or expose a result ID) while save/audit is still pending.
-        if (this.active.has(record.id) && ["published", "draft_uploaded", "failed"].includes(record.state)) {
+        if (
+          this.active.has(record.id) &&
+          ["published", "draft_uploaded", "failed", "cancelled"].includes(record.state)
+        ) {
           visible.state = "processing";
           delete visible.resultId;
           delete visible.error;
@@ -315,6 +354,33 @@ export class PublicationService {
       this.active.delete(r.id);
     }
     return clone(r);
+  }
+  /** Owner-only cancellation. A started upload may already have reached the provider; never claim rollback. */
+  async cancelPublication(
+    owner: object,
+    id: string,
+  ): Promise<{ id: string; state: PublicationState; cancellationRequested: boolean }> {
+    if (!owner || typeof owner !== "object") fail("Authenticated owner session required");
+    const r = this.records.get(id) ?? fail("Unknown publication");
+    const active = this.active.get(id);
+    if (active) {
+      active.abort();
+      return { id, state: this.list(r.project).find((entry) => entry.id === id)!.state, cancellationRequested: true };
+    }
+    if (r.state !== "pending_publication") fail("Publication is no longer cancellable");
+    // Invalidate EVERY connection's permit by changing state synchronously before persistence.
+    r.state = "cancelled";
+    const barrier = new AbortController();
+    this.active.set(id, barrier);
+    try {
+      await this.serial(async () => {
+        await this.save();
+        await this.audit(r, "publication.cancelled");
+      });
+    } finally {
+      this.active.delete(id);
+    }
+    return { id, state: r.state, cancellationRequested: false };
   }
   /** Account revocation / global kill cannot leave an authorized background publication running. */
   abortAccount(accountId?: string) {

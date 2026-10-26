@@ -244,6 +244,8 @@ export class ControlCenter implements RemoteAdmission {
 
   /** A control connection closed: it no longer receives or decides approvals. */
   connectionClosed(connection: ControlConnection): void {
+    // A connection need not subscribe to approvals to hold a one-use publication permit.
+    this.product?.endOwnerSession(connection);
     const subscriber = this.subscribers.get(connection);
     if (!subscriber) return;
     this.subscribers.delete(connection);
@@ -255,7 +257,7 @@ export class ControlCenter implements RemoteAdmission {
   handle(connection: ControlConnection, request: ControlRequest): Promise<Result> | undefined {
     if ((PRODUCT_METHODS as string[]).includes(request.method))
       return (
-        this.product?.request(request.method as ProductMethod, "params" in request ? request.params : {}) ??
+        this.product?.request(request.method as ProductMethod, "params" in request ? request.params : {}, connection) ??
         Promise.resolve(refusal("unavailable", "Product runtime unavailable"))
       );
     switch (request.method) {

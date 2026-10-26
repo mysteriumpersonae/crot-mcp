@@ -1,3 +1,5 @@
+import { PublicationRequestSchema, PublicationPreviewSchema } from "../core/publications/schemas.js";
+import { ConfirmPublicationSchema } from "../core/publications/service.js";
 import { SocialProviderSchema } from "./social/account-secrets.js";
 import { SkillSchema } from "./connector-manifests.js";
 import { SyncArtifactsSchema } from "../core/platform/workspace-artifacts.js";
@@ -21,7 +23,23 @@ const filter = z
   })
   .strict();
 export const PRODUCT_SCHEMAS = {
+  "publications.prepare": PublicationRequestSchema,
+  "publications.list": z.object({}).strict(),
+  "publications.open": z.object({ id: z.string().uuid() }).strict(),
+  "publications.preview": PublicationPreviewSchema,
+  "publications.confirm": ConfirmPublicationSchema.refine(
+    (value) => Buffer.byteLength(JSON.stringify(value), "utf8") <= 32_000,
+    "Publication confirmation exceeds owner frame budget",
+  ),
+  "publications.cancel": z.object({ id: z.string().uuid() }).strict(),
   "accounts.list": z.object({}).strict(),
+  "accounts.avatar": z
+    .object({ provider: SocialProviderSchema, accountId: id.optional(), generation: z.string().uuid().optional() })
+    .strict()
+    .refine(
+      (value) => Boolean(value.accountId) === Boolean(value.generation),
+      "Account avatar binding requires ID and generation together",
+    ),
   "accounts.configure": z
     .object({
       provider: SocialProviderSchema,
