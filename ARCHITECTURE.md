@@ -6164,6 +6164,35 @@ content publication, provider revocation, payment, or PR #7 merge is authorized
 by the instruction to implement them. Operator Stripe/DNS/TLS provisioning and
 live-provider qualification remain separate from fixture/CI evidence.
 
+#### AD-61 clarification — Credential & Control-Plane Isolation (owner approved)
+
+This clarification supersedes the AD-66/AD-67 requirement for general command
+network-on endpoint filtering. Under AD-29/AD-58 no kernel network driver or
+MITM CA is required. Explicit owner-selected `network=on` allows raw sockets;
+CROT does not claim TLS/DPI filtering of arbitrary terminal/Custom Skill code.
+Authority over connected accounts instead requires OS-isolated credentials and
+owner control: no account tokens, owner secrets or private state in child env,
+argv or scratch; native OS stores and owner RPC remain outside L1. MCP and
+browser connections cannot mint or consume owner publication permits. Agents
+may prepare, but only the authenticated owner dialog can confirm the frozen
+recipient and SHA-256 media snapshot, once, after explicit privacy and consent.
+The non-configurable Core HTTP/browser/extension guards continue to reject
+protected publication/OAuth routes. No proxy is silently claimed where none is
+used. `network=off` retains native L1's external-network isolation.
+
+This guarantee concerns CROT-managed account credentials, not credentials an
+owner independently supplies to arbitrary programs or a separately compromised
+host. Network-on is not an assertion that other host-local unauthenticated
+services are safe. Safety is free; publication also requires fresh verified Pro.
+Before production activation, mandatory native tests must prove owner-positive
+OS-store canary reads and owner ping, then child denial through both ordinary
+terminal and the shared Custom Skill scratch launch path. Windows uses real
+CredReadW; macOS security/Keychain; Linux a real private D-Bus Secret Service.
+A loader error, absent item or memory store cannot substitute for this evidence.
+Non-owner/MCP confirmation attempts must also fail. The current qualification
+commit deliberately retains the production activation block until CI passes.
+The user's latest directive authorizes Ready/merge only after final qualification.
+
 ### AD-62. Stage C OAuth and publication security foundations (not yet product-qualified)
 
 Account access/refresh tokens and OAuth application secrets use a separate

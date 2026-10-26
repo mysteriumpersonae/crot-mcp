@@ -201,3 +201,17 @@ cancellation near 7000ms (strict 6500–9500ms bounds), absence of the write,
 stream drain and deadline audit. Production timeout/margin and security guards
 are unchanged. This needs its own local and exact-head CI qualification; it is
 not a retry of the failed head or a declaration of Stage C completion.
+
+#### AD-61 credential/control clarification — qualification in progress
+
+The owner explicitly accepted credential/control-plane isolation, rather than
+DPI of raw network-on sockets. Added mandatory native OS-canary and live owner
+channel negative probes for terminal and the same execInScratch path used by
+Custom Skills. Windows calls actual CredReadW from an SDK-built child; macOS
+uses an existing temporary Keychain item; Linux uses a private real D-Bus /
+gnome-keyring Secret Service and gives the malicious child the true bus address.
+Every platform requires successful owner reads before and after denial, an
+actual owner ping and successfully executed child probes. A separate real
+service integration rejects service credentials at owner RPC and MCP confirm
+attempts even with a real owner permit. Production remains blocked pending
+this qualification; no native pass or Stage C completion is yet claimed.
