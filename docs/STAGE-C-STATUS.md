@@ -133,3 +133,20 @@ scenario and existing native-extension/service/browser acceptance workflows.
 The publication E2E also verifies disclosure-category validation after DOM
 tampering and rejects account/file substitution through the owner IPC bridge.
 These checks do not qualify the outstanding production-wide anti-bypass barrier.
+
+Windows qualification on `ea2786d` found an integration defect: snapshot startup
+passed its directory to the native regular-file-only `protectFile` operation.
+The correction uses `ensureDirectory` for directory creation and still requires
+an explicit `ownerOnly === true` inspection before staging is opened. File
+protection for snapshot/manifest writes is unchanged. A deterministic regression
+uses a protector that rejects directories; false/unknown owner-only inspection
+still refuses startup. This is not a relaxation of Windows ACL enforcement.
+New-head native CI is required; the failed head is not an 11/11 Pass.
+
+Local validation of the directory/file protection correction passed `npm run
+check`: **2453 main tests / 228 platform skips**, **198 extension tests**, both
+builds/typechecks and lint/docs/format. Full Chromium passed **60 tests / 3
+explicit skips** using the documented headless Linux fixture configuration.
+Two earlier invocations failed due to missing browser/headless fixture options;
+they are not counted as passing evidence. Windows native acceptance still
+requires the new remote commit's CI, not the Linux protector fixture.
