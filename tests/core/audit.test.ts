@@ -105,3 +105,25 @@ describe("audit", () => {
     }
   });
 });
+
+it("host quiescence closes operation admission while retaining audit for final host persistence", async () => {
+  const events: string[] = [];
+  const sink = new MemoryAuditSink();
+  const core = await createTestCore(
+    { workspace: { root: dirs.workspace } },
+    {
+      record: (e) => sink.record(e),
+      close: async () => {
+        events.push("audit-close");
+      },
+    },
+  );
+  const first = core.quiesce();
+  expect(core.quiesce()).toBe(first);
+  await first;
+  expect(events).toEqual([]);
+  await expect(core.filesystem.writeFile(ctx, { path: "late.txt", content: "bad" })).rejects.toThrow();
+  await core.shutdown();
+  await core.shutdown();
+  expect(events).toEqual(["audit-close"]);
+});
