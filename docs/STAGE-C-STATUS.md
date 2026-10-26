@@ -150,3 +150,34 @@ explicit skips** using the documented headless Linux fixture configuration.
 Two earlier invocations failed due to missing browser/headless fixture options;
 they are not counted as passing evidence. Windows native acceptance still
 requires the new remote commit's CI, not the Linux protector fixture.
+
+#### AD-67 anti-bypass and diagnostics checkpoint (qualification pending)
+
+Implemented independent Core/extension protected-route refusal, pending URL and
+real frame-inventory checks, sensitive session listing exclusion and social-SPA
+input refusal, plus generic Core HTTP refusal on protected GET endpoints. Added
+deterministic Core/extension tests and an actual native-extension Chromium open
+refusal case. Reserved service/session env names are denied in both terminal and
+Custom Skill scratch launch admission with audit. OAuth scope metadata records
+actual recognized grants; missing scope, HTTP API restrictions/rate limits and
+YouTube channel/quota errors have fixed safe diagnostics in the account card,
+review dialog and exported system check.
+
+**Not closed:** arbitrary command network-on egress, renamed/native secret-store
+API qualification, and positive evidence of X paid write-tier / remaining YouTube
+upload quota. Unknown platform facts are shown as unknown, not fabricated. CLI
+name filters would not solve this. Production publishing remains fail-closed;
+PR #7 stays Draft and unmerged until native mediation and acceptance are complete.
+Prior 11/11 applies to `397c442`, not these unqualified changes.
+
+Local AD-67 regression passed **2497 main tests / 228 platform skips**, **203
+extension tests**, lint/docs/format, both builds/typechecks. Full real Chromium
+passed **61 tests / 3 explicit skips** across 11 files, including independent
+MCP/Core and actual native-extension protected-open refusals without contacting
+external platforms. The E2E file passed a separate strict/index-safe TypeScript
+check. Generic process environment tests now use non-service variable names;
+reserved-name refusal has separate audited terminal and scratch-skill coverage.
+Earlier failed runs exposed necessary packaging permission and queue-metadata
+expectation updates and are not counted as passing evidence. New-head CI is
+still required. These results do not qualify arbitrary command egress or close
+Stage C's production activation barrier.

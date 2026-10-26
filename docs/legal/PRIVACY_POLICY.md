@@ -28,7 +28,7 @@ The operator must complete the applicable basis: provide the requested relay/acc
 
 ## Extension-store disclosures
 
-The CROT extension uses `debugger`, `downloads`, `tabGroups`, `nativeMessaging`, `tabs`, `scripting`, `alarms` and `<all_urls>` solely to execute user-authorized browser MCP operations through the local CROT service. It has no content scripts, externally-connectable API or web-accessible resources, and incognito is disabled. Browser/tab/download data is processed on the device and is not sent to the CROT relay as extension telemetry. Store disclosure text is in `docs/store/`.
+The CROT extension uses `debugger`, `downloads`, `tabGroups`, `nativeMessaging`, `tabs`, `scripting`, `alarms`, `webNavigation` and `<all_urls>` solely to execute user-authorized browser MCP operations through the local CROT service. It has no content scripts, externally-connectable API or web-accessible resources, and incognito is disabled. Browser/tab/download data is processed on the device and is not sent to the CROT relay as extension telemetry. Store disclosure text is in `docs/store/`.
 
 ## Sharing and processors
 
@@ -53,3 +53,5 @@ Depending on location, users may request access, correction, deletion, restricti
 ## Changes
 
 Material changes will be announced at `[POLICY URL/NOTICE METHOD]` with a new effective date. Prior versions remain available at `[ARCHIVE URL]`.
+
+The `webNavigation` permission reads frame URLs locally before an agent operation to enforce the mandatory publication/OAuth boundary, including nested frames. It does not export cookies, frame contents or OAuth credentials. Missing frame evidence refuses the operation.
