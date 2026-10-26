@@ -382,6 +382,8 @@ export interface CoreConfinement {
 
 /** Platform support for command confinement L1. */
 export interface CommandConfinement {
+  /** Host-only creation of a NEW disposable scratch directory; never adopts a project path. */
+  createScratchDirectory?(directory: string): Promise<void>;
   /** State of the machine in a network mode, without a Core. */
   probe(network: ConfinementNetwork): Promise<ConfinementStatus>;
   open(scope: ConfinementScope): Promise<CoreConfinement>;

@@ -238,3 +238,15 @@ single-link regular identity and descriptors before launch, and keeps all other
 protected/source/credential identity guards unchanged. Native acceptance now
 also holds the same actor across a real atomic vault replacement. This is
 qualification work, not a claim of native pass or production activation.
+
+Windows native follow-up: `f11d0b5` retained 9/11 checks but its new probe had
+incorrectly assumed automatic source import. The SDK executable is now staged
+through command stdin into empty AD-58 scratch, never linked from source.
+That exposed a real service-composition defect: scratch inherited Medium/NR
+from the service's private parent and denied even a normal write. The native
+backend now creates only a NEW disposable scratch leaf with verified Low/NW
+owner-only policy. It refuses existing objects; private ancestors, source,
+controller credentials and vault keep their original protections. The portable
+composition test verifies this hook is used before native open. The real OS
+credential/control negative assertions remain mandatory and unchanged. These
+are fixes pending CI evidence, not production activation or completion claims.
