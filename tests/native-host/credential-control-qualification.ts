@@ -2,7 +2,7 @@
  * No missing-item, loader-failure or memory-backend substitute is acceptance evidence. */
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { access, constants, copyFile, mkdir, mkdtemp, readFile, realpath, rm } from "node:fs/promises";
+import { access, constants, mkdir, mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -71,8 +71,7 @@ export async function qualifyCredentialControl(): Promise<void> {
       const target = `crot.accounts:${stateKey(state)}:github:access`;
       const host = await exec(probe.executable, [target]);
       expect(JSON.parse(host.stdout)).toEqual({ read: true, error: 0 });
-      await copyFile(probe.executable, path.join(workspace, "credential-probe.exe"));
-      secretScript = `const r=cp.spawnSync(p.join(process.cwd(),'credential-probe.exe'),[${JSON.stringify(target)}],{encoding:'utf8',timeout:10000});if(r.error||r.status!==0)throw Error('native credential probe failed to run');const v=JSON.parse(r.stdout);if(v.read||![5,1168,1312].includes(v.error))throw Error('CredReadW isolation failed');`;
+      secretScript = `const r=cp.spawnSync(p.join(process.cwd(),'credential-probe.exe'),[${JSON.stringify(target)}],{encoding:'utf8',timeout:10000});if(r.error||r.status!==0)throw Error('native credential probe failed to run: '+JSON.stringify({code:r.error?.code,status:r.status}));const v=JSON.parse(r.stdout);if(v.read||![5,1168,1312].includes(v.error))throw Error('CredReadW isolation failed');`;
     } else if (process.platform === "darwin") {
       const keychain = path.join(state, "qualification.keychain-db");
       await exec("/usr/bin/security", ["create-keychain", "-p", "crot-test-only-password", keychain]);
@@ -157,6 +156,21 @@ export async function qualifyCredentialControl(): Promise<void> {
     owner = await ControlClient.connect({ stateDir: state, privateFiles });
     if (!owner) throw Error("owner connection unavailable");
     expect(await owner.request("ping")).toMatchObject({ state: "running" });
+    if (probe) {
+      // AD-58 starts with EMPTY scratch, not an implicit source import. Feed
+      // only our SDK-built, credential-free probe through the command stdin;
+      // the sandbox itself creates the executable under its own scratch ACL.
+      const staged = await service.core.processes.exec(testContext, {
+        command: "node",
+        args: [
+          "-e",
+          "require('fs').writeFileSync('credential-probe.exe',Buffer.from(require('fs').readFileSync(0,'utf8'),'base64'))",
+        ],
+        stdin: (await readFile(probe.executable)).toString("base64"),
+        timeoutMs: 30000,
+      });
+      expect(staged, "native probe staging in private scratch").toMatchObject({ exitCode: 0, timedOut: false });
+    }
     const credential = await secretCredentialStore(state, privateFiles).read("control");
     if (!credential) throw Error("actual owner credential missing");
     const endpoint = serviceEndpoint(state, "control", credential).path;
