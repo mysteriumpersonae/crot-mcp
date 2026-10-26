@@ -188,6 +188,7 @@ function adapter(provider: SocialProvider, spec: Spec): OAuthAccountAdapter {
           id: String(p.id ?? ""),
           handle: text(snippet.customUrl) ?? text(snippet.title) ?? "",
           name: text(snippet.title) ?? "",
+          avatar: text(obj(obj(snippet.thumbnails).default).url),
         };
       } else if (provider === "tiktok") {
         p = obj(obj(p.data).user);

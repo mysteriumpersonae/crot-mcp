@@ -1,6 +1,6 @@
 /** Actual Core + account runtime + local OAuth/upload HTTP. Not the shipped owner-RPC/Chromium acceptance test. */
 import { createServer } from "node:http";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, expect, it } from "vitest";
@@ -230,7 +230,7 @@ it("rejects missing privacy/disclosure, media/account substitution and owner-ses
     expect(() => f.runtime.confirm(owner, input)).toThrow();
   expect(f.writes()).toBe(0);
   f.runtime.endOwnerSession(owner);
-  expect(() => f.runtime.confirm(owner, fields)).toThrow("confirmation");
+  expect(() => f.runtime.confirm(owner, fields)).toThrow("owner connection");
   await expect(f.runtime.prepare(testContext, { ...request, mediaId: "existing" })).rejects.toThrow();
 });
 it("rechecks snapshot hash, active project and fresh authorization at actual send; no silent retry", async () => {
@@ -305,4 +305,38 @@ it("account disconnect and runtime shutdown abort in-flight HTTP delivery withou
   await f.runtime.close();
   expect(() => f.runtime.openForOwner(owner, draft.id)).toThrow("owner");
   await expect(f.runtime.prepare(testContext, request)).rejects.toThrow("unavailable");
+});
+
+it("revokes all capabilities of an ended owner object and cancels a pending draft without platform I/O", async () => {
+  const f = await setup(),
+    owner = {};
+  const draft = await f.runtime.prepare(testContext, { ...request, mediaPath: undefined });
+  const opened = f.runtime.openForOwner(owner, draft.id);
+  f.runtime.endOwnerSession(owner);
+  expect(() => f.runtime.openForOwner(owner, draft.id)).toThrow("owner connection");
+  expect(() => f.runtime.list(owner)).toThrow("owner connection");
+  expect(() => f.runtime.confirm(owner, confirmation(draft.id, opened.confirmation))).toThrow("owner connection");
+  const other = {};
+  expect(await f.runtime.cancel(other, draft.id)).toMatchObject({ ok: true, state: "cancelled" });
+  expect(() => f.runtime.openForOwner(other, draft.id)).toThrow("pending");
+  expect(f.writes()).toBe(0);
+  expect(f.audits.at(-1)).toBe("cancelled");
+});
+
+it("bounds escaped owner-list responses below the control frame cap, even for hostile provider handles", async () => {
+  const f = await setup();
+  const draft = await f.runtime.prepare(testContext, { ...request, mediaPath: undefined });
+  await f.runtime.close();
+  const records = Array.from({ length: 100 }, () => ({
+    ...draft,
+    id: randomUUID(),
+    account: { ...draft.account, handle: "\u0001".repeat(256) },
+  }));
+  await writeFile(path.join(f.stateDir, "publications.json"), JSON.stringify(records));
+  const restarted = await PublicationRuntime.open(f.host);
+  cleanups.unshift(() => restarted.close());
+  const result = restarted.list({});
+  expect(result.truncated).toBe(true);
+  expect(result.publications.length).toBeGreaterThan(0);
+  expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThan(48000);
 });

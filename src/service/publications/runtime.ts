@@ -1,15 +1,13 @@
 /** Trusted service composition. No credentials, staging paths or send authority appear in agent JSON. */
 import path from "node:path";
-import { lstat } from "node:fs/promises";
-import { z } from "zod";
+import { lstat, realpath } from "node:fs/promises";
 import type { CrotCore } from "../../core/crot-core.js";
 import type { AuthContext } from "../../core/auth/principal.js";
 import type { PrivateFileProtection } from "../../core/platform/types.js";
-import { ArtifactPathSchema } from "../../core/platform/workspace-artifacts.js";
+import { PublicationRequestSchema, PublicationPreviewSchema } from "../../core/publications/schemas.js";
 import { PublicationMedia, type MediaSnapshot } from "../../core/publications/media.js";
 import {
   PublicationService,
-  PreparePublicationSchema,
   type PublicationHost,
   type PreparePublication,
   type PublicationAccount,
@@ -18,15 +16,7 @@ import { openTransferRead, verifyTransferIdentity } from "../../native-host/brow
 import { writePrivateFileAtomic } from "../secrets/backends.js";
 import type { SocialAccountRuntime } from "../social/runtime.js";
 import { productionPublisher, type PlatformPublisher } from "./platforms.js";
-export const PublicationRequestSchema = PreparePublicationSchema.omit({ mediaId: true, destination: true })
-  .extend({
-    provider: z.enum(["youtube", "tiktok", "x"]),
-    mediaPath: ArtifactPathSchema.optional(),
-  })
-  .strict();
-export const PublicationPreviewSchema = z
-  .object({ id: z.string().uuid(), offset: z.number().int().min(0), length: z.number().int().min(1).max(24_576) })
-  .strict();
+export { PublicationRequestSchema, PublicationPreviewSchema } from "../../core/publications/schemas.js";
 export interface PublicationRuntimeHost {
   stateDir: string;
   privateFiles: PrivateFileProtection;
@@ -43,6 +33,7 @@ export class PublicationRuntime {
   private readonly engine: PublicationService;
   private readonly jobs = new Set<Promise<unknown>>();
   private closed = false;
+  private readonly endedOwners = new WeakSet<object>();
   private readonly previews = new Map<string, { snapshot: MediaSnapshot; data: Buffer }>();
   private preparing = 0;
   private prepareTail = Promise.resolve();
@@ -85,6 +76,8 @@ export class PublicationRuntime {
     });
   }
   static async open(host: PublicationRuntimeHost): Promise<PublicationRuntime> {
+    // Native descriptor identity checks require canonical names (not /tmp aliases on macOS).
+    host = { ...host, stateDir: await realpath(host.stateDir) };
     const runtime = new PublicationRuntime(
       host,
       await PublicationMedia.open(path.join(host.stateDir, "publication-media"), host.privateFiles),
@@ -204,30 +197,39 @@ export class PublicationRuntime {
       throw error;
     }
   }
-  private owner(owner: object) {
-    if (this.closed || !owner || typeof owner !== "object") throw new Error("Authenticated owner connection required");
+  private owner(owner: object, requireRunning = false) {
+    if ((requireRunning && this.closed) || !owner || typeof owner !== "object" || this.endedOwners.has(owner))
+      throw new Error("Authenticated owner connection required");
   }
   list(owner: object) {
     this.owner(owner);
     // Compact bounded response; full descriptions and snapshots are only fetched individually.
-    return {
-      ok: true,
-      publications: this.engine
-        .list(this.host.project())
-        .map((r) => ({
-          id: r.id,
-          state: r.state,
-          provider: r.request.provider,
-          handle: r.account.handle,
-          createdAt: r.createdAt,
-          resultId: r.resultId,
-          error: r.error,
-        }))
-        .slice(-100),
-    };
+    const candidates = this.engine
+      .list(this.host.project())
+      .slice(-100)
+      .map((r) => ({
+        id: r.id,
+        state: r.state,
+        provider: r.request.provider,
+        handle: r.account.handle,
+        createdAt: r.createdAt,
+        resultId: r.resultId,
+        error: r.error,
+      }));
+    const publications: typeof candidates = [];
+    let bytes = 256;
+    // A row count alone does not bound escaped handles/result IDs below the 64-KiB wire cap.
+    for (const row of candidates.reverse()) {
+      const size = Buffer.byteLength(JSON.stringify(row), "utf8") + 1;
+      if (bytes + size > 48_000) break;
+      publications.unshift(row);
+      bytes += size;
+    }
+    return { ok: true, publications, truncated: publications.length < candidates.length };
   }
+
   openForOwner(owner: object, id: string) {
-    this.owner(owner);
+    this.owner(owner, true);
     if (!this.engine.list(this.host.project()).some((r) => r.id === id))
       throw new Error("Publication does not belong to the active project");
     return { ok: true, ...this.engine.openForOwner(id, owner) };
@@ -261,7 +263,7 @@ export class PublicationRuntime {
     };
   }
   confirm(owner: object, input: unknown) {
-    this.owner(owner);
+    this.owner(owner, true);
     const fields = this.engine.assertConfirmation(owner, input);
     if (!this.engine.list(this.host.project()).some((r) => r.id === fields.id))
       throw new Error("Publication project changed");
@@ -271,7 +273,14 @@ export class PublicationRuntime {
     void job.catch(() => undefined).finally(() => this.jobs.delete(job));
     return { ok: true, id: fields.id, state: "queued" };
   }
+  async cancel(owner: object, id: string) {
+    this.owner(owner);
+    if (!this.engine.list(this.host.project()).some((r) => r.id === id))
+      throw new Error("Publication does not belong to the active project");
+    return { ok: true, ...(await this.engine.cancelPublication(owner, id)) };
+  }
   endOwnerSession(owner: object) {
+    this.endedOwners.add(owner);
     this.engine.endOwnerSession(owner);
   }
   abortAccount(id?: string) {

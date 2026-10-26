@@ -34,6 +34,8 @@ export const KNOWN_OPERATIONS: readonly string[] = [
   "docker.inspect",
   "docker.logs",
   "docker.ps",
+  "publication.prepare",
+  "publication.direct_send",
   "filesystem.capture_publication_media",
   "filesystem.create_directory",
   "filesystem.delete",

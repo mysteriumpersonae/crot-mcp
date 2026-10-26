@@ -14,3 +14,18 @@ it("compiles the shipped renderer and exposes real Stage B RPC controls", () => 
   ])
     expect(CONTROL_CENTER_RENDERER).toContain(name);
 });
+
+it("shipped publication review uses only immutable owner previews and requires an explicit human click", () => {
+  for (const method of [
+    "publications.open",
+    "publications.preview",
+    "publications.confirm",
+    "publications.cancel",
+    "accounts.avatar",
+  ])
+    expect(CONTROL_CENTER_RENDERER).toContain(method);
+  expect(CONTROL_CENTER_RENDERER).toContain("privacy.value=''");
+  expect(CONTROL_CENTER_RENDERER).toContain("crypto.subtle.digest('SHA-256'");
+  expect(CONTROL_CENTER_RENDERER).toContain("publish.onclick=async()=>");
+  expect(CONTROL_CENTER_RENDERER).not.toContain("image.src=record.avatar");
+});

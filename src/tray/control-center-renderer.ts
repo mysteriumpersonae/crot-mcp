@@ -200,6 +200,95 @@ export const CONTROL_CENTER_RENDERER =
     loadInto(connection,async()=>{const r=await rpc('chat.providers');if(!root.isConnected)return;configurations=r.providers||[];connection.querySelectorAll('.empty').forEach(n=>n.remove());selectProvider();chatId=r.current||chatId;await poll();});approvals(inline);chatTimer=setInterval(()=>void poll(),300);
   }
 
+  const connectedAccount=record=>['connected','restricted'].includes(record.state);
+  async function accountAvatar(provider,target,identity){
+    try{const result=await rpc('accounts.avatar',{provider,...(identity?.id&&identity?.generation?{accountId:identity.id,generation:identity.generation}:{})});if(!target.isConnected||typeof result.data!=='string'||!/^data:image\/(png|jpeg|webp);base64,/.test(result.data)||result.data.length>33000)return;
+      const image=node('img');image.alt='';image.width=32;image.height=32;image.src=result.data;image.dataset.accountAvatar='';target.prepend(image);
+    }catch{/* A provider/network failure leaves the local brand fallback, never a remote img src. */}
+  }
+  let publicationBusy=false,publicationRecords=[];
+  const publicationSeen=new Set();
+  const publicationTerminal=state=>['published','draft_uploaded','failed','cancelled'].includes(state);
+  function renderPublications(root){
+    root.querySelector('[data-publication-list]')?.remove();
+    const p=panel('Publications');p.dataset.publicationList='';
+    for(const record of publicationRecords){const row=node('div',undefined,'row'),identity=node('span');identity.dataset.noI18n='';identity.textContent=record.handle;
+      const status=node('span',record.state);status.dataset.publicationState=record.state;row.append(identity,status);
+      if(record.state==='pending_publication')row.append(button('Review publication',()=>openPublication(record.id)));
+      p.append(row);
+    }
+    if(!publicationRecords.length)p.append(empty('No publications.'));
+    root.append(p);
+  }
+  async function pollPublications(){
+    if(publicationBusy||stage!=='home'||view.connection!=='connected')return;
+    publicationBusy=true;
+    try{const result=await rpc('publications.list');publicationRecords=result.publications||[];
+      if(active==='Accounts')renderPublications($('page'));
+      const pending=publicationRecords.find(record=>record.state==='pending_publication'&&!publicationSeen.has(record.id));
+      if(pending&&!$('action-dialog').open)await openPublication(pending.id);
+    }catch{/* No optimistic success or automatic sending on owner-channel failure. */}finally{publicationBusy=false;}
+  }
+  function newPublication(account){modal('Create publication',d=>{
+    const title=field('Title'),description=field('Description','textarea'),media=field('Project media path');
+    const target=node('p');target.dataset.noI18n='';target.textContent=account.handle||account.provider;
+    const message=node('p',undefined,'banner');d.append(target,title.wrap,description.wrap,media.wrap,message,
+      actions(button('Cancel',()=>d.close()),button('Prepare for review',async()=>{
+        try{await rpc('publications.prepare',{provider:account.provider,accountId:account.id,title:title.input.value,description:description.input.value,...(media.input.value?{mediaPath:media.input.value}:{})});d.close();await pollPublications();}
+        catch(error){message.textContent=error.message;}
+      },'primary')));
+  });}
+  async function openPublication(id){
+    if($('action-dialog').open)return;
+    const opened=await rpc('publications.open',{id}),record=opened.publication;
+    if($('action-dialog').open)return;
+    publicationSeen.add(id);
+    modal('Review publication',d=>{
+      d.dataset.publicationId=id;
+      let closed=false,verified=!record.account.media,busy=false,submitted=false,url;
+      const profile=node('div'),handle=node('strong');handle.dataset.noI18n='';handle.textContent=record.account.handle;profile.append(handle);void accountAvatar(record.request.provider,profile,record.account);
+      const preview=node('div'),message=node('p',undefined,'banner'),status=node('p','pending_publication');status.dataset.publicationState='pending_publication';
+      const title=field('Title','text',record.request.title),description=field('Description','textarea',record.request.description),privacy=node('select');privacy.id='publication-privacy';privacy.setAttribute('aria-label',t('Privacy'));
+      const placeholder=node('option','Choose privacy');placeholder.value='';placeholder.disabled=true;privacy.append(placeholder);
+      for(const value of record.account.privacy){const option=node('option',value);option.value=value;privacy.append(option);}privacy.value='';
+      function check(label,id,disabled=false){const wrap=node('label',undefined,'field'),input=node('input');input.type='checkbox';input.id=id;input.checked=false;input.disabled=disabled;wrap.append(input,node('span',label));return {wrap,input};}
+      const comments=check('Comments','publication-comments',true),duet=check('Duet','publication-duet',true),stitch=check('Stitch','publication-stitch',true),commercial=check('Commercial disclosure','publication-commercial',record.request.provider!=='tiktok'),own=check('Own brand','publication-own-brand'),branded=check('Branded content','publication-branded-content'),terms=check('I accept the platform terms','publication-terms');
+      const publish=node('button','Publish','primary');publish.type='button';publish.id='publication-confirm';
+      const cancel=button('Cancel publication',async()=>{try{const result=await rpc('publications.cancel',{id});message.textContent=t(result.cancellationRequested?'Cancellation requested; delivery may already have started.':'Publication cancelled.');await update();}catch(error){message.textContent=error.message;}});
+      const close=button('Close',()=>d.close());
+      function validate(){own.input.disabled=branded.input.disabled=!commercial.input.checked||submitted;publish.disabled=closed||busy||submitted||!verified||!privacy.value||!terms.input.checked||(commercial.input.checked&&!own.input.checked&&!branded.input.checked);}
+      for(const input of [privacy,terms.input,commercial.input,own.input,branded.input])input.onchange=()=>{if(!commercial.input.checked){own.input.checked=false;branded.input.checked=false;}validate();};
+      publish.onclick=async()=>{
+        validate();if(publish.disabled)return;busy=true;validate();
+        try{await rpc('publications.confirm',{id,confirmation:opened.confirmation,title:title.input.value,description:description.input.value,privacy:privacy.value,comments:false,duet:false,stitch:false,commercial:commercial.input.checked,ownBrand:own.input.checked,brandedContent:branded.input.checked,termsAccepted:terms.input.checked});submitted=true;privacy.disabled=true;title.input.disabled=true;description.input.disabled=true;terms.input.disabled=true;commercial.input.disabled=true;status.textContent=t('queued');status.dataset.publicationState='queued';}
+        catch(error){message.textContent=error.message;}finally{busy=false;validate();}
+      };
+      async function update(){
+        try{const result=await rpc('publications.list');if(closed)return;const latest=result.publications?.find(entry=>entry.id===id);if(!latest)return;
+          status.textContent=t(latest.state);status.dataset.publicationState=latest.state;
+          if(publicationTerminal(latest.state)){submitted=true;cancel.disabled=true;validate();if(latest.error)message.textContent=t(latest.error==='delivery_unknown'?'Delivery is uncertain. Check the platform before preparing another publication.':'Publication failed.');}
+        }catch{if(!closed)message.textContent=t('Service request failed. Check the local bridge and try again.');}
+      }
+      d.append(profile,preview,status,title.wrap,description.wrap,node('label','Privacy'),privacy,comments.wrap,duet.wrap,stitch.wrap,commercial.wrap,own.wrap,branded.wrap,terms.wrap,message,actions(close,cancel,publish));
+      d.append(node('p','Unavailable controls are not applied by this platform adapter.','muted'));
+      if(record.request.provider==='tiktok')d.append(node('p','TikTok inbox draft only. Complete title, description, privacy and commercial disclosures in TikTok before posting. These fields are review reminders, not applied by the inbox API.','banner'));
+      validate();const timer=setInterval(()=>void update(),1000);
+      d.addEventListener('close',()=>{closed=true;clearInterval(timer);if(url)URL.revokeObjectURL(url);delete d.dataset.publicationId;},{once:true});
+      d.addEventListener('cancel',()=>{/* Escape closes review without sending or silently cancelling an upload. */},{once:true});
+      if(record.account.media)void(async()=>{
+        try{const media=record.account.media,parts=[];let offset=0,mime;
+          while(offset<media.bytes){const chunk=await rpc('publications.preview',{id,offset,length:24576});if(closed)return;
+            if(chunk.offset!==offset||chunk.bytes!==media.bytes||chunk.sha256!==media.sha256||!['image/png','image/jpeg','image/webp','video/mp4'].includes(chunk.mime)||mime&&mime!==chunk.mime)throw Error('Immutable preview verification failed');
+            mime=chunk.mime;const data=Uint8Array.from(atob(chunk.data),c=>c.charCodeAt(0));if(!data.length||data.length>24576||offset+data.length>media.bytes)throw Error('Immutable preview verification failed');parts.push(data);offset+=data.length;
+          }
+          const blob=new Blob(parts,{type:mime}),bytes=await blob.arrayBuffer(),hash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),v=>v.toString(16).padStart(2,'0')).join('');
+          if(hash!==media.sha256||closed)throw Error('Immutable preview verification failed');
+          url=URL.createObjectURL(blob);const element=node(mime==='video/mp4'?'video':'img');element.src=url;element.dataset.publicationPreview='';if(mime==='video/mp4'){element.controls=true;element.preload='metadata';}else element.alt=t('Immutable media preview');element.style.maxWidth='100%';preview.append(element);verified=true;validate();
+        }catch{if(!closed){message.textContent=t('Immutable preview verification failed');verified=false;validate();}}
+      })();
+    });
+  }
+
   let accountsTimer;
   function accounts(root){
     pageHead(root,'Accounts','OAuth uses your system browser. Account tokens stay in the operating system secret store.');
@@ -218,15 +307,18 @@ export const CONTROL_CENTER_RENDERER =
       const r=await rpc('accounts.list');if(!root.isConnected)return;const signature=JSON.stringify(r);if(signature===last)return;last=signature;clear(list);
       const labels={youtube:'YouTube',tiktok:'TikTok',x:'X',github:'GitHub',notion:'Notion'},states={disconnected:'Not connected',connected:'Connected',reauth_required:'Reauthorization required',restricted:'Restricted'};
       for(const record of r.accounts){const card=panel(labels[record.provider]),pending=r.pending?.includes(record.provider);card.dataset.socialAccount=record.provider;card.firstChild.prepend(brandIcon(labels[record.provider]));
+        if(connectedAccount(record))void accountAvatar(record.provider,card.firstChild,record);
         card.append(badge(states[record.state],record.state==='connected'));if(record.handle){const identity=node('p');identity.textContent=record.handle;identity.dataset.noI18n='';card.append(identity);}
         if(record.restriction){const note=node('p',undefined,'banner');note.textContent=record.restriction==='tiktok_private_or_draft_only'?t('TikTok is limited to private or draft uploads.'):record.restriction;card.append(note);}
         if(record.revocation==='failed')card.append(node('p','Provider revocation failed. Local tokens were removed; review provider application permissions.','banner'));
         if(pending)card.append(node('p','Complete authorization in your system browser.','muted'),button('Cancel authorization',async()=>{await rpc('accounts.cancel',{provider:record.provider});last='';await refresh();}));
+        if(connectedAccount(record)&&['youtube','tiktok','x'].includes(record.provider))card.append(button('Create publication',()=>newPublication(record)));
         const connected=['connected','restricted'].includes(record.state),menu=node('details'),summary=node('summary','⋯');summary.setAttribute('aria-label',t('Account actions'));menu.append(summary);
         menu.append(button('Configure OAuth application',()=>configuration(record),'',connected||pending));
         menu.append(button('Disconnect account',()=>confirm('Disconnect account',async()=>{await rpc('accounts.disconnect',{provider:record.provider});last='';await refresh();},record.provider==='youtube'?'Revoking Google authorization can also revoke other grants for this application. Local account secrets will be removed.':'Provider authorization will be revoked and local account secrets removed.')));
         card.append(actions(button(record.state==='reauth_required'?'Authorize again':'Connect account',async()=>{await rpc('accounts.connect',{provider:record.provider});last='';await refresh();},'primary',connected||pending||!record.clientId),button('Check account connection',async()=>{await rpc('accounts.check',{provider:record.provider});last='';await refresh();},'',!connected||record.cleanup==='failed'),menu));list.append(card);
       }
+      renderPublications(root);
       list.append(node('p','Instagram is deferred until after v1. Publication always requires a separate human confirmation.','muted'));
     }catch(error){feedback(error.message);}finally{busy=false;}}
     void refresh();accountsTimer=setInterval(()=>void refresh(),1000);
@@ -237,5 +329,7 @@ export const CONTROL_CENTER_RENDERER =
   document.addEventListener('crot:language',event=>{language=event.detail;renderHeader();if(stage==='plans')renderPlans();renderPage();});
   api.onView(next=>{const wasConnected=view.connection==='connected',previousWorkspace=view.workspace;view=next;if(authPending&&next.pairing?.state==='pairing')authPairingSeen=true;if(authPending&&authPairingSeen&&next.pairing?.state!=='pairing'&&next.pairing?.state!=='paired'&&next.accountSignedIn!==true){authPending=false;authPairingSeen=false;text('auth-feedback','Sign-in could not be verified. Please try again.');}if(next.connection==='connected'&&(!wasConnected||!projects.length||previousWorkspace!==next.workspace)){void refreshProjects().then(()=>{renderHeader();renderPage();}).catch(error=>feedback(error.message));}text('headline',next.headline||'CROT Control Center');renderHeader();showApp();if($('approvals'))approvals($('approvals'));document.querySelectorAll('[data-chat-approvals]').forEach(approvals);const important=JSON.stringify([next.workspace,next.cards,next.connection,next.presets,next.clients,next.remoteMode,next.fullControl,next.modules,next.commercial]);if(important!==lastView){lastView=important;if(!document.activeElement?.matches('input,textarea,select')&&!$('action-dialog').open){if(active==='Home'||active==='Agents'||active==='Monitoring'||active==='Settings')renderPage();}}else if(active==='Home'&&$('approvals'))approvals($('approvals'));});
   navigate('Home',false);showApp();api.ready();
+  const publicationPoll=setInterval(()=>void pollPublications(),1500);
+  window.addEventListener('pagehide',()=>clearInterval(publicationPoll),{once:true});
 })();
 `;
