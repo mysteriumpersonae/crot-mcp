@@ -37,7 +37,7 @@ export const SOCIAL_OAUTH_ENDPOINTS: Readonly<Record<SocialProvider, Readonly<Sp
     token: "https://api.x.com/2/oauth2/token",
     profile: "https://api.x.com/2/users/me?user.fields=profile_image_url",
     revoke: "https://api.x.com/2/oauth2/revoke",
-    scopes: ["tweet.read", "tweet.write", "users.read", "offline.access"],
+    scopes: ["tweet.read", "tweet.write", "media.write", "users.read", "offline.access"],
     pkce: true,
   },
   github: {

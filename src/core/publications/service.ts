@@ -202,7 +202,19 @@ export class PublicationService {
     });
   }
   list(project?: string): PublicationRecord[] {
-    return [...this.records.values()].filter((r) => !project || r.project === project).map(clone);
+    return [...this.records.values()]
+      .filter((r) => !project || r.project === project)
+      .map((record) => {
+        const visible = clone(record);
+        // A platform response is not a durably audited terminal outcome yet. The async owner UI
+        // must not announce completion (or expose a result ID) while save/audit is still pending.
+        if (this.active.has(record.id) && ["published", "draft_uploaded", "failed"].includes(record.state)) {
+          visible.state = "processing";
+          delete visible.resultId;
+          delete visible.error;
+        }
+        return visible;
+      });
   }
   /** Called ONLY with the transport's authenticated owner connection object. It is never a JSON parameter. */
   openForOwner(id: string, owner: object): { publication: PublicationRecord; confirmation: string } {
@@ -222,7 +234,7 @@ export class PublicationService {
   endOwnerSession(owner: object) {
     this.sessions.delete(owner);
   }
-  async confirmPublication(owner: object, input: unknown): Promise<PublicationRecord> {
+  assertConfirmation(owner: object, input: unknown): z.infer<typeof ConfirmPublicationSchema> {
     // Privacy is required, no default; terms must be true. Unknown/account/media fields cannot be substituted.
     const fields = ConfirmPublicationSchema.parse(input);
     if (fields.commercial && !fields.ownBrand && !fields.brandedContent)
@@ -245,6 +257,12 @@ export class PublicationService {
     if (!r.account.privacy.includes(fields.privacy)) fail("Privacy is not available for the verified recipient");
     if (r.request.provider !== "tiktok" && (fields.duet || fields.stitch))
       fail("Duet and stitch are TikTok-only settings");
+    return fields;
+  }
+  async confirmPublication(owner: object, input: unknown): Promise<PublicationRecord> {
+    const fields = this.assertConfirmation(owner, input);
+    const r = this.records.get(fields.id)!;
+    const session = this.sessions.get(owner)!;
     // Consume synchronously before ANY async persistence, authorization or external I/O. No replay, even on failure.
     session!.delete(r.id);
     r.state = "queued";

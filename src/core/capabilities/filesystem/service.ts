@@ -1,4 +1,9 @@
-import { SyncArtifactsSchema, type ArtifactSnapshot } from "../../platform/workspace-artifacts.js";
+import {
+  ArtifactPathSchema,
+  readWorkspaceArtifacts,
+  SyncArtifactsSchema,
+  type ArtifactSnapshot,
+} from "../../platform/workspace-artifacts.js";
 import { constants } from "node:fs";
 import {
   appendFile,
@@ -108,6 +113,18 @@ export class FileSystemService {
         };
   }
 
+  /** Publication capture shares checked-source serialization and the ordinary Core read guard. */
+  async capturePublicationMedia(context: AuthContext, input: string): Promise<ArtifactSnapshot> {
+    const relative = ArtifactPathSchema.parse(input);
+    const target = await this.deps.workspace.resolve(relative, { followFinalSymlink: false });
+    if (!target.insideWorkspace)
+      throw new CrotError("PERMISSION_DENIED", "Publication source must be inside the project");
+    return this.deps.guard.run(
+      context,
+      { operation: "filesystem.capture_publication_media", capability: "filesystem.read", paths: [target] },
+      async () => (await readWorkspaceArtifacts(this.deps.workspace.root, [relative], 64 * 1024 * 1024))[0]!,
+    );
+  }
   async syncWorkspaceArtifacts(context: AuthContext, input: unknown) {
     const args = parseInput(SyncArtifactsSchema, input);
     if (!this.deps.exportArtifacts || !this.deps.checkedSource)

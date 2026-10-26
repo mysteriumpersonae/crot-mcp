@@ -4,7 +4,7 @@ import path from "node:path";
 import { z } from "zod";
 import { CrotError } from "../errors.js";
 import { isProjectSecretName } from "../permissions/project-secrets.js";
-import { openTransferRead } from "../../native-host/browser-files.js";
+import { openTransferRead, verifyTransferIdentity } from "../../native-host/browser-files.js";
 const forbidden = (p: string) =>
   p.split("/").some((v) => isProjectSecretName(v) || [".git", ".crot"].includes(v.toLowerCase()));
 export const ArtifactPathSchema = z
@@ -31,7 +31,11 @@ export const SyncArtifactsSchema = z
   .object({ files: z.array(ArtifactPathSchema).min(1).max(64), overwrite: z.boolean().default(false) })
   .strict();
 export type ArtifactSnapshot = { path: string; data: Buffer };
-export async function readWorkspaceArtifacts(root: string, files: readonly string[]): Promise<ArtifactSnapshot[]> {
+export async function readWorkspaceArtifacts(
+  root: string,
+  files: readonly string[],
+  maxBytes = 256 * 1024 * 1024,
+): Promise<ArtifactSnapshot[]> {
   const result: ArtifactSnapshot[] = [];
   let bytes = 0;
   for (const name of files) {
@@ -49,8 +53,11 @@ export async function readWorkspaceArtifacts(root: string, files: readonly strin
       if (!before.isFile() || before.nlink !== 1)
         throw new CrotError("PERMISSION_DENIED", "Artifact must be a single-link regular file");
       bytes += before.size;
-      if (bytes > 256 * 1024 * 1024)
-        throw new CrotError("LIMIT_EXCEEDED", "Artifact export exceeds 256 MiB; export smaller selections");
+      if (bytes > maxBytes)
+        throw new CrotError(
+          "LIMIT_EXCEEDED",
+          "Artifact export exceeds configured byte limit; export smaller selections",
+        );
       const data = Buffer.alloc(before.size);
       let offset = 0;
       while (offset < data.length) {
@@ -59,6 +66,7 @@ export async function readWorkspaceArtifacts(root: string, files: readonly strin
         offset += r.bytesRead;
       }
       const after = await input.stat();
+      await verifyTransferIdentity(current, before);
       if (after.size !== before.size || after.mtimeMs !== before.mtimeMs || after.ctimeMs !== before.ctimeMs)
         throw new CrotError("OPERATION_FAILED", "Artifact changed during capture");
       result.push({ path: name, data });

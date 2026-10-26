@@ -176,6 +176,10 @@ export function stateSecretPaths(stateDir: string): string[] {
     path.join(stateDir, "product-vault.enc"),
     path.join(stateDir, "product-state.json"),
     path.join(stateDir, "client-tokens.json"),
+    // Publication staging and journal are never readable through generic managed tools, even Full Control.
+    path.join(stateDir, "publication-media"),
+    path.join(stateDir, "publication-avatars"),
+    path.join(stateDir, "publications.json"),
   ];
 }
 

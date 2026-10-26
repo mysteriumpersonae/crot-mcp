@@ -1,5 +1,6 @@
 import { createServer, type Server } from "node:http";
 import { afterEach, expect, it } from "vitest";
+import { waitFor } from "../../helpers.js";
 import {
   PublicationService,
   type PublicationRecord,
@@ -154,4 +155,58 @@ it("a closed owner session cannot confirm and uncertain delivery is never retrie
   await recovered.restore(service.list().map((r) => ({ ...r, state: "processing" })));
   expect(recovered.list()[0]).toMatchObject({ state: "failed", error: "delivery_unknown" });
   expect(sendCount).toBe(1);
+});
+it("does not expose a terminal delivery status or result ID until durable audit has completed", async () => {
+  let release!: () => void,
+    auditEntered = false;
+  const barrier = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const events: string[] = [];
+  const service = new PublicationService({
+    authorizePrepare: async () => ({
+      id: "a",
+      provider: "x",
+      generation: "g",
+      handle: "@fixture",
+      privacy: ["public"],
+      destinationLabel: "@fixture",
+    }),
+    persist: async () => {},
+    send: async () => ({ state: "published", id: "remote-id" }),
+    audit: async (event) => {
+      if (event.state === "published") {
+        auditEntered = true;
+        await barrier;
+      }
+      events.push(event.state);
+    },
+  });
+  const owner = {},
+    draft = await service.preparePublication("p", {
+      provider: "x",
+      accountId: "a",
+      title: "Title",
+      description: "Post",
+    });
+  const permit = service.openForOwner(draft.id, owner);
+  const completion = service.confirmPublication(owner, {
+    id: draft.id,
+    confirmation: permit.confirmation,
+    title: "Title",
+    description: "Post",
+    privacy: "public",
+    termsAccepted: true,
+  });
+  try {
+    await waitFor(() => auditEntered);
+    expect(service.list("p")[0]).toMatchObject({ id: draft.id, state: "processing" });
+    expect(service.list("p")[0]?.resultId).toBeUndefined();
+    expect(events).toEqual(["pending_publication", "queued", "processing"]);
+  } finally {
+    release();
+  }
+  expect((await completion).state).toBe("published");
+  expect(service.list("p")[0]).toMatchObject({ state: "published", resultId: "remote-id" });
+  expect(events).toEqual(["pending_publication", "queued", "processing", "published"]);
 });
