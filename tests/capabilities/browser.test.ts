@@ -594,6 +594,35 @@ describe("WP-25 Core dialog boundary", () => {
     const result = await service.handleDialog(ctx, { tabId: 1, accept: true, promptText: "secret answer" });
     expect(result.dialog).toEqual({ type: "prompt" });
     expect(JSON.stringify(audit.events)).not.toMatch(/secret answer|private message|defaultPrompt/);
-    expect(fake.calls[0]?.params).toMatchObject({ tabId: 1, accept: true, promptText: "secret answer" });
+    expect(fake.calls.find((call) => call.command === "dialog.handle")?.params).toMatchObject({
+      tabId: 1,
+      accept: true,
+      promptText: "secret answer",
+    });
   });
+});
+
+it("system publication guard refuses a permissive Full Control browser and records the refusal", async () => {
+  const { service, audit, fake } = setup({ mode: "full_control" });
+  service.setTabPolicy({
+    mode: "background",
+    domains: ["studio.youtube.com"],
+    blockedDomains: [],
+    sensitivePreset: false,
+  });
+  await expect(service.openTab(ctx, { url: "https://studio.youtube.com/" })).rejects.toMatchObject({
+    code: "PUBLICATION_BYPASS_DENIED",
+  });
+  expect(fake.calls.some((call) => call.command === "tabs.open")).toBe(false);
+  fake.handlers.set("tabs.resolve", () => ({ tabId: 1, url: "https://api.x.com/2/tweets" }));
+  await expect(service.readPage(ctx, { tabId: 1 })).rejects.toMatchObject({ code: "PUBLICATION_BYPASS_DENIED" });
+  expect(fake.calls.some((call) => call.command === "page.read")).toBe(false);
+  expect(audit.events).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        operation: "browser.page_read",
+        error: expect.objectContaining({ code: "PUBLICATION_BYPASS_DENIED" }),
+      }),
+    ]),
+  );
 });

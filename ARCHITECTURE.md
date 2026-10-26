@@ -6258,3 +6258,41 @@ Publication metadata and confirmation have escaped UTF-8 budgets below the contr
 Avatars use provider-specific HTTPS host allowlists, reject redirects and credentials, require raster Content-Type plus format magic and bounded dimensions, and have a 24-KiB streaming size cap, request deadline and bounded memory cache. The owner RPC returns only a data URL or local fallback, never a renderer network URL. Disconnect and shutdown invalidate cache use. The renderer CSP still forbids network connections and remote scripts; only local blob image/video previews were added.
 
 **Activation barrier remains fail-closed.** Production must have a fresh verified Pro entitlement, but that is not sufficient: subprocess/Custom Skill and browser direct-publication anti-bypass qualification is still outstanding. Until it is implemented and proven, service preparation/send refuses publication rather than relying solely on the existing generic Core HTTP boundary. A deliberately named, in-process-only `publicationFixture` composes actual local OAuth/platform HTTP in integration tests; it is not configurable through CLI, files, RPC or renderer and is not production isolation evidence. This does not disable terminal/browser features to simulate protection and does not represent a complete Stage C Pass. PR #7 remains Draft pending actual anti-bypass implementation, shipped Chromium acceptance and exact-head CI.
+
+### AD-67 — Mandatory managed-browser route boundary and explicit command-egress qualification
+
+Publication and OAuth routes have a non-configurable system guard shared by Core
+and the shipped extension. It is independent of Full Control, tab domain grants
+and the sensitive-domain preset. Committed/pending URL and the real browser frame
+inventory are checked before access; an unavailable inventory is fail-closed.
+Sensitive tab listings omit the session entirely. Percent/double-encoded paths,
+separators and decoded dot segments cannot avoid the route match. Social-origin
+input is also owner-only because a SPA can display its composer at `/home` without
+navigation. Public profile/video reading and unrelated-site automation remain
+available. `webNavigation` permission supplies frame URLs only; they are not a
+cookie/session export API. The fixed CDP allowlist still exposes no cookie or
+credential extraction command. Core preserves `PUBLICATION_BYPASS_DENIED` and
+records a denial even when approval target binding discovers the system boundary.
+Generic Core HTTP also denies protected routes with GET, not just social writes.
+
+Account metadata now records only recognized grant names actually returned by
+the OAuth server. An omitted scope field is `not_reported`, never an assertion
+that the requested scopes were granted. Known missing scopes block credential
+leases. Actual profile HTTP 403/429 and YouTube quota/channel failures have fixed
+non-secret reason codes; failed write-tier checks are not mislabeled revoked
+credentials. The owner account card, review dialog and system-check report expose
+these facts. A successful channel/profile lookup does **not** prove remaining
+YouTube upload quota or X paid write-tier access; unknown evidence stays explicit.
+
+Reserved CROT/OAuth/owner-RPC/session-bus environment names cannot be inherited
+through `environment.allow` or injected via process/Custom Skill env overrides.
+This is defense in depth, **not** arbitrary-subprocess network mediation. The
+existing native AD-58 boundary remains mandatory for service commands, but its
+network-on mode is not a publication endpoint firewall. Blocking executable
+basenames (`curl`, `security`, `secret-tool`, etc.) would not stop direct language
+runtime, native API or renamed-program access, and is not accepted as proof.
+Cross-platform OS-enforced mediated egress and native secret-store/owner-channel
+negative qualification are still outstanding. No production activation, Ready
+status or PR merge is authorized by this partial checkpoint; the publication
+fail-closed barrier stays in place. No blanket shutdown of terminal/browser/MCP
+features is used to manufacture qualification.

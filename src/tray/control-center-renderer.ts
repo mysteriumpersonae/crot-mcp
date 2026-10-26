@@ -269,6 +269,7 @@ export const CONTROL_CENTER_RENDERER =
           if(publicationTerminal(latest.state)){submitted=true;cancel.disabled=true;validate();if(latest.error)message.textContent=t(latest.error==='delivery_unknown'?'Delivery is uncertain. Check the platform before preparing another publication.':'Publication failed.');}
         }catch{if(!closed)message.textContent=t('Service request failed. Check the local bridge and try again.');}
       }
+      if(opened.diagnostics){const diagnostic=node('pre');diagnostic.dataset.accountDiagnostics='';diagnostic.textContent=JSON.stringify(opened.diagnostics,null,2);d.append(diagnostic);}
       d.append(profile,preview,status,title.wrap,description.wrap,node('label','Privacy'),privacy,comments.wrap,duet.wrap,stitch.wrap,commercial.wrap,own.wrap,branded.wrap,terms.wrap,message,actions(close,cancel,publish));
       d.append(node('p','Unavailable controls are not applied by this platform adapter.','muted'));
       if(record.request.provider==='tiktok')d.append(node('p','TikTok inbox draft only. Complete title, description, privacy and commercial disclosures in TikTok before posting. These fields are review reminders, not applied by the inbox API.','banner'));
@@ -310,6 +311,7 @@ export const CONTROL_CENTER_RENDERER =
         if(connectedAccount(record))void accountAvatar(record.provider,card.firstChild,record);
         card.append(badge(states[record.state],record.state==='connected'));if(record.handle){const identity=node('p');identity.textContent=record.handle;identity.dataset.noI18n='';card.append(identity);}
         if(record.restriction){const note=node('p',undefined,'banner');note.textContent=record.restriction==='tiktok_private_or_draft_only'?t('TikTok is limited to private or draft uploads.'):record.restriction;card.append(note);}
+        if(record.diagnostics){const diagnostics=node('details'),summary=node('summary','Account diagnostics'),facts=node('pre');facts.dataset.accountDiagnostics=record.provider;facts.textContent=JSON.stringify(record.diagnostics,null,2);diagnostics.append(summary,facts);card.append(diagnostics);}
         if(record.revocation==='failed')card.append(node('p','Provider revocation failed. Local tokens were removed; review provider application permissions.','banner'));
         if(pending)card.append(node('p','Complete authorization in your system browser.','muted'),button('Cancel authorization',async()=>{await rpc('accounts.cancel',{provider:record.provider});last='';await refresh();}));
         if(connectedAccount(record)&&['youtube','tiktok','x'].includes(record.provider))card.append(button('Create publication',()=>newPublication(record)));

@@ -175,7 +175,7 @@ describe.runIf(isWindows)("Windows owned native byte ProcessLauncher (not confin
     },
   );
   it("keeps the bounded runtime PATH and private temp through real cmd traversal", async () => {
-    const script = `node -e "console.log(JSON.stringify({path:process.env.PATH,temp:process.env.TEMP,root:process.env.SystemRoot,custom:process.env.CROT_TEST_LITERAL,docker:process.env.DOCKER_HOST}))"`;
+    const script = `node -e "console.log(JSON.stringify({path:process.env.PATH,temp:process.env.TEMP,root:process.env.SystemRoot,custom:process.env.NATIVE_TEST_LITERAL,docker:process.env.DOCKER_HOST}))"`;
     const result = await core.processes.shell(ctx, {
       shell: "cmd",
       cwd,
@@ -184,7 +184,7 @@ describe.runIf(isWindows)("Windows owned native byte ProcessLauncher (not confin
         PATH: "Z:\\unapproved",
         TEMP: dirs.outside,
         SystemRoot: "Z:\\fake",
-        CROT_TEST_LITERAL: "known-literal",
+        NATIVE_TEST_LITERAL: "known-literal",
         DOCKER_HOST: "npipe:////./pipe/docker_engine",
       },
     });

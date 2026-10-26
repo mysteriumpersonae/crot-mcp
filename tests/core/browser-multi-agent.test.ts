@@ -151,7 +151,8 @@ describe("WP-27 Core multi-agent contract", () => {
     ]);
     expect(browser.calls.filter((c) => c.command === "tabs.resolve").every((c) => c.tabId === 1)).toBe(true);
     await core.browser.readPage(local());
-    expect(browser.calls.at(-2)).toEqual({ command: "tabs.resolve" });
+    expect(browser.calls.at(-3)).toEqual({ command: "tabs.resolve" });
+    expect(browser.calls.at(-2)).toEqual({ command: "tabs.resolve", tabId: 1 });
     expect(browser.calls.at(-1)).toMatchObject({ command: "page.read", tabId: 1 });
   });
   it("serializes the entire operation FIFO across agents; other tabs and untargeted tools are concurrent", async () => {
@@ -174,18 +175,16 @@ describe("WP-27 Core multi-agent contract", () => {
     expect(browser.calls.some((c) => c.command === "page.read")).toBe(false);
     gate.release();
     await Promise.all([first, second, third]);
-    expect(browser.calls.filter((c) => c.tabId === 1).map((c) => c.selector ?? c.command)).toEqual([
-      "#first",
-      "#second",
-      "page.read",
-    ]);
+    expect(
+      browser.calls.filter((c) => c.tabId === 1 && c.command !== "tabs.resolve").map((c) => c.selector ?? c.command),
+    ).toEqual(["#first", "#second", "page.read"]);
   });
   it("accepts sixteen waiters, rejects the seventeenth and frees a cancelled slot without side effects", async () => {
     await setup();
     const gate = deferred();
     browser.action = async () => gate.promise;
     const first = core.browser.click(local(), { tabId: 1, selector: "#running" });
-    await waitFor(() => browser.calls.length === 1);
+    await waitFor(() => browser.calls.some((call) => call.selector === "#running"));
     const abort = new AbortController();
     const cancelled = core.browser
       .click({ ...local(), signal: abort.signal }, { tabId: 1, selector: "#cancelled" })

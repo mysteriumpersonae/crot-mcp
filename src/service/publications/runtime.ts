@@ -1,3 +1,4 @@
+import { accountDiagnostics } from "../social/diagnostics.js";
 /** Trusted service composition. No credentials, staging paths or send authority appear in agent JSON. */
 import path from "node:path";
 import { lstat, realpath } from "node:fs/promises";
@@ -232,7 +233,14 @@ export class PublicationRuntime {
     this.owner(owner, true);
     if (!this.engine.list(this.host.project()).some((r) => r.id === id))
       throw new Error("Publication does not belong to the active project");
-    return { ok: true, ...this.engine.openForOwner(id, owner) };
+    const opened = this.engine.openForOwner(id, owner);
+    const account = this.host.accounts
+      .list()
+      .accounts.find(
+        (account) =>
+          account.id === opened.publication.account.id && account.generation === opened.publication.account.generation,
+      );
+    return { ok: true, ...opened, ...(account ? { diagnostics: accountDiagnostics(account) } : {}) };
   }
   async preview(owner: object, input: unknown) {
     this.owner(owner);

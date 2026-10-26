@@ -33,12 +33,12 @@ describe("process: exec", () => {
   it("runs a command with arguments, cwd, env and stdin", async () => {
     await mkdir(path.join(dirs.workspace, "sub"));
     const script =
-      "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{console.log(process.cwd(), process.env.CROT_T, d.trim());console.error('err');process.exit(3)})";
+      "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{console.log(process.cwd(), process.env.PROCESS_TEST_T, d.trim());console.error('err');process.exit(3)})";
     const r = await core.processes.exec(ctx, {
       command: node,
       args: ["-e", script],
       cwd: "sub",
-      env: { CROT_T: "v" },
+      env: { PROCESS_TEST_T: "v" },
       stdin: "in",
     });
     expect(r.exitCode).toBe(3);
@@ -167,7 +167,7 @@ describe.runIf(isWindows)("process: shell (Windows)", () => {
     const r = await core.processes.shell(ctx, {
       shell: "powershell",
       script:
-        "'маркер' > $env:CROT_REDIRECT; [Console]::WriteLine('stdout-marker'); [Console]::Error.WriteLine('stderr-marker'); exit 23",
+        "'маркер' > $env:PROCESS_TEST_REDIRECT; [Console]::WriteLine('stdout-marker'); [Console]::Error.WriteLine('stderr-marker'); exit 23",
       timeoutMs: 15000,
       env: {
         PATH: path.join(systemRoot, "System32"),
@@ -179,7 +179,7 @@ describe.runIf(isWindows)("process: shell (Windows)", () => {
         TMP: profile,
         PSModulePath: path.join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "Modules"),
         PSModuleAnalysisCachePath: path.join(profile, "analysis-cache"),
-        CROT_REDIRECT: output,
+        PROCESS_TEST_REDIRECT: output,
       },
     });
     expect(r.timedOut).toBe(false);
@@ -215,12 +215,12 @@ describe.runIf(isWindows)("process: shell (Windows)", () => {
     const script = [
       "const k=Object.keys(process.env).filter(n=>n.toUpperCase()==='PATH');",
       "const v=process.env[k[0]];",
-      "console.log(JSON.stringify({names:k,equal:v===process.env.CROT_EXPECTED_PATH,length:v.length}))",
+      "console.log(JSON.stringify({names:k,equal:v===process.env.PROCESS_TEST_EXPECTED_PATH,length:v.length}))",
     ].join("");
     const r = await core.processes.exec(ctx, {
       command: node,
       args: ["-e", script],
-      env: { path: expected, CROT_EXPECTED_PATH: expected },
+      env: { path: expected, PROCESS_TEST_EXPECTED_PATH: expected },
     });
     expect(r.stderr).toBe("");
     expect(r.stdoutTruncated).toBe(false);
@@ -386,17 +386,17 @@ describe("process: commands and environment", () => {
   });
 
   it("removes variables set to null", async () => {
-    process.env.CROT_TEST_REMOVE_ME = "present";
+    process.env.PROCESS_TEST_TEST_REMOVE_ME = "present";
     try {
-      const name = isWindows ? "crot_test_remove_me" : "CROT_TEST_REMOVE_ME";
+      const name = isWindows ? "process_test_test_remove_me" : "PROCESS_TEST_TEST_REMOVE_ME";
       const r = await core.processes.exec(ctx, {
         command: node,
-        args: ["-e", "console.log(String(process.env.CROT_TEST_REMOVE_ME))"],
-        env: { [name]: null, CROT_TEST_ADDED: "1" },
+        args: ["-e", "console.log(String(process.env.PROCESS_TEST_TEST_REMOVE_ME))"],
+        env: { [name]: null, PROCESS_TEST_TEST_ADDED: "1" },
       });
       expect(r.stdout.trim()).toBe("undefined");
     } finally {
-      delete process.env.CROT_TEST_REMOVE_ME;
+      delete process.env.PROCESS_TEST_TEST_REMOVE_ME;
     }
   });
 

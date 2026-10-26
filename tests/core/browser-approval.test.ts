@@ -279,6 +279,7 @@ describe("browser approvals (AD-6, AD-8, AD-9, AD-11)", () => {
     await c().browser.readPage(ctx, {});
     expect(stub.sent).toEqual([
       { command: "tabs.resolve", params: {}, connectionId: CONNECTION_A },
+      { command: "tabs.resolve", params: { tabId: 7 }, connectionId: CONNECTION_A },
       {
         command: "page.read",
         params: { tabId: 7, format: "text", maxBytes: 10 * 1024 * 1024 },

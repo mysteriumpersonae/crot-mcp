@@ -1,3 +1,4 @@
+import { publicationBrowserTarget } from "../../publications/browser-boundary.js";
 import { socialWriteTarget } from "../../publications/network-boundary.js";
 import { lookup as dnsLookup } from "node:dns/promises";
 import http from "node:http";
@@ -122,7 +123,7 @@ export class NetworkService {
     const exposure = this.guard.exposureSnapshot(context);
     try {
       for (let hop = 0; ; hop++) {
-        if (socialWriteTarget(current.url, method, headers, body)) {
+        if (publicationBrowserTarget(current.url.href) || socialWriteTarget(current.url, method, headers, body)) {
           await this.guard.run(
             context,
             {
@@ -132,7 +133,7 @@ export class NetworkService {
             },
             async () => {
               throw new CrotError(
-                "PERMISSION_DENIED",
+                publicationBrowserTarget(current.url.href) ? "PUBLICATION_BYPASS_DENIED" : "PERMISSION_DENIED",
                 "Social API writes require preparePublication and an authenticated owner confirmation; generic network requests cannot publish.",
               );
             },

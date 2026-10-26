@@ -150,3 +150,54 @@ explicit skips** using the documented headless Linux fixture configuration.
 Two earlier invocations failed due to missing browser/headless fixture options;
 they are not counted as passing evidence. Windows native acceptance still
 requires the new remote commit's CI, not the Linux protector fixture.
+
+#### AD-67 anti-bypass and diagnostics checkpoint (qualification pending)
+
+Implemented independent Core/extension protected-route refusal, pending URL and
+real frame-inventory checks, sensitive session listing exclusion and social-SPA
+input refusal, plus generic Core HTTP refusal on protected GET endpoints. Added
+deterministic Core/extension tests and an actual native-extension Chromium open
+refusal case. Reserved service/session env names are denied in both terminal and
+Custom Skill scratch launch admission with audit. OAuth scope metadata records
+actual recognized grants; missing scope, HTTP API restrictions/rate limits and
+YouTube channel/quota errors have fixed safe diagnostics in the account card,
+review dialog and exported system check.
+
+**Not closed:** arbitrary command network-on egress, renamed/native secret-store
+API qualification, and positive evidence of X paid write-tier / remaining YouTube
+upload quota. Unknown platform facts are shown as unknown, not fabricated. CLI
+name filters would not solve this. Production publishing remains fail-closed;
+PR #7 stays Draft and unmerged until native mediation and acceptance are complete.
+Prior 11/11 applies to `397c442`, not these unqualified changes.
+
+Local AD-67 regression passed **2497 main tests / 228 platform skips**, **203
+extension tests**, lint/docs/format, both builds/typechecks. Full real Chromium
+passed **61 tests / 3 explicit skips** across 11 files, including independent
+MCP/Core and actual native-extension protected-open refusals without contacting
+external platforms. The E2E file passed a separate strict/index-safe TypeScript
+check. Generic process environment tests now use non-service variable names;
+reserved-name refusal has separate audited terminal and scratch-skill coverage.
+Earlier failed runs exposed necessary packaging permission and queue-metadata
+expectation updates and are not counted as passing evidence. New-head CI is
+still required. These results do not qualify arbitrary command egress or close
+Stage C's production activation barrier.
+
+
+CI `793c988` completed 9/11; both Windows jobs correctly refused an old generic
+process test's explicit `CROT_TEST_LITERAL` override under AD-67. That fixture
+now uses `NATIVE_TEST_LITERAL`; its PATH/private-temp/SystemRoot assertions and
+actual native process launch remain unchanged. The mandatory reserved-name
+guard is not relaxed. Other `CROT_*` secret-inheritance canaries are retained.
+A new-head native Windows run is required, not a blind retry of the failed head.
+
+Windows fixture correction `6abb5d8` qualified on Node 20 and Node 22. Its
+exact-head CI completed 10/11: Node 20 Windows instead exposed the remote
+deadline fixture's one-second pre-approval admission budget. The 6000ms test
+relay deadline minus the unchanged production 5000ms margin could expire before
+the real TLS/ACL/owner event reached the approval queue, so it did not exercise
+the pending-write path it claimed. The fixture now uses a 12000ms relay budget,
+explicitly requires owner approval delivery within 5000ms, and checks device
+cancellation near 7000ms (strict 6500–9500ms bounds), absence of the write,
+stream drain and deadline audit. Production timeout/margin and security guards
+are unchanged. This needs its own local and exact-head CI qualification; it is
+not a retry of the failed head or a declaration of Stage C completion.

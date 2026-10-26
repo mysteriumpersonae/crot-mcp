@@ -21,7 +21,9 @@ async function fixture() {
     active = false,
     tokenCalls = 0,
     revokeCalls = 0,
-    revokeFailed = false;
+    revokeFailed = false,
+    profileStatus = 200,
+    tokenScope: string | undefined;
   const issued = new Set<string>(),
     values = new Map<string, string>(),
     audits: string[] = [],
@@ -66,10 +68,20 @@ async function fixture() {
       tokenCalls++;
       active = true;
       res.setHeader("content-type", "application/json");
-      res.end('{"access_token":"fixture-access","refresh_token":"fixture-refresh"}');
+      res.end(
+        JSON.stringify({
+          access_token: "fixture-access",
+          refresh_token: "fixture-refresh",
+          ...(tokenScope === undefined ? {} : { scope: tokenScope }),
+        }),
+      );
       return;
     }
     if (url.pathname === "/profile") {
+      if (profileStatus !== 200) {
+        res.writeHead(profileStatus, { "content-type": "application/json" }).end('{"error":"not echoed PRIVATE"}');
+        return;
+      }
       if (!active || req.headers.authorization !== "Bearer fixture-access") {
         res.writeHead(401, { "content-type": "application/json" }).end('{"error":"revoked"}');
         return;
@@ -114,12 +126,12 @@ async function fixture() {
     new Map([["github", adapter]]),
   );
   await service.configure("github", "fixture-client", "fixture-app-secret");
-  const authorize = async () => {
+  const authorize = async (expected = "connected") => {
     await service!.connect("github");
     expect(new URL(browserUrl).origin).toBe(origin);
     expect((await fetch(browserUrl)).status).toBe(200);
     const deadline = Date.now() + 3000;
-    while (service!.list().find((a) => a.provider === "github")?.state !== "connected") {
+    while (service!.list().find((a) => a.provider === "github")?.state !== expected) {
       if (Date.now() > deadline) throw new Error("Account failed to connect");
       await new Promise((r) => setTimeout(r, 5));
     }
@@ -130,6 +142,12 @@ async function fixture() {
     journal,
     authorize,
     adapter,
+    setScope: (scope: string) => {
+      tokenScope = scope;
+    },
+    setProfileStatus: (status: number) => {
+      profileStatus = status;
+    },
     tokenCalls: () => tokenCalls,
     revokeCalls: () => revokeCalls,
     expire: () => {
@@ -185,4 +203,56 @@ it("does not claim Notion supports native PKCE", () => {
     pkce: true,
     authorizationEndpoint: "https://mcp.crot.network/oauth/notion/authorize",
   });
+});
+
+it("persists issued scopes, restricts missing grants, and never leases a credential to publication", async () => {
+  const f = await fixture();
+  f.setScope("read:user");
+  await f.authorize("restricted");
+  const account = service!.list().find((a) => a.provider === "github")!;
+  expect(account).toMatchObject({
+    state: "restricted",
+    restriction: "oauth_scopes_missing",
+    grantedScopes: ["read:user"],
+  });
+  let called = false;
+  await expect(
+    service!.withCredential("github", async () => {
+      called = true;
+    }),
+  ).rejects.toThrow();
+  expect(called).toBe(false);
+  const restored = new SocialAccountService(
+    {
+      secrets: async () => {
+        throw Error("not needed");
+      },
+      persist: async () => {},
+      audit: async () => {},
+      openBrowser: async () => {},
+    },
+    new Map([["github", f.adapter]]),
+  );
+  restored.restore(service!.list());
+  expect(restored.list()).toEqual(service!.list());
+  await restored.close();
+});
+it("records real HTTP API restrictions without misclassifying them as revoked tokens and can recheck", async () => {
+  const f = await fixture();
+  f.setScope("read:user,repo");
+  await f.authorize();
+  f.setProfileStatus(403);
+  await expect(service!.check("github")).rejects.toThrow("provider_api_access_restricted");
+  expect(service!.list().find((a) => a.provider === "github")).toMatchObject({
+    state: "restricted",
+    restriction: "provider_api_access_restricted",
+  });
+  expect(f.audits).toContain("account.restricted");
+  expect(JSON.stringify(f.journal)).not.toContain("PRIVATE");
+  f.setProfileStatus(200);
+  await service!.check("github");
+  expect(service!.list().find((a) => a.provider === "github")?.state).toBe("connected");
+  f.setProfileStatus(429);
+  await expect(service!.check("github")).rejects.toThrow("provider_rate_limited");
+  expect(service!.list().find((a) => a.provider === "github")?.restriction).toBe("provider_rate_limited");
 });

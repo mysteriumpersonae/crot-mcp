@@ -6,7 +6,16 @@ import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const REQUIRED_PERMISSIONS = ["alarms", "debugger", "downloads", "nativeMessaging", "scripting", "tabGroups", "tabs"];
+const REQUIRED_PERMISSIONS = [
+  "alarms",
+  "debugger",
+  "downloads",
+  "nativeMessaging",
+  "scripting",
+  "tabGroups",
+  "tabs",
+  "webNavigation",
+];
 const FORBIDDEN_FIELDS = ["content_scripts", "externally_connectable", "web_accessible_resources", "update_url"];
 export function validateStoreManifest(manifest) {
   if (manifest.manifest_version !== 3) throw new Error("store manifest must be MV3");

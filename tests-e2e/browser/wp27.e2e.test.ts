@@ -125,6 +125,31 @@ describe.runIf(process.platform === "linux")("WP-27 real MCP / two contexts / Ch
     expect(ui.shown.length).toBe(presented);
     await h.ok(r, "browser_snapshot", { tabId: tabA });
   });
+  it("publication/OAuth guard refuses real MCP and native-extension opens despite permissive owner policy", async () => {
+    const policy = {
+      mode: "background",
+      domains: ["studio.youtube.com", "x.com", "open.tiktokapis.com"],
+      blockedDomains: [],
+      sensitivePreset: false,
+    };
+    for (const url of [
+      "https://studio.youtube.com/",
+      "https://x.com/compose/post",
+      "https://open.tiktokapis.com/v2/oauth/token/",
+    ]) {
+      const result = await h.callTool(a, "browser_tab_open", { url, active: false });
+      expect(result.body).toMatchObject({ error: { code: "PUBLICATION_BYPASS_DENIED" } });
+      // Trusted test bypasses Core only to exercise the actual shipped extension's independent refusal.
+      const trustedParams = { url, active: false, __crotTabPolicy: policy };
+      await expect(
+        bridge.request("tabs.open", trustedParams, { timeoutMs: 5000, signal: new AbortController().signal }),
+      ).rejects.toMatchObject({ code: "PUBLICATION_BYPASS_DENIED" });
+    }
+    expect(
+      audit.events.filter((event) => event.error?.code === "PUBLICATION_BYPASS_DENIED").length,
+    ).toBeGreaterThanOrEqual(3);
+    await h.ok(a, "browser_snapshot", { tabId: tabA });
+  });
   it("two contexts see direct tabs and popup ownership without taking ownership of user tabs", async () => {
     const openedA = await h.ok<Tabs>(a, "browser_tabs_list"),
       openedB = await h.ok<Tabs>(b, "browser_tabs_list");

@@ -45,6 +45,7 @@ describe("extension manifest", () => {
       "debugger",
       "tabGroups",
       "downloads",
+      "webNavigation",
     ]);
     // downloads is used only by the exact-owned WP-26 capture.
     // Scripting and captureVisibleTab need host access; the extension itself refuses non-http(s) pages.

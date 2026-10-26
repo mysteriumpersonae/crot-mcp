@@ -207,7 +207,17 @@ describe("MCP browser tools", () => {
       expect(isError, name).toBe(true);
       expect(body.error.code, name).toBe("PERMISSION_DENIED");
     }
-    expect(browser.commands).toEqual(["tabs.list", "page.read", "page.screenshot", "page.snapshot", "page.wait"]);
+    expect(browser.commands).toEqual([
+      "tabs.list",
+      "tabs.resolve",
+      "page.read",
+      "tabs.resolve",
+      "page.screenshot",
+      "tabs.resolve",
+      "page.snapshot",
+      "tabs.resolve",
+      "page.wait",
+    ]);
   });
 
   it("delegates every browser tool to Core and audits its operation (FULL_CONTROL)", async () => {

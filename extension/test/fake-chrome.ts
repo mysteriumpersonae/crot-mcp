@@ -157,6 +157,7 @@ export class FakeChrome {
   readonly debugger = new FakeDebugger();
   readonly runtime = new FakeRuntime();
   readonly tabsById = new Map<number, MutableTab>();
+  readonly frameUrls = new Map<number, string[]>();
   readonly focused: number[] = [];
   readonly restored: number[] = [];
   readonly windowStates = new Map<number, string>();
@@ -357,6 +358,15 @@ export class FakeChrome {
             self.restored.push(windowId);
           }
           return {};
+        },
+      },
+      webNavigation: {
+        async getAllFrames({ tabId }: { tabId: number }) {
+          return (self.frameUrls.get(tabId) ?? [self.tab(tabId).url ?? ""]).map((url, i) => ({
+            frameId: i,
+            parentFrameId: i === 0 ? -1 : 0,
+            url,
+          }));
         },
       },
       scripting: {

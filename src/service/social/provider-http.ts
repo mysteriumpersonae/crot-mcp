@@ -1,6 +1,7 @@
 /** Fixed provider endpoints. No renderer/agent endpoint overrides. Fixtures use a separate trusted factory. */
 import {
   AccountAuthorizationError,
+  AccountRestrictionError,
   type AccountProfile,
   type OAuthAccountAdapter,
   type OAuthTokens,
@@ -120,7 +121,18 @@ function tokens(result: HttpResult): OAuthTokens {
     expiry = result.body.expires_in;
   if (!access || (expiry !== undefined && (!Number.isSafeInteger(expiry) || Number(expiry) <= 0)))
     throw new Error("Invalid provider token response");
-  return { access, ...(refresh ? { refresh } : {}), ...(expiry !== undefined ? { expiresIn: Number(expiry) } : {}) };
+  const scopeValue = result.body.scope;
+  if (scopeValue !== undefined && (typeof scopeValue !== "string" || scopeValue.length > 4096))
+    throw new Error("Invalid provider scope response");
+  const scopes = typeof scopeValue === "string" ? scopeValue.split(/[ ,]+/).filter(Boolean) : undefined;
+  if (scopes && (scopes.length > 64 || scopes.some((s) => s.length > 256 || /[\x00-\x20\x7f]/.test(s))))
+    throw new Error("Invalid provider scope response");
+  return {
+    access,
+    ...(scopes ? { scopes } : {}),
+    ...(refresh ? { refresh } : {}),
+    ...(expiry !== undefined ? { expiresIn: Number(expiry) } : {}),
+  };
 }
 function adapter(provider: SocialProvider, spec: Spec): OAuthAccountAdapter {
   const tokenRequest = async (client: ProviderClient, fields: Record<string, string>, signal: AbortSignal) => {
@@ -177,12 +189,20 @@ function adapter(provider: SocialProvider, spec: Spec): OAuthAccountAdapter {
         signal,
       );
       if (result.status === 401) throw new AccountAuthorizationError("Provider revoked the account token");
-      if (result.status < 200 || result.status >= 300)
-        throw new Error("Provider profile is unavailable or API access is restricted");
+      if (result.status === 429) throw new AccountRestrictionError("provider_rate_limited");
+      if (result.status === 403) {
+        const error = obj(result.body.error);
+        const reasons = Array.isArray(error.errors) ? error.errors.map((e) => obj(e).reason) : [];
+        if (provider === "youtube" && reasons.some((r) => ["quotaExceeded", "dailyLimitExceeded"].includes(String(r))))
+          throw new AccountRestrictionError("youtube_quota_exceeded");
+        throw new AccountRestrictionError("provider_api_access_restricted");
+      }
+      if (result.status < 200 || result.status >= 300) throw new Error("Provider profile is unavailable");
       let p: Record<string, unknown> = result.body,
         profile: AccountProfile;
       if (provider === "youtube") {
         p = obj(Array.isArray(p.items) ? p.items[0] : undefined);
+        if (!p.id) throw new AccountRestrictionError("youtube_channel_unavailable");
         const snippet = obj(p.snippet);
         profile = {
           id: String(p.id ?? ""),
