@@ -1,4 +1,8 @@
 import {
+  publicationBrowserControlTarget,
+  publicationBrowserTarget,
+} from "../../src/core/publications/browser-boundary.js";
+import {
   parseTabPolicy,
   tabPolicyAllows,
   type BrowserTabPolicy,
@@ -86,6 +90,8 @@ export interface CommandContext {
   /** Connection id from the host's `welcome` (AD-9); undefined when unknown or the connection is gone. */
   readonly connectionId: () => string | undefined;
   readonly tabPolicy?: BrowserTabPolicy;
+  /** Set by the fixed command dispatcher, not agent parameters. */
+  readonly publicationControl?: boolean;
 }
 
 export type CommandHandler = (params: CommandParams, context?: CommandContext) => Promise<unknown>;
@@ -230,7 +236,19 @@ function checkConnection(expected: ExpectedSubject, context: CommandContext | un
 }
 
 /** The whole expected subject against the tab as it is right now. */
+function publicationTabGuard(tab: ChromeTab, control = false): void {
+  if (
+    [tab.url, tab.pendingUrl].some(
+      (url) => url && (publicationBrowserTarget(url) || (control && publicationBrowserControlTarget(url))),
+    )
+  )
+    throw new ExtensionError(
+      "PUBLICATION_BYPASS_DENIED",
+      "Publication and OAuth interfaces require the owner publication/account flow",
+    );
+}
 function checkTab(expected: ExpectedSubject, tab: ChromeTab, context: CommandContext | undefined): void {
+  publicationTabGuard(tab, context?.publicationControl);
   checkConnection(expected, context);
   if (expected.tabId === undefined || tab.id !== expected.tabId) throw mismatch("tab");
   const origin = httpOrigin(tab.url);
@@ -502,6 +520,33 @@ export function createCommandHandlers(api: ChromeApi, options: CommandOptions = 
   }
 
   async function enforceTabPolicy(context: CommandContext | undefined, tab: ChromeTab): Promise<void> {
+    publicationTabGuard(tab, context?.publicationControl);
+    // Non-http documents still have no page-access path; preserve their existing
+    // BROWSER_PAGE_RESTRICTED result. An HTTP document with unknown frames fails closed.
+    if (isHttpUrl(tab.url)) {
+      let frames;
+      try {
+        frames = await api.webNavigation.getAllFrames({ tabId: tab.id! });
+      } catch {
+        throw new ExtensionError("PUBLICATION_BYPASS_DENIED", "Cannot verify publication/OAuth frame boundary");
+      }
+      if (!frames || !frames.length || frames.length > 1000)
+        throw new ExtensionError(
+          "PUBLICATION_BYPASS_DENIED",
+          "Cannot verify complete publication/OAuth frame boundary",
+        );
+      if (
+        frames.some(
+          (frame) =>
+            publicationBrowserTarget(frame.url) ||
+            (context?.publicationControl && publicationBrowserControlTarget(frame.url)),
+        )
+      )
+        throw new ExtensionError(
+          "PUBLICATION_BYPASS_DENIED",
+          "Publication/OAuth frames cannot be inspected or automated",
+        );
+    }
     const active =
       context?.tabPolicy?.mode === "active"
         ? (await api.tabs.query({ active: true, lastFocusedWindow: true }))[0]?.id === tab.id
@@ -744,6 +789,7 @@ export function createCommandHandlers(api: ChromeApi, options: CommandOptions = 
         tabs: await Promise.all(
           tabs
             .filter(hasId)
+            .filter((tab) => ![tab.url, tab.pendingUrl].some((url) => url && publicationBrowserTarget(url)))
             .filter(
               (tab) =>
                 !context?.tabPolicy ||
@@ -1237,6 +1283,7 @@ export function createCommandHandlers(api: ChromeApi, options: CommandOptions = 
         : (undefined as unknown as { backendNodeId: number; channel: CdpChannel });
       const observer = new TabObserver(api, cdp, tab.id, mainFrameId);
       try {
+        await enforceTabPolicy(context, await api.tabs.get(tab.id));
         if (expected) checkTab(expected, await api.tabs.get(tab.id), context);
         await act(tab.id, node, refs);
       } catch (error) {
@@ -1297,6 +1344,27 @@ export function createCommandHandlers(api: ChromeApi, options: CommandOptions = 
           params = clean;
           context = { connectionId: context?.connectionId ?? (() => undefined), tabPolicy: policy };
         }
+        context = {
+          ...context,
+          connectionId: context?.connectionId ?? (() => undefined),
+          publicationControl: [
+            "page.click",
+            "page.type",
+            "page.hover",
+            "page.scroll",
+            "page.drag",
+            "page.press_key",
+            "page.select_option",
+            "page.set_checked",
+            "files.upload",
+            "dialog.handle",
+          ].includes(name),
+        };
+        if (typeof params.url === "string" && publicationBrowserTarget(params.url))
+          throw new ExtensionError(
+            "PUBLICATION_BYPASS_DENIED",
+            "Publication and OAuth destinations cannot be opened or automated by agents",
+          );
         if (
           context?.tabPolicy &&
           typeof params.url === "string" &&

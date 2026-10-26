@@ -9,6 +9,8 @@ import { z } from "zod";
 export type CrotErrorCode =
   | "INVALID_INPUT"
   | "PERMISSION_DENIED"
+  /** Mandatory publication/OAuth boundary; no owner policy override. */
+  | "PUBLICATION_BYPASS_DENIED"
   | "NOT_FOUND"
   | "ALREADY_EXISTS"
   | "LIMIT_EXCEEDED"

@@ -1,3 +1,4 @@
+import { publicationBrowserTarget } from "../../src/core/publications/browser-boundary.js";
 import type { CdpSessions } from "./cdp.js";
 import { ExtensionError } from "./errors.js";
 import { type HitResult, documentHit, hitTest, nodeLabel } from "./input.js";
@@ -86,6 +87,11 @@ export async function tabFrames(
   const seen = new Set<string>();
   let truncated = false;
   const walk = (node: FrameTreeNode, depth: number, sessionId: string | undefined): void => {
+    if (publicationBrowserTarget(node.frame.url))
+      throw new ExtensionError(
+        "PUBLICATION_BYPASS_DENIED",
+        "Publication/OAuth frames cannot be inspected or automated",
+      );
     if (seen.has(node.frame.id)) return;
     if (frames.length >= bounds.maxFrames || depth > bounds.maxDepth) {
       truncated = true;

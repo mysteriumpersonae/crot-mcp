@@ -22,6 +22,7 @@ export interface SocialAccount {
   avatar?: string;
   state: SocialAccountState;
   generation: string;
+  grantedScopes?: string[];
   expiresAt?: number;
   checkedAt?: number;
   restriction?: string;
@@ -29,6 +30,7 @@ export interface SocialAccount {
   cleanup?: "complete" | "failed";
 }
 export interface OAuthTokens {
+  scopes?: string[];
   access: string;
   refresh?: string;
   expiresIn?: number;
@@ -90,6 +92,17 @@ const AccountMetadataSchema = z
       .optional(),
     state: z.enum(["disconnected", "connected", "reauth_required", "restricted"]),
     generation: z.string().uuid(),
+    grantedScopes: z
+      .array(
+        z
+          .string()
+          .min(1)
+          .max(256)
+          .regex(/^[^\s\x00-\x1f\x7f]+$/),
+      )
+      .max(64)
+      .refine((scopes) => scopes.join(" ").length <= 4096)
+      .optional(),
     expiresAt: z.number().safe().nonnegative().optional(),
     checkedAt: z.number().safe().nonnegative().optional(),
     restriction: z.string().max(256).optional(),
@@ -98,6 +111,18 @@ const AccountMetadataSchema = z
   })
   .strict();
 export class AccountAuthorizationError extends Error {}
+/** Fixed safe reason codes only; never echo vendor payloads/tokens to metadata. */
+export class AccountRestrictionError extends Error {
+  constructor(
+    readonly restriction:
+      | "provider_api_access_restricted"
+      | "provider_rate_limited"
+      | "youtube_quota_exceeded"
+      | "youtube_channel_unavailable",
+  ) {
+    super(restriction);
+  }
+}
 export class SocialAccountService {
   private readonly accounts = new Map<SocialProvider, SocialAccount>();
   private readonly flows = new Map<SocialProvider, OAuthFlow>();
@@ -183,25 +208,30 @@ export class SocialAccountService {
     return [...this.flows.keys()];
   }
   async check(provider: SocialProvider): Promise<void> {
-    await this.withCredential(provider, async (access, signal, lease) => {
-      const profile = await this.adapter(provider).profile(access, signal),
-        a = this.account(provider);
-      this.checkGeneration(a, lease.generation, signal);
-      const next = AccountMetadataSchema.parse({
-        ...a,
-        id: provider + ":" + profile.id,
-        handle: profile.handle,
-        name: profile.name,
-        avatar: profile.avatar,
-        state: profile.restricted ? "restricted" : "connected",
-        restriction: profile.restriction,
-        checkedAt: this.now(),
-      });
-      if (!profile.id || !profile.handle || profile.handle === "@") throw new Error("Provider identity unavailable");
-      Object.assign(a, next);
-      await this.save();
-      await this.audit(a, "account.checked");
-    });
+    await this.withCredential(
+      provider,
+      async (access, signal, lease) => {
+        const profile = await this.adapter(provider).profile(access, signal),
+          a = this.account(provider);
+        this.checkGeneration(a, lease.generation, signal);
+        const next = AccountMetadataSchema.parse({
+          ...a,
+          id: provider + ":" + profile.id,
+          handle: profile.handle,
+          name: profile.name,
+          avatar: profile.avatar,
+          state: profile.restricted ? "restricted" : "connected",
+          restriction: profile.restriction,
+          checkedAt: this.now(),
+        });
+        if (!profile.id || !profile.handle || profile.handle === "@") throw new Error("Provider identity unavailable");
+        Object.assign(a, next);
+        this.applyScopeRestriction(a);
+        await this.save();
+        await this.audit(a, "account.checked");
+      },
+      true,
+    );
   }
   async configure(provider: SocialProvider, clientId: string, clientSecret?: string) {
     return this.serial(provider, async () => {
@@ -229,6 +259,12 @@ export class SocialAccountService {
   private checkGeneration(a: SocialAccount, generation: string, signal: AbortSignal) {
     if (a.generation !== generation || signal.aborted) throw new Error("Account session was revoked");
   }
+  private applyScopeRestriction(a: SocialAccount): void {
+    if (a.grantedScopes && this.adapter(a.provider).scopes.some((scope) => !a.grantedScopes!.includes(scope))) {
+      a.state = "restricted";
+      a.restriction = "oauth_scopes_missing";
+    }
+  }
   private async storeTokens(
     a: SocialAccount,
     generation: string,
@@ -242,6 +278,10 @@ export class SocialAccountService {
       (!Number.isSafeInteger(tokens.expiresIn) || tokens.expiresIn <= 0 || tokens.expiresIn > 366 * 86400)
     )
       throw new Error("Invalid OAuth expiry");
+    const validatedScopes =
+      tokens.scopes === undefined
+        ? undefined
+        : AccountMetadataSchema.shape.grantedScopes.parse([...new Set(tokens.scopes)]);
     try {
       await secrets.write(a.provider, "access", tokens.access);
       this.checkGeneration(a, generation, signal);
@@ -250,6 +290,10 @@ export class SocialAccountService {
     } catch {
       await secrets.clear(a.provider, true);
       throw new Error("OAuth credentials could not be committed to system storage");
+    }
+    if (validatedScopes !== undefined) {
+      // Store only recognized non-secret grant names, never arbitrary vendor strings.
+      a.grantedScopes = validatedScopes.filter((scope) => this.adapter(a.provider).scopes.includes(scope));
     }
     a.expiresAt = tokens.expiresIn === undefined ? undefined : this.now() + tokens.expiresIn * 1000;
   }
@@ -269,6 +313,7 @@ export class SocialAccountService {
         client = { clientId: a.clientId, clientSecret: await secrets.read(provider, "clientSecret") };
       await secrets.clear(provider, true);
       a.generation = randomUUID();
+      delete a.grantedScopes;
       a.state = "reauth_required";
       delete a.cleanup;
       delete a.revocation;
@@ -313,6 +358,7 @@ export class SocialAccountService {
               restriction: profile.restriction,
               checkedAt: this.now(),
             });
+            this.applyScopeRestriction(a);
             await this.save();
             await this.audit(a, "account.connected");
           }),
@@ -338,12 +384,14 @@ export class SocialAccountService {
   async withCredential<T>(
     provider: SocialProvider,
     work: (access: string, signal: AbortSignal, account: Readonly<SocialAccount>) => Promise<T>,
+    diagnostic = false,
   ): Promise<T> {
     return this.serial(provider, async () => {
       const a = this.account(provider);
       if (
         (a.state !== "connected" && a.state !== "restricted") ||
-        (a.state === "restricted" && a.restriction !== "tiktok_private_or_draft_only")
+        (a.state === "restricted" &&
+          (a.cleanup === "failed" || (!diagnostic && a.restriction !== "tiktok_private_or_draft_only")))
       )
         throw new AccountAuthorizationError("Account requires authorization");
       const adapter = this.adapter(provider),
@@ -363,12 +411,24 @@ export class SocialAccountService {
             controller.signal,
           );
           await this.storeTokens(a, generation, tokens, secrets, controller.signal);
+          this.applyScopeRestriction(a);
+          if (a.restriction === "oauth_scopes_missing" && !diagnostic) {
+            await this.save();
+            throw new AccountRestrictionError("provider_api_access_restricted");
+          }
           access = tokens.access;
           await this.save();
         }
         this.checkGeneration(a, generation, controller.signal);
         return await work(access, controller.signal, structuredClone(a));
       } catch (error) {
+        if (error instanceof AccountRestrictionError && a.generation === generation) {
+          a.state = "restricted";
+          if (a.restriction !== "oauth_scopes_missing") a.restriction = error.restriction;
+          a.checkedAt = this.now();
+          await this.save();
+          await this.audit(a, "account.restricted");
+        }
         if (error instanceof AccountAuthorizationError && a.generation === generation) {
           await this.requireReauthorization(a, secrets, "account.reauth_required");
         }
@@ -383,6 +443,7 @@ export class SocialAccountService {
     a.generation = randomUUID(); // Invalidate leases synchronously, before waiting for a provider/store operation.
     a.state = "disconnected";
     delete a.expiresAt;
+    delete a.grantedScopes;
     for (const controller of this.active.get(provider) ?? []) controller.abort();
     const flow = this.flows.get(provider);
     if (flow) {

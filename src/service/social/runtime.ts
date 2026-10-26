@@ -1,3 +1,4 @@
+import { accountDiagnostics } from "./diagnostics.js";
 /** Service composition of account metadata + OS secrets. No credential result is serializable over owner RPC. */
 import { readFile } from "node:fs/promises";
 import path from "node:path";
@@ -58,7 +59,11 @@ export class SocialAccountRuntime {
     return runtime;
   }
   list() {
-    return { ok: true, accounts: this.accounts.list(), pending: this.accounts.pendingProviders() };
+    return {
+      ok: true,
+      accounts: this.accounts.list().map((account) => ({ ...account, diagnostics: accountDiagnostics(account) })),
+      pending: this.accounts.pendingProviders(),
+    };
   }
   async configure(provider: SocialProvider, clientId: string, clientSecret?: string) {
     if (provider === "notion" && (clientId !== "crot-desktop" || clientSecret !== undefined))

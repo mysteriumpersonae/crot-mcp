@@ -640,6 +640,12 @@ export class ProductRuntime {
             ports,
             bridge: core.status().browser,
             project: inspection,
+            accounts: this.host.socialAccounts?.list().accounts.map((account) => account.diagnostics) ?? [],
+            publicationProtection: {
+              browserRoutes: "system_guard",
+              managedCommandEgress: "not_qualified",
+              production: "fail_closed",
+            },
             nativeCommandPrerequisiteMet: l1.available,
             detail: l1.available
               ? "Native L1 ready; permissions, approvals and halt state still apply"

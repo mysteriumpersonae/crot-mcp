@@ -10,7 +10,16 @@
     "service_worker": "dist/extension/src/background.js",
     "type": "module"
   },
-  "permissions": ["nativeMessaging", "tabs", "scripting", "alarms", "debugger", "tabGroups", "downloads"],
+  "permissions": [
+    "nativeMessaging",
+    "tabs",
+    "scripting",
+    "alarms",
+    "debugger",
+    "tabGroups",
+    "downloads",
+    "webNavigation"
+  ],
   "host_permissions": ["<all_urls>"],
   "action": {
     "default_title": "CROT Control Center",

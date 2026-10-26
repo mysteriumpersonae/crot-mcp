@@ -80,6 +80,10 @@ export interface ChromeDebuggee {
 }
 
 export interface ChromeApi {
+  /** Read frame URLs only for the mandatory publication/OAuth guard. Never returned to agents. */
+  readonly webNavigation: {
+    getAllFrames(details: { tabId: number }): Promise<{ frameId: number; parentFrameId: number; url: string }[] | null>;
+  };
   readonly downloads?: ChromeDownloads;
   readonly runtime: {
     connectNative(application: string): ChromePort;
