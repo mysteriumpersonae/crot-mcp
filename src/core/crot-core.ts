@@ -538,9 +538,11 @@ export class CrotCore {
    *
    * The browser bridge itself is closed by the host after this returns.
    */
-  shutdown(): Promise<void> {
+  /** Host lifecycle only: close admission and release actor/ACL leases, while audit
+   * remains available for final owner-runtime state flush. No request/RPC exposes this. */
+  quiesce(): Promise<void> {
     this.guard.closeAdmission();
-    this.shuttingDown ??= (async () => {
+    this.quiescing ??= (async () => {
       this.approvalBroker.cancelAll("shutdown");
       this.browser.shutdown();
       this.network.shutdown();
@@ -550,6 +552,14 @@ export class CrotCore {
       await this.docker.shutdown();
       await this.guard.drain(SHUTDOWN_DRAIN_MS);
       await this.browser.closeFiles();
+    })();
+    return this.quiescing;
+  }
+
+  private quiescing: Promise<void> | undefined;
+  shutdown(): Promise<void> {
+    this.shuttingDown ??= (async () => {
+      await this.quiesce();
       await this.audit.close?.();
     })();
     return this.shuttingDown;

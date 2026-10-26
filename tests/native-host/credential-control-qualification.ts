@@ -2,7 +2,7 @@
  * No missing-item, loader-failure or memory-backend substitute is acceptance evidence. */
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { copyFile, mkdir, mkdtemp, readFile, realpath, rm } from "node:fs/promises";
+import { access, constants, copyFile, mkdir, mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -86,6 +86,10 @@ export async function qualifyCredentialControl(): Promise<void> {
       secretScript = `const r=cp.spawnSync('/usr/bin/security',${JSON.stringify(args)},{encoding:'utf8',timeout:10000});if(r.error||r.status===null||r.status===0||r.stdout.trim())throw Error('Keychain isolation failed');`;
     } else {
       // Private real D-Bus/gnome-keyring session; never touches the user's vault.
+      for (const executable of ["dbus-daemon", "gnome-keyring-daemon", "secret-tool"])
+        await access("/usr/bin/" + executable, constants.X_OK).catch(() => {
+          throw new Error("Native Secret Service qualification needs CI dependency: " + executable);
+        });
       const address = `unix:path=${path.join(state, "secret-bus")}`;
       const daemon = spawn("dbus-daemon", ["--session", "--nofork", "--print-address=1", "--address=" + address], {
         stdio: ["ignore", "pipe", "pipe"],
@@ -186,7 +190,8 @@ const s=net.connect(${JSON.stringify(endpoint)});s.setTimeout(5000,()=>{console.
     for (const close of cleanup.reverse()) await close();
     for (const child of children.reverse()) {
       child.kill();
-      if (child.exitCode === null) await new Promise<void>((r) => child.once("exit", () => r()));
+      if (child.exitCode === null && child.signalCode === null)
+        await new Promise<void>((r) => child.once("exit", () => r()));
     }
     await probe?.cleanup();
     await shim?.cleanup();

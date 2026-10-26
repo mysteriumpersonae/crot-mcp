@@ -215,3 +215,16 @@ actual owner ping and successfully executed child probes. A separate real
 service integration rejects service credentials at owner RPC and MCP confirm
 attempts even with a real owner permit. Production remains blocked pending
 this qualification; no native pass or Stage C completion is yet claimed.
+
+Native qualification `3d4130e`: macOS Node 20/22 passed the new canary/control
+tests; Linux L1 setup failed (workflow dependency write denied); Windows exposed
+a shutdown ordering defect: product-vault atomic replacement preceded native
+lease release. Core now has host-only quiescence (closed admission, actor drain,
+confinement release, audit retained); service uses it before final product vault
+persistence, then closes audit normally. A portable regression verifies admission
+and audit ordering; the unchanged native test still requires complete teardown.
+No sharing/DACL guard or retry limit is relaxed. Linux missing dependencies now
+produce explicit executable diagnostics instead of a generic setup timeout.
+An independent Node 22 Linux process test timed out in CI; the unchanged focused
+local process suite passed 29 tests / 11 skips. It is not claimed resolved.
+Production remains blocked pending native and final-head qualification.

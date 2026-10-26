@@ -1146,6 +1146,10 @@ export class CrotService {
     await this.clientTokens?.close();
     await this.publications?.close();
     await this.socialAccounts?.close();
+    // AD-58 Windows pins private state against replacement while actors exist.
+    // Drain/verify and close admission BEFORE final vault persistence, retaining
+    // the audit until owner runtime shutdown finishes. Never retry around a lease.
+    if (this.holder) await this.holder.instance.quiesce();
     await this.product?.close();
     if (this.holder) await this.holder.instance.shutdown();
     await this.control?.flush();
