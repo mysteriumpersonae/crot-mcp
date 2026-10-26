@@ -164,12 +164,15 @@ export async function qualifyCredentialControl(): Promise<void> {
         command: "node",
         args: [
           "-e",
-          "require('fs').writeFileSync('credential-probe.exe',Buffer.from(require('fs').readFileSync(0,'utf8'),'base64'))",
+          "let b='';process.stdin.setEncoding('utf8');process.stdin.on('data',d=>b+=d);process.stdin.on('end',()=>require('fs').writeFileSync('credential-probe.exe',Buffer.from(b,'base64')))",
         ],
         stdin: (await readFile(probe.executable)).toString("base64"),
         timeoutMs: 30000,
       });
-      expect(staged, "native probe staging in private scratch").toMatchObject({ exitCode: 0, timedOut: false });
+      expect(
+        staged,
+        `native probe staging in private scratch: ${staged.stderr.replaceAll(canary, "[REDACTED]")}`,
+      ).toMatchObject({ exitCode: 0, timedOut: false });
     }
     const credential = await secretCredentialStore(state, privateFiles).read("control");
     if (!credential) throw Error("actual owner credential missing");
