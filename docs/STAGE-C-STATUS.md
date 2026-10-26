@@ -189,3 +189,15 @@ now uses `NATIVE_TEST_LITERAL`; its PATH/private-temp/SystemRoot assertions and
 actual native process launch remain unchanged. The mandatory reserved-name
 guard is not relaxed. Other `CROT_*` secret-inheritance canaries are retained.
 A new-head native Windows run is required, not a blind retry of the failed head.
+
+Windows fixture correction `6abb5d8` qualified on Node 20 and Node 22. Its
+exact-head CI completed 10/11: Node 20 Windows instead exposed the remote
+deadline fixture's one-second pre-approval admission budget. The 6000ms test
+relay deadline minus the unchanged production 5000ms margin could expire before
+the real TLS/ACL/owner event reached the approval queue, so it did not exercise
+the pending-write path it claimed. The fixture now uses a 12000ms relay budget,
+explicitly requires owner approval delivery within 5000ms, and checks device
+cancellation near 7000ms (strict 6500–9500ms bounds), absence of the write,
+stream drain and deadline audit. Production timeout/margin and security guards
+are unchanged. This needs its own local and exact-head CI qualification; it is
+not a retry of the failed head or a declaration of Stage C completion.

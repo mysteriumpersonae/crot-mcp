@@ -12,23 +12,31 @@ afterEach(async () => {
 });
 it("OD-5 real device abort is 5 seconds before relay deadline, no pending write executes", async () => {
   h = new RemoteAcceptance();
-  await h.start({ gateWrites: true, exchangeDeadlineMs: 6000 });
+  // Keep the production 5-second device/relay margin, but give real Windows
+  // TLS/ACL/owner-event admission time to reach the pending approval first.
+  // A 6000ms relay budget left only 1000ms and could test pre-admission expiry
+  // instead of cancellation of a pending write. This changes the fixture only.
+  await h.start({ gateWrites: true, exchangeDeadlineMs: 12000 });
   h.autoApprove = false;
   const c = await connectClient(h, "2026-07-28");
   clients.push(c);
   const start = performance.now();
-  await expect(
+  // Attach the rejection handler before awaiting owner delivery: an early
+  // transport failure must not become an unhandled rejection or a false Pass.
+  const rejected = expect(
     c.call("fs_write_file", { path: "must-not-exist.txt", content: "WP32_DEADLINE_CANARY" }),
   ).rejects.toThrow();
+  await eventually(() => h!.approvals.length === 1, 5000, "pending write approval before device deadline");
+  await rejected;
   const elapsed = performance.now() - start;
-  expect(elapsed).toBeGreaterThan(700);
-  expect(elapsed).toBeLessThan(3500);
+  expect(elapsed).toBeGreaterThan(6500);
+  expect(elapsed).toBeLessThan(9500);
   expect(h.approvals).toHaveLength(1);
   await expect(access(path.join(h.workspace, "must-not-exist.txt"))).rejects.toThrow();
   await eventually(() => h!.relay.status().openStreams === 0);
   expect(JSON.stringify(h.logs)).toContain("deadline_exceeded");
-  console.log(`WP32_TIMEOUT device-deadline: relay=6000ms margin=5000ms measured=${Math.round(elapsed)}ms`);
-}, 15000);
+  console.log(`WP32_TIMEOUT device-deadline: relay=12000ms margin=5000ms measured=${Math.round(elapsed)}ms`);
+}, 20000);
 it("OD-5 default SDK waits terminate at the earlier production approval expiry for all revisions", async () => {
   h = new RemoteAcceptance();
   await h.start({ gateWrites: true });
