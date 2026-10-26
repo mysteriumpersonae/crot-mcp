@@ -184,7 +184,10 @@ const s=net.connect(${JSON.stringify(endpoint)});s.setTimeout(5000,()=>{console.
           : await service.core.processes.execInScratch(testContext, input, ".");
       expect(result.stderr, kind).not.toContain(canary);
       expect(result.stdout, kind).not.toContain(canary);
-      expect(result, kind).toMatchObject({ exitCode: 0, timedOut: false });
+      expect(result, `${kind}: ${result.stderr.replaceAll(canary, "[REDACTED]")}`).toMatchObject({
+        exitCode: 0,
+        timedOut: false,
+      });
       expect(result.stdout, kind).toContain("CREDENTIAL-CONTROL-ISOLATED");
       expect(await read!()).toBe(canary);
       expect(await owner.request("ping")).toMatchObject({ state: "running" });
