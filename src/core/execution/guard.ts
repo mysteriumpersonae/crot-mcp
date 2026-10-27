@@ -234,7 +234,10 @@ export class ExecutionGuard {
         await record("success");
         return result;
       } catch (error) {
-        await record("error", error);
+        await record(
+          error instanceof CrotError && error.code === "PUBLICATION_BYPASS_DENIED" ? "denied" : "error",
+          error,
+        );
         throw error;
       }
     }
@@ -258,6 +261,10 @@ export class ExecutionGuard {
       try {
         binding = checkBinding(await op.approval.bind());
       } catch (error) {
+        if (error instanceof CrotError && error.code === "PUBLICATION_BYPASS_DENIED") {
+          await record("denied", error);
+          throw error;
+        }
         // AD-8: the target could not be determined -> no request, denied.
         const now = new Date().toISOString();
         return deny(
@@ -351,7 +358,11 @@ export class ExecutionGuard {
           `Approved, but the approved target of ${op.operation} changed; the action was not performed.`,
         );
       }
-      await record("error", error, approval);
+      await record(
+        error instanceof CrotError && error.code === "PUBLICATION_BYPASS_DENIED" ? "denied" : "error",
+        error,
+        approval,
+      );
       throw error;
     }
   }

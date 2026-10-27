@@ -1,7 +1,8 @@
+import { controllerProtectedPaths } from "./controller-files.js";
 /** Production Windows L1: no authorization, elevation or unconfined retry. */
 import { loadWindowsPrivateState } from "../windows-state.js";
 import { randomUUID } from "node:crypto";
-import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { copyFile, lstat, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import path from "node:path";
 import type { Readable } from "node:stream";
@@ -76,6 +77,21 @@ export class WindowsConfinement implements CommandConfinement {
   private fault: unknown;
   private probeTail: Promise<unknown> = Promise.resolve();
   constructor(private readonly options: WindowsConfinementOptions) {}
+  async createScratchDirectory(directory: string): Promise<void> {
+    if (!this.options.ownerSid) throw failed("scratch owner SID unavailable");
+    const existing = await lstat(directory).catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== "ENOENT") throw error;
+      return undefined;
+    });
+    if (existing) throw failed("scratch directory must be newly created");
+    // Service state uses Medium/No-Read-Up. A child inheriting that label is
+    // correctly inaccessible to Low actors, but cannot serve as their scratch.
+    // Create only the new disposable leaf with Low/NW; NEVER relabel its private
+    // ancestors, source directory or any existing object.
+    const writable = await loadWindowsPrivateState(this.options.ownerSid, [], { writableRoot: directory });
+    await writable.ensureDirectory(directory);
+    if (!(await writable.inspect(directory)).ownerOnly) throw failed("scratch descriptor verification failed");
+  }
   private async components(): Promise<WindowsComponents> {
     const c = await verifyWindowsComponents(
       this.options.stateDir,
@@ -154,7 +170,15 @@ export class WindowsConfinement implements CommandConfinement {
     for (const p of Object.values(layout.directories)) await mkdir(p, { recursive: true });
     let launcher: NativeProcessLauncher | undefined;
     let lease: NativeLease | undefined;
-    const protectedPaths = [...new Set([...scope.protectedPaths, ...contextPaths])];
+    // Exact fixed controller files already have native Medium No-Read-Up and
+    // owner-only DACLs, including every protected-empty atomic replacement.
+    // Do not identity-pin them: normal owner task/status writes must remain live.
+    const controllerProtection = await loadWindowsPrivateState(ownerSid, []);
+    const protectedPaths = await controllerProtectedPaths(
+      this.options.stateDir,
+      [...new Set([...scope.protectedPaths, ...contextPaths])],
+      controllerProtection,
+    );
     const hostEnvironment: Record<string, string> = {};
     for (const [key, value] of Object.entries(this.options.env)) if (value !== undefined) hostEnvironment[key] = value;
     let dockerExecutable: string | undefined;
@@ -452,6 +476,12 @@ const req=http.get('http://127.0.0.1:${address.port}',r=>{r.resume();r.on('end',
         });
       try {
         const value = await runtime;
+        if (!this.options.ownerSid) throw failed("controller owner unavailable");
+        await controllerProtectedPaths(
+          this.options.stateDir,
+          scope.protectedPaths,
+          await loadWindowsPrivateState(this.options.ownerSid, []),
+        );
         if (closed) {
           await value.close();
           throw failed("Core closed during setup");

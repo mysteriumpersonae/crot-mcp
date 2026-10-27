@@ -708,3 +708,19 @@ acceptance is closed by its separate criterion-level evidence record.
 None is reported as passed merely because CI is green. Store acceptance and
 signed distribution remain WP-35 / WP-34. See
 [`design/browser-wp25.md`](design/browser-wp25.md) for the evidence map.
+
+### Mandatory publication and OAuth guard (AD-67)
+
+The shipped extension requests `webNavigation` to inspect current frame URLs
+locally before agent actions and reads. Sensitive publication/OAuth routes and
+frames are refused with `PUBLICATION_BYPASS_DENIED`, independently of owner
+domain grants, Full Control and the optional sensitive-site preset. A missing
+frame inventory refuses the operation. Sensitive sessions are omitted from tab
+listings. Social-origin input is owner-only because a SPA composer need not
+change the URL; ordinary public page reading and unrelated-site automation stay
+available. This permission does not expose cookies or credentials. Updating an
+installed extension may require acknowledging its new permission before it can
+reconnect. An older or disconnected extension does not qualify the new guard.
+
+This route guard is not an OS firewall for arbitrary terminal/Custom Skill code.
+The latter remains a separate production-publication activation requirement.

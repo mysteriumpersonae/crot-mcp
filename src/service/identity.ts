@@ -282,7 +282,8 @@ export class DeviceIdentity {
         !["active", "past_due", "canceled", "expired"].includes(String(v.status)) ||
         typeof v.entitled !== "boolean" ||
         !Number.isSafeInteger(v.deviceCount) ||
-        !Number.isSafeInteger(v.maxDevices)
+        !Number.isSafeInteger(v.maxDevices) ||
+        (v.expiresAt !== undefined && (!Number.isSafeInteger(v.expiresAt) || Number(v.expiresAt) < 0))
       )
         throw new Error("invalid commercial metadata");
       if (id && this.pairedHere()?.deviceId === id)
@@ -296,6 +297,7 @@ export class DeviceIdentity {
             deviceCount: v.deviceCount as number,
             maxDevices: v.maxDevices as number,
             checkedAt: (this.options.now ?? Date.now)(),
+            ...(v.expiresAt !== undefined ? { expiresAt: v.expiresAt as number } : {}),
           },
         };
     } catch {

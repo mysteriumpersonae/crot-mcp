@@ -54,7 +54,7 @@ const fixture = {
     { title: "Cloud tunnel", value: "Local mode", ready: false },
   ],
 };
-const shim = `window.fixture=${JSON.stringify(fixture)};window.actions=[];window.crot={product:async(name,input={})=>{window.actions.push([name,input]);const p={id:'fixture-project',name:'project',path:'/workspace/project',favorite:false,tools:[],agents:[],connectors:[]};return {ok:true,...(name==='projects.list'?{projects:[p],active:p.id}:name==='connectors.list'?{connectors:[]}:name==='mcpServers.list'?{servers:[]}:name==='agents.list'?{agents:[],calls:[]}:name==='tasks.list'?{tasks:[]}:name==='monitoring.queryAudit'?{events:[]}:name==='monitoring.metrics'?{tasks:{running:0,total:0},workspace:p.id,connectedServers:0}:{})}},tool:async(name,input)=>{window.actions.push([name,input]);return {content:[{type:"text",text:JSON.stringify(name==="fs_list_directory"?{entries:[{path:"README.md",type:"file"}]}:name==="fs_stat"?{exists:true,type:"directory"}:name==="fs_read_file"?{content:"# Test project"}:name==="browser_tabs_list"?{tabs:[{id:42,title:"Test tab",url:"https://example.test"}]}:{ok:true})}]}},repairL1:async()=>{window.actions.push(["repair-l1"]);return {ok:true,available:false}},onView(fn){window.render=fn},ready(){window.render(window.fixture)},decide:async(...args)=>{window.actions.push(args);return true},action:async(...args)=>{window.actions.push(args);return true}};window.chrome={runtime:{getURL:p=>'/extension/'+p,sendMessage:async(m)=>{window.actions.push(['extension',m.type]);return m.type==='crot.ui.openApp'?{ok:true}:{connection:'disconnected'}}},tabs:{create:async(o)=>{window.actions.push(['tab',o.url]);return o},query:async()=>[{status:'complete',windowId:1,groupId:-1}]},tabGroups:{query:async()=>[]}};`;
+const shim = `window.fixture=${JSON.stringify(fixture)};window.actions=[];window.crot={product:async(name,input={})=>{window.actions.push([name,input]);const p={id:'fixture-project',name:'project',path:'/workspace/project',favorite:false,tools:[],agents:[],connectors:[]};return {ok:true,...(name==='accounts.list'?{accounts:['youtube','tiktok','x','github','notion'].map(provider=>({provider,state:'disconnected'})),pending:[]}:name==='projects.list'?{projects:[p],active:p.id}:name==='connectors.list'?{connectors:[]}:name==='mcpServers.list'?{servers:[]}:name==='agents.list'?{agents:[],calls:[]}:name==='tasks.list'?{tasks:[]}:name==='monitoring.queryAudit'?{events:[]}:name==='monitoring.metrics'?{tasks:{running:0,total:0},workspace:p.id,connectedServers:0}:{})}},tool:async(name,input)=>{window.actions.push([name,input]);return {content:[{type:"text",text:JSON.stringify(name==="fs_list_directory"?{entries:[{path:"README.md",type:"file"}]}:name==="fs_stat"?{exists:true,type:"directory"}:name==="fs_read_file"?{content:"# Test project"}:name==="browser_tabs_list"?{tabs:[{id:42,title:"Test tab",url:"https://example.test"}]}:{ok:true})}]}},repairL1:async()=>{window.actions.push(["repair-l1"]);return {ok:true,available:false}},onView(fn){window.render=fn},ready(){window.render(window.fixture)},decide:async(...args)=>{window.actions.push(args);return true},action:async(...args)=>{window.actions.push(args);return true}};window.chrome={runtime:{getURL:p=>'/extension/'+p,sendMessage:async(m)=>{window.actions.push(['extension',m.type]);return m.type==='crot.ui.openApp'?{ok:true}:{connection:'disconnected'}}},tabs:{create:async(o)=>{window.actions.push(['tab',o.url]);return o},query:async()=>[{status:'complete',windowId:1,groupId:-1}]},tabGroups:{query:async()=>[]}};`;
 const inject = (html) => html.replace("<head>", '<head><script src="/ui-fixture.js"></script>');
 let origin;
 const downloads = new ReleaseDownloads({ origin: "https://relay-staging.crot.network" });
@@ -299,12 +299,13 @@ try {
           );
         if (section === "Settings") {
           assert(
-            await evaluate("document.querySelectorAll('[data-setting]').length===11"),
-            "settings must have eleven sections",
+            await evaluate("document.querySelectorAll('[data-setting]').length===12"),
+            "settings must have twelve sections including Subscription",
           );
           for (const setting of [
             "General",
             "Device & Account",
+            "Subscription",
             "Remote Access",
             "Security",
             "Permissions",
@@ -322,6 +323,30 @@ try {
               ),
               "settings navigation failed: " + setting,
             );
+            if (setting === "Subscription") {
+              assert(
+                await evaluate("document.querySelector('.settings-body').innerText.includes('$5')"),
+                "subscription must show approved pricing",
+              );
+              assert(
+                await evaluate(
+                  "!document.querySelector('.settings-body').innerText.includes('Verified paid-through date:')",
+                ),
+                "Free must not invent a renewal date",
+              );
+              await evaluate(
+                "fixture.commercial={state:'current',plan:'pro',status:'active',entitled:true,expiresAt:1900000000000};render(fixture)",
+              );
+              assert(
+                await evaluate(
+                  "document.querySelector('.settings-body').innerText.includes('Verified paid-through date:')",
+                ),
+                "verified subscription expiry must be shown",
+              );
+              await evaluate(
+                "fixture.commercial={state:'current',plan:'free',status:'active',entitled:false,maxDevices:0,deviceCount:0};render(fixture)",
+              );
+            }
           }
           await evaluate("document.querySelector('[data-setting=General]').click()");
         }

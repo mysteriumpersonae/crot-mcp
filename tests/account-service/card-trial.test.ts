@@ -28,7 +28,7 @@ function fixture(overrides: object = {}) {
         ? {
             id: "price_pro",
             active: true,
-            unit_amount: 300,
+            unit_amount: 500,
             currency: "usd",
             recurring: { interval: "month", interval_count: 1 },
           }

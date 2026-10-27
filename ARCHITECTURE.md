@@ -6126,3 +6126,267 @@ of its resulting artifact. Composition mocks are not OS isolation evidence.
 Once the updated exact-head 11 CI checks pass, the owner explicitly authorizes
 marking PR #6 Ready and merging it. Stage C must start in a new branch/PR #7;
 this does not authorize publishing user content or merging PR #7 automatically.
+
+### AD-61. Stage C commercial contract and explicit qualification boundary
+
+Owner-approved public plans are Free (three projects, local agents/chat, full L1
+and audit, basic connectors) and Pro (USD 5/month, USD 39/year, or USD 29/year
+founder price). Security itself is never paywalled. Official production remains
+crot.network / mcp.crot.network under AD-60.
+
+Checkout accepts a named Pro term only: monthly, annual or founderAnnual. Amounts
+and Stripe price IDs are server configuration, never device authority. The cloud
+fetches the live Stripe price and requires exact active ID, USD amount, recurrence
+and interval count before creating Checkout. Optional annual price IDs must be
+distinct; an absent term configuration fails closed, without substituting another
+price. Configuring the founder price enables that offer; no automatic cohort or
+founder-eligibility system is claimed. The seven-day card-backed trial remains a
+monthly offer. A Checkout redirect grants no entitlement: only a signed webhook
+resolved against the current subscription can activate a configured plan.
+Legacy Team subscriptions retain compatibility; Team is not a new public offer.
+
+Stage C starts after PR #6 merge 7ddc8c06b48402a2bc99cd01b2bf8579ebf49cc5,
+whose exact head f8ca3f5 passed all 11 required checks. This decision does not
+claim completion of OAuth account lifecycle, provider revocation or human-only
+publication. Those require real Core integration and negative tests, not decorative UI.
+
+Project registration is serialized in the owner runtime, with a three-project
+Free cap checked before directory creation or registry mutation. Only the service's
+fresh verified active Pro/trial (or legacy Team) entitlement enables additional
+registrations; the device cannot supply that decision. Offline/unknown status
+cannot add beyond the Free cap, but never removes or disables existing projects,
+chat, L1 or audit. Existing registrations survive downgrade/restart. An explicit
+new launch workspace is also a registration, not a bypass. Desktop Subscription
+settings show verified plan/status and paid-through/trial-end timestamps only;
+paid-through is not fabricated as a promise of renewal. Plan changes/cancellation
+use the existing authenticated hosted account/Stripe portal flow. No real
+content publication, provider revocation, payment, or PR #7 merge is authorized
+by the instruction to implement them. Operator Stripe/DNS/TLS provisioning and
+live-provider qualification remain separate from fixture/CI evidence.
+
+#### AD-61 clarification — Credential & Control-Plane Isolation (owner approved)
+
+This clarification supersedes the AD-66/AD-67 requirement for general command
+network-on endpoint filtering. Under AD-29/AD-58 no kernel network driver or
+MITM CA is required. Explicit owner-selected `network=on` allows raw sockets;
+CROT does not claim TLS/DPI filtering of arbitrary terminal/Custom Skill code.
+Authority over connected accounts instead requires OS-isolated credentials and
+owner control: no account tokens, owner secrets or private state in child env,
+argv or scratch; native OS stores and owner RPC remain outside L1. MCP and
+browser connections cannot mint or consume owner publication permits. Agents
+may prepare, but only the authenticated owner dialog can confirm the frozen
+recipient and SHA-256 media snapshot, once, after explicit privacy and consent.
+The non-configurable Core HTTP/browser/extension guards continue to reject
+protected publication/OAuth routes. No proxy is silently claimed where none is
+used. `network=off` retains native L1's external-network isolation.
+
+This guarantee concerns CROT-managed account credentials, not credentials an
+owner independently supplies to arbitrary programs or a separately compromised
+host. Network-on is not an assertion that other host-local unauthenticated
+services are safe. Safety is free; publication also requires fresh verified Pro.
+Before production activation, mandatory native tests must prove owner-positive
+OS-store canary reads and owner ping, then child denial through both ordinary
+terminal and the shared Custom Skill scratch launch path. Windows uses real
+CredReadW; macOS security/Keychain; Linux a real private D-Bus Secret Service.
+A loader error, absent item or memory store cannot substitute for this evidence.
+Non-owner/MCP confirmation attempts must also fail. The current qualification
+commit deliberately retains the production activation block until CI passes.
+The user's latest directive authorizes Ready/merge only after final qualification.
+
+### AD-62. Stage C OAuth and publication security foundations (not yet product-qualified)
+
+Account access/refresh tokens and OAuth application secrets use a separate
+system-store namespace. There is no owner-file or DPAPI-file fallback for these
+credentials: macOS Keychain, Linux Secret Service, and native Windows Credential
+Manager generic credentials are the only production backends. Writes are read
+back; disconnect attempts all deletions and verifies absence. Store/tool errors
+are sanitized. A locked/unavailable store is an explicit refusal, not a fallback.
+Tokens are not placed in product metadata, the product encrypted vault, audit
+records, renderer responses, command arguments or child environments. Existing
+service-token storage/migration remains unchanged.
+
+Native-app authorization uses a per-flow ephemeral 127.0.0.1 listener, exact
+Host/path, random state with constant-time checking, one-use code redemption,
+S256 and a bounded lifetime. Wrong state, duplicate code/state, cross-origin
+callbacks and replay fail closed. TikTok uses its documented hex S256 challenge
+and comma-separated scopes; the other supported direct providers use base64url.
+Authorization must be opened in the system browser, never a webview. Trusted
+local HTTP fixture adapters are an in-process composition seam, not renderer,
+MCP, persisted endpoint configuration or a production security bypass.
+
+Provider revocation uses the actual fixed endpoint and provider-specific
+credentials. Revocation failure does not retain tokens for a hidden retry:
+local credentials are still removed and the result explicitly reports failure.
+Google revocation can revoke the wider application grant/scopes; the future UI
+confirmation must explain that side effect. Generation invalidation and abort
+signals prevent an old active account lease from surviving disconnect. A secret
+cleanup failure disables credential use and reports a restricted/error state.
+
+Core publication is two phase. Preparation creates no send authority. An owner
+transport session receives a random short-lived confirmation bound by HMAC to
+the draft, project, account generation, destination and immutable media identity.
+The confirmation is consumed synchronously before asynchronous I/O. Privacy has
+no default, terms must be accepted, and commercial disclosure needs at least one
+brand category. Only trusted recipient privacy choices are accepted. Account
+changes, session replacement, expiry and replay invalidate confirmation. The
+journal/audit sequence is pending_publication -> queued -> processing -> result;
+interrupted/uncertain delivery is failed/delivery_unknown and never auto-retried.
+Generic Core HTTP writes to the platform APIs (including redirect hops and
+method-override/GET-body attempts) are denied even under Full Control. This is
+not a claim that arbitrary external tools, browser clicks or unmanaged third-party
+MCP services are already fully integrated with the publication gate.
+
+Notion's documented public OAuth flow uses client-secret Basic authentication
+but does not document native PKCE. Passing extra PKCE-looking parameters is not
+evidence that Notion enforces them. Direct Notion OAuth therefore remains closed;
+a separately reviewed PKCE-protected CROT broker leg is required to meet the
+owner's native-client contract without pretending native provider support.
+Reference: https://developers.notion.com/docs/authorization . GitHub's documented
+web flow now supports S256 and code_verifier, but still requires the OAuth app
+secret: https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps .
+
+These modules are foundations, not full Stage C acceptance. At this commit the
+new lifecycle/publication engine is not yet wired into shipped owner RPC/UI,
+Notion broker, all production upload adapters or the positive end-to-end shipped
+publication dialog. Native store isolation from confined children also needs
+platform evidence. A memory store in HTTP tests is not OS-storage evidence.
+PR #7 must remain Draft until those requirements and exact-head CI are closed.
+
+### AD-63 — Notion native PKCE broker, separate from the upstream confidential flow
+
+Notion's documented authorization-code flow does not specify native PKCE. CROT must not claim that sending unused PKCE parameters to Notion provides that protection. The device-to-CROT leg instead uses S256 PKCE, a one-use broker code, exact random loopback callback and state; the independent CROT-to-Notion leg uses a separate random state and server-held confidential application credentials. The registered upstream callback is `https://mcp.crot.network/oauth/notion/callback`. No application secret is shipped in the desktop client.
+
+The optional Relay `notionOAuth` configuration contains only the registered app ID and an operator-owned secret-file path. The production broker is restricted to `https://mcp.crot.network`. Without its deployment configuration, there is no direct or non-PKCE fallback. Pending states and hashed broker-code indexes are memory-only, bounded to 500 flows, expire after five minutes and are lost safely on restart. Multi-instance deployment must route both legs to the same instance; there is no implicit shared store. The broker consumes the native grant before provider I/O, never retries ambiguous exchanges, forwards only validated token fields to the native Core TLS client, and never persists user access/refresh tokens. Refresh and revocation are fixed Notion operations, not arbitrary URL proxies. Browser redirects never carry user tokens.
+
+Actual local HTTP tests exercise the native listener, broker and provider as three separate servers: PKCE/state, redirect substitution, one-use redemption, refresh and remote revocation. This proves protocol composition, not that a production Notion application has been registered/deployed or that shipped account UI integration is complete. AD-62's direct-Notion refusal remains correct; this broker supersedes only its proposed missing native-PKCE transport. PR #7 remains Draft until the shipped Core/UI workflow and exact-head cross-platform CI are qualified.
+
+### AD-64 — Service-owned social account lifecycle on the authenticated owner channel
+
+`CrotService` now composes the social account runtime with lazy, OS-only credential access and owner-private `social-accounts.json` metadata. Its descriptor, account metadata and reserved publication journal paths are included in the protected service state. There is no OAuth endpoint/adapter override in CLI, persisted JSON, MCP arguments or owner RPC; local provider and memory-store fixtures exist only as trusted in-process test composition. Account configuration, connect/cancel/check/disconnect are a closed owner-RPC allowlist, not MCP tools. Administrative outcomes are content-free `social_account` control audit records.
+
+The shipped Accounts screen reads all five provider states from this runtime, exposes configuration and connection checks, and disconnects through an explicit confirmation. Configuration inputs accept application credentials, not externally supplied access/refresh tokens; fields are cleared immediately after submission. The Electron main process independently revalidates the service-generated provider endpoint, S256 challenge, random loopback callback and state before opening the system browser. The renderer cannot pass an arbitrary URL to `openExternal`; browser-open failure cancels the pending authorization. A pending loopback listener is closed on cancellation, emergency stop and service shutdown. Disconnect immediately invalidates session generations and aborts active credential leases before remote revocation/local cleanup.
+
+A real `CrotService` integration test uses its authenticated owner control connection and actual HTTP provider endpoints to connect, check, disconnect, verify metadata/vault token exclusion and inspect audit results. Its explicitly injected memory credential backend is not native OS-store qualification. This supersedes the earlier AD-62/AD-63 note that account RPC/UI composition was not yet installed; it does NOT claim completed protected avatar delivery, all platform-specific restricted-state mappings, production publication adapters or the required shipped publication Chromium workflow. PR #7 must remain Draft until those acceptance gaps and new-head CI are closed.
+
+### AD-65 — Immutable publication staging and fixed platform delivery protocols
+
+Historical checkpoint: the activation/qualification status below is superseded by
+the AD-61 activation clarification at the end of this decision log. Security
+invariants remain in force; general network-on DPI was explicitly rejected.
+
+Publication preparation captures a portable, non-secret project-relative media file through the checked Core filesystem read guard. Links, special files, traversal, `.git`/`.crot`, `.env*`, `*.pem` and `*.key` are refused. The source descriptor and path identity are rechecked after reading. The staging store owns a byte copy, commits it under a generated UUID in an owner-private directory, and records SHA-256, MIME, byte count and project identity. It refuses active document formats, unprotected directories and malformed manifests. Each snapshot is limited to 64 MiB, with 64 snapshots / 512 MiB total capacity; exhaustion is an explicit refusal, never a live-source fallback. Interrupted unreferenced blobs are removed on restart. Generic Core operations cannot read the reserved staging directory, avatar directory or publication journal, including in Full Control.
+
+Preview chunks and delivery read only a freshly descriptor-checked, hash-verified staging copy. Source edits, atomic replacement and later secret renaming do not substitute its bytes. The publication engine's existing HMAC permit binds the frozen request, account generation and snapshot metadata. A separate synchronous confirmation assertion allows an authenticated owner transport to acknowledge queued work without waiting for a long upload; actual confirmation still consumes the permit synchronously before its first await. Closing the owner connection must revoke its permits, and revocation/kill must abort delivery leases. These transport/lifecycle hooks remain integration requirements, not authority delegated to caller-supplied JSON.
+
+Fixed production adapters implement YouTube resumable MP4 uploads with explicit visibility and processing/visibility confirmation; unaudited TikTok inbox MP4 upload with a `draft_uploaded` result; and X public text/image posting with a fresh exact-recipient/unprotected-account check and the `media.write` scope. All three adapters re-fetch the actual OAuth recipient before any upload and reject identity substitution. Upload URLs are exact-host HTTPS destinations, never caller-selected endpoints or redirect-following token proxies. TikTok signed uploads receive no bearer header. All response bodies, deadlines and supported sizes are bounded. Ambiguous sends are never retried automatically. Unsupported platform controls are refused, not silently described as applied. TikTok inbox upload does not apply title/description or direct-post interaction/disclosure settings: the eventual UI must explicitly describe finalization in TikTok. X video/chunked upload and arbitrary active-document previews are not claimed.
+
+A trusted publication runtime now composes the checked filesystem, account-generation credential lease, immutable preview/delivery, journal and audit state machine. It requires a mandatory fresh host authorization for entitlement **and** managed-channel anti-bypass protection, with no default allow. Local HTTP tests exercise real PKCE/account runtime, Core capture, snapshot preview, one-use owner identity, platform upload, account 401 cleanup and restart behavior. This runtime is **not yet installed in shipped CrotService/owner RPC/UI**. The account lifecycle remains installed under AD-64. Universal terminal/Custom Skill/browser anti-bypass enforcement, protected avatars, shipped publication-dialog Chromium acceptance and exact-head CI are still outstanding. This decision does not authorize disabling those product features to simulate isolation and is not a full Stage C Pass. PR #7 remains Draft.
+
+### AD-66 — Transport-owned publication review sessions and staged runtime activation
+
+Historical checkpoint: the activation/qualification status below is superseded by
+the AD-61 activation clarification at the end of this decision log. Security
+invariants remain in force; general network-on DPI was explicitly rejected.
+
+The service now owns the publication runtime lifecycle (startup, shutdown and emergency stop). Agent-facing `publication_prepare` is a guarded Core capability: it can only request a draft and capture checked immutable media; neither confirmation nor credentials exist in the MCP catalog. The owner protocol exposes closed prepare/list/open/preview/confirm/cancel shapes. Confirmation authority is bound to the **actual authenticated control connection object**, never an owner identifier supplied in JSON. Closing any connection invalidates its permits even if it never subscribed to approvals; ended objects cannot acquire another permit. Pending cancellation changes state synchronously, invalidates every outstanding confirmation, persists and audits `publication.cancelled`. Cancellation of an active upload aborts transport but cannot promise rollback of content already received by the platform.
+
+Publication metadata and confirmation have escaped UTF-8 budgets below the control frame limit; preview chunks remain bounded to 24 KiB. The renderer verifies SHA-256 of the assembled snapshot before enabling confirmation, uses a local blob preview (not a workspace URL), starts with no selected privacy and unchecked consent, and only calls confirmation on a human button action. Unsupported platform controls are disabled rather than advertised as applied. TikTok inbox upload is explicitly a draft handoff: title, description and disclosure fields are review reminders that must be completed in TikTok, not direct-post settings applied by that API.
+
+Avatars use provider-specific HTTPS host allowlists, reject redirects and credentials, require raster Content-Type plus format magic and bounded dimensions, and have a 24-KiB streaming size cap, request deadline and bounded memory cache. The owner RPC returns only a data URL or local fallback, never a renderer network URL. Disconnect and shutdown invalidate cache use. The renderer CSP still forbids network connections and remote scripts; only local blob image/video previews were added.
+
+**Activation barrier remains fail-closed.** Production must have a fresh verified Pro entitlement, but that is not sufficient: subprocess/Custom Skill and browser direct-publication anti-bypass qualification is still outstanding. Until it is implemented and proven, service preparation/send refuses publication rather than relying solely on the existing generic Core HTTP boundary. A deliberately named, in-process-only `publicationFixture` composes actual local OAuth/platform HTTP in integration tests; it is not configurable through CLI, files, RPC or renderer and is not production isolation evidence. This does not disable terminal/browser features to simulate protection and does not represent a complete Stage C Pass. PR #7 remains Draft pending actual anti-bypass implementation, shipped Chromium acceptance and exact-head CI.
+
+### AD-67 — Mandatory managed-browser route boundary and explicit command-egress qualification
+
+Historical checkpoint: the activation/qualification status below is superseded by
+the AD-61 activation clarification at the end of this decision log. Security
+invariants remain in force; general network-on DPI was explicitly rejected.
+
+Publication and OAuth routes have a non-configurable system guard shared by Core
+and the shipped extension. It is independent of Full Control, tab domain grants
+and the sensitive-domain preset. Committed/pending URL and the real browser frame
+inventory are checked before access; an unavailable inventory is fail-closed.
+Sensitive tab listings omit the session entirely. Percent/double-encoded paths,
+separators and decoded dot segments cannot avoid the route match. Social-origin
+input is also owner-only because a SPA can display its composer at `/home` without
+navigation. Public profile/video reading and unrelated-site automation remain
+available. `webNavigation` permission supplies frame URLs only; they are not a
+cookie/session export API. The fixed CDP allowlist still exposes no cookie or
+credential extraction command. Core preserves `PUBLICATION_BYPASS_DENIED` and
+records a denial even when approval target binding discovers the system boundary.
+Generic Core HTTP also denies protected routes with GET, not just social writes.
+
+Account metadata now records only recognized grant names actually returned by
+the OAuth server. An omitted scope field is `not_reported`, never an assertion
+that the requested scopes were granted. Known missing scopes block credential
+leases. Actual profile HTTP 403/429 and YouTube quota/channel failures have fixed
+non-secret reason codes; failed write-tier checks are not mislabeled revoked
+credentials. The owner account card, review dialog and system-check report expose
+these facts. A successful channel/profile lookup does **not** prove remaining
+YouTube upload quota or X paid write-tier access; unknown evidence stays explicit.
+
+Reserved CROT/OAuth/owner-RPC/session-bus environment names cannot be inherited
+through `environment.allow` or injected via process/Custom Skill env overrides.
+This is defense in depth, **not** arbitrary-subprocess network mediation. The
+existing native AD-58 boundary remains mandatory for service commands, but its
+network-on mode is not a publication endpoint firewall. Blocking executable
+basenames (`curl`, `security`, `secret-tool`, etc.) would not stop direct language
+runtime, native API or renamed-program access, and is not accepted as proof.
+Cross-platform OS-enforced mediated egress and native secret-store/owner-channel
+negative qualification are still outstanding. No production activation, Ready
+status or PR merge is authorized by this partial checkpoint; the publication
+fail-closed barrier stays in place. No blanket shutdown of terminal/browser/MCP
+features is used to manufacture qualification.
+
+#### AD-61 native controller-file liveness clarification
+
+Windows fixed mutable controller files (`product-state.json`, `product-vault.enc`,
+`client-tokens.json`, `publications.json`) directly under the trusted state
+directory use the native private-state policy: exact owner-only protected DACL
+and Medium No-Read-Up, verified before launch. Atomic writer protects an empty
+temporary object before writing content, so replacements retain that isolation.
+These exact files must not also receive actor-lifetime no-delete identity pins: a
+real service task must atomically persist its result while its scratch generation
+still exists. Unexpected links, nonregular objects, descriptor/label failure or
+unavailable native protection refuse admission. External configs, project files,
+source roots, credentials, directories and all other protected paths keep their
+full identity guards; there is no user-configurable exception or syscall bypass.
+The mandatory native canary test also holds the same actor across a real owner
+vault replacement and requires continued read and owner-channel denial.
+
+
+#### AD-61 activation clarification — qualified native gate replaces temporary refusal
+
+Exact head `693a55715000513d0fa16d5bb911fc75db419403` completed all 11/11 CI
+checks, including both full Windows Node 20/22 jobs, both macOS jobs, four Linux
+L1 matrices and real Chromium. Native credential/control qualification therefore
+precedes replacement of the temporary unconditional production refusal. Evidence:
+[CI](https://github.com/crotMcp/crot/actions/runs/40315533860),
+[Linux L1](https://github.com/crotMcp/crot/actions/runs/40315533955),
+[Chromium](https://github.com/crotMcp/crot/actions/runs/40315533857).
+This is predecessor evidence, not final-head verification of the gate change.
+
+The shipped service now requires refreshed commercial status (current, active,
+entitled Pro/trial/legacy Team) and fresh native confinement readiness on every
+preparation and delivery authorization. Readiness requires `available === true`,
+`sourceAccess === "core-only"`, null failure reason and the qualified native
+mechanism matching the host OS (Linux bubblewrap, macOS Seatbelt, Windows
+AppContainer). A thrown refresh, unavailable/inconsistent state or changed Core
+refuses publication, with no cached-success or unconfined fallback. Informational
+AD-58 detail is not a failure code. Halt and entitlement are checked again after
+asynchronous readiness. The test-only publication fixture remains in-process-only.
+
+The system-check report uses the same readiness predicate, describes native
+credential/control isolation, explicit owner-enabled raw `network=on` without
+TLS/DPI, and native network blocking with `network=off`. Refresh errors cannot
+reuse cached availability. Ready isolation is a prerequisite, not permission to
+publish: fresh verified Pro, the immutable SHA-256 snapshot, account/recipient
+binding, explicit privacy/consent, one-use real owner-connection confirmation and
+audit remain mandatory. Core HTTP/browser/extension system guards are unchanged.
+No live account publication, revocation or payment is part of acceptance.
+
+This supersedes earlier AD-65/66/67 *temporary activation-barrier status*, not their
+security invariants or historical evidence. A new final SHA must itself pass
+11/11 before the owner-authorized Ready/merge. Signing, installers, production
+DNS/TLS/Stripe, provider registration and live-provider qualification remain
+separate external delivery/operations gates; this is not a public release.

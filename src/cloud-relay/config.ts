@@ -3,6 +3,7 @@
  * `crot-cloud-relay --config <file>`; deployment environments are WP-38
  * (staging) and WP-39 (production).
  */
+import type { BillingPrices } from "../account-service/catalog.js";
 import { versionAtLeast } from "./versions.js";
 import { relayLimits, type RelayLimits } from "./limits.js";
 import { isRelayHost } from "../identity/device-id.js";
@@ -24,10 +25,11 @@ export interface RelayConfig {
   readonly portalClientIds: readonly string[];
   readonly minimumDeviceVersion?: string;
   readonly minimumClientVersion?: string;
+  readonly notionOAuth?: { readonly clientId: string; readonly clientSecretFile: string };
   readonly billing?: {
     secretKeyFile: string;
     webhookSecretFile: string;
-    prices: { pro: string; team: string };
+    prices: BillingPrices;
     returnUrl: string;
   };
   readonly workosSecretFile?: string;
@@ -41,6 +43,7 @@ const FIELDS = [
   "accountFile",
   "portalClientIds",
   "billing",
+  "notionOAuth",
   "workosSecretFile",
   "metricsTokenFile",
   "minimumDeviceVersion",
@@ -103,6 +106,24 @@ export function parseRelayConfig(value: unknown): RelayConfig {
     throw new Error("invalid workosSecretFile");
   if (v.metricsTokenFile !== undefined && (typeof v.metricsTokenFile !== "string" || !v.metricsTokenFile))
     throw new Error("invalid metricsTokenFile");
+  let notionOAuth: RelayConfig["notionOAuth"];
+  if (v.notionOAuth !== undefined) {
+    const n = v.notionOAuth as Record<string, unknown>;
+    if (
+      !n ||
+      typeof n !== "object" ||
+      Array.isArray(n) ||
+      Object.keys(n).sort().join(",") !== "clientId,clientSecretFile" ||
+      typeof n.clientId !== "string" ||
+      !n.clientId ||
+      /[\r\n\0]/.test(n.clientId) ||
+      typeof n.clientSecretFile !== "string" ||
+      !n.clientSecretFile ||
+      v.relayHost !== "mcp.crot.network"
+    )
+      throw new Error("invalid Notion OAuth configuration");
+    notionOAuth = { clientId: n.clientId, clientSecretFile: n.clientSecretFile };
+  }
   let billing: RelayConfig["billing"];
   if (v.billing !== undefined) {
     const b = v.billing as NonNullable<RelayConfig["billing"]>;
@@ -114,7 +135,9 @@ export function parseRelayConfig(value: unknown): RelayConfig {
       typeof b.webhookSecretFile !== "string" ||
       !b.webhookSecretFile ||
       !b.prices ||
-      Object.keys(b.prices).sort().join(",") !== "pro,team" ||
+      Object.keys(b.prices).some((key) => !["pro", "team", "proAnnual", "proFounderAnnual"].includes(key)) ||
+      Object.values(b.prices).some((id) => typeof id !== "string" || !/^price_[A-Za-z0-9]+$/.test(id)) ||
+      new Set(Object.values(b.prices)).size !== Object.values(b.prices).length ||
       typeof b.prices.pro !== "string" ||
       typeof b.prices.team !== "string" ||
       typeof b.returnUrl !== "string" ||
@@ -130,6 +153,7 @@ export function parseRelayConfig(value: unknown): RelayConfig {
     accountFile,
     portalClientIds,
     billing,
+    notionOAuth,
     workosSecretFile: v.workosSecretFile as string | undefined,
     metricsTokenFile: v.metricsTokenFile as string | undefined,
     minimumDeviceVersion: v.minimumDeviceVersion as string | undefined,

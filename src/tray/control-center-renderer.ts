@@ -170,6 +170,7 @@ export const CONTROL_CENTER_RENDERER =
     const p=panel(setting);body.append(p);
     if(setting==='General'){const theme=node('select');theme.setAttribute('aria-label',t('Theme'));for(const name of ['Light','Dark','System']){const o=node('option',name);o.value=name.toLowerCase();theme.append(o);}theme.value=window.CrotTheme?.get()||'system';theme.onchange=()=>window.CrotTheme?.set(theme.value);p.append(node('h3','Language'),languageSelect(),node('h3','Theme'),theme,node('p','Autostart is configured by the platform installer, not simulated in this interface.','muted'));}
     else if(setting==='Device & Account'){p.append(badge(local&&view.pairing?.state!=='paired'?'Free (Local)':view.commercial?.plan||'Account',true),node('p','Local tools do not require an account. Cloud access uses the configured hosted account service.','muted'),actions(button('Manage account',()=>control('ui.openPortal')),button('Pair this device',()=>control('pairing.start'),'',!view.pairing?.available),button('Unpair device',()=>confirm('Unpair device',()=>control('device.unpair')))) );}
+    else if(setting==='Subscription'){const current=view.commercial?.state==='current',v=view.commercial;p.append(badge(current?(v.plan||'free')+' · '+(v.status||'unknown'):'Subscription status unavailable',current&&v.entitled===true),node('p','Free: local agents, Unified Chat, up to 3 projects, full L1 and audit. Pro: $5/month, $39/year or $29/year founder offer.','muted'));if(current&&Number.isSafeInteger(v.expiresAt)){p.append(node('p',(v.plan==='trial'?'Trial ends: ':'Verified paid-through date: ')+new Date(v.expiresAt).toLocaleString()));}p.append(node('p',current?'Renewal, plan changes and cancellation are confirmed in hosted billing.':'No current verified cloud status. Local security and existing projects remain available.','muted'),button('Manage subscription / change or cancel',()=>control('ui.openPortal')));}
     else if(setting==='Security'){security(body);}
     else if(setting==='Remote Access'){p.append(node('p','Remote admission requires a current cloud entitlement and a paired device.','muted'),actions(button(view.remoteMode?'Turn remote mode off':'Turn remote mode on',()=>confirm('Change remote access',()=>control('remote.setMode',{enabled:!view.remoteMode}))),button('Pair this device',()=>control('pairing.start'),'',!view.pairing?.available),button('Cancel pairing',()=>control('pairing.cancel'),'',view.pairing?.state!=='pairing')));}
     else if(setting==='Browser'){browserPolicyPanel(body);p.append(badge(view.browser?.state||'Not connected',view.browser?.state==='connected'),node('p','Browser profile selection belongs to your installed browser and extension. This UI cannot switch OS browser profiles.','muted'),button('Open Browser workspace',()=>navigate('Browser')));}
@@ -199,12 +200,138 @@ export const CONTROL_CENTER_RENDERER =
     loadInto(connection,async()=>{const r=await rpc('chat.providers');if(!root.isConnected)return;configurations=r.providers||[];connection.querySelectorAll('.empty').forEach(n=>n.remove());selectProvider();chatId=r.current||chatId;await poll();});approvals(inline);chatTimer=setInterval(()=>void poll(),300);
   }
 
-  function accounts(root){pageHead(root,'Accounts','Provider credentials are configured once in Connectors.');const list=node('div',undefined,'grid');root.append(list);loadInto(list,async()=>{const r=await rpc('connectors.list');if(!list.isConnected)return;clear(list);for(const name of ['YouTube','TikTok','GitHub','Notion']){const record=r.connectors.find(c=>c.id===name),card=panel(name);card.firstChild.prepend(brandIcon(name));card.append(badge(record?.status||'Not configured',record?.status==='Connected'),node('p','A successful probe does not grant publishing permission.','muted'),button('Open Connectors',()=>navigate('Connectors')));list.append(card);}list.append(node('p','Instagram and X authorization are not available in this runtime. Local credential removal does not revoke provider consent.','banner'));});}
-  function renderPage(){clearInterval(processTimer);clearInterval(chatTimer);const root=$('page');clear(root);if(['Files','Terminal','Git','Docker'].includes(active))pageHead(root,active,'Project: '+(project?.name||t('No project selected')));if(['Files','Terminal','Git','Docker'].includes(active)&&!project){root.append(empty('Open a project to get started.'));return;}const routes={Home:home,Chat:chat,Accounts:accounts,Projects:projectsPage,Agents:agents,Connectors:connectors,'MCP Servers':mcp,Browser:browser,Files:files,Terminal:terminal,Git:git,Docker:docker,Tasks:tasksPage,Monitoring:monitoring,Settings:settings};if(active!=='Home'){const bar=node('nav',undefined,'context-tools');bar.setAttribute('aria-label',t('Workspace tools'));for(const label of ['Projects','MCP Servers','Browser','Files','Terminal','Git','Docker','Tasks','Monitoring','Settings']){const b=button(label,()=>navigate(label));b.id='tool-'+label.toLowerCase().replaceAll(' ','-');if(active===label)b.setAttribute('aria-current','page');bar.append(b);}root.prepend(bar);}if(active==='Permissions'){pageHead(root,'Permissions','Capability and workspace restrictions always apply.');security(root);const effective=panel('Permissions'),out=node('div');effective.append(button('Inspect service policy',()=>resultInto(out,'crot_status')),out);root.append(effective);}else (routes[active]||home)(root);syncI18n();}
+  const connectedAccount=record=>['connected','restricted'].includes(record.state);
+  async function accountAvatar(provider,target,identity){
+    try{const result=await rpc('accounts.avatar',{provider,...(identity?.id&&identity?.generation?{accountId:identity.id,generation:identity.generation}:{})});if(!target.isConnected||typeof result.data!=='string'||!/^data:image\/(png|jpeg|webp);base64,/.test(result.data)||result.data.length>33000)return;
+      const image=node('img');image.alt='';image.width=32;image.height=32;image.src=result.data;image.dataset.accountAvatar='';target.prepend(image);
+    }catch{/* A provider/network failure leaves the local brand fallback, never a remote img src. */}
+  }
+  let publicationBusy=false,publicationRecords=[];
+  const publicationSeen=new Set();
+  const publicationTerminal=state=>['published','draft_uploaded','failed','cancelled'].includes(state);
+  function renderPublications(root){
+    root.querySelector('[data-publication-list]')?.remove();
+    const p=panel('Publications');p.dataset.publicationList='';
+    for(const record of publicationRecords){const row=node('div',undefined,'row'),identity=node('span');identity.dataset.noI18n='';identity.textContent=record.handle;
+      const status=node('span',record.state);status.dataset.publicationState=record.state;row.append(identity,status);
+      if(record.state==='pending_publication')row.append(button('Review publication',()=>openPublication(record.id)));
+      p.append(row);
+    }
+    if(!publicationRecords.length)p.append(empty('No publications.'));
+    root.append(p);
+  }
+  async function pollPublications(){
+    if(publicationBusy||stage!=='home'||view.connection!=='connected')return;
+    publicationBusy=true;
+    try{const result=await rpc('publications.list');publicationRecords=result.publications||[];
+      if(active==='Accounts')renderPublications($('page'));
+      const pending=publicationRecords.find(record=>record.state==='pending_publication'&&!publicationSeen.has(record.id));
+      if(pending&&!$('action-dialog').open)await openPublication(pending.id);
+    }catch{/* No optimistic success or automatic sending on owner-channel failure. */}finally{publicationBusy=false;}
+  }
+  function newPublication(account){modal('Create publication',d=>{
+    const title=field('Title'),description=field('Description','textarea'),media=field('Project media path');
+    const target=node('p');target.dataset.noI18n='';target.textContent=account.handle||account.provider;
+    const message=node('p',undefined,'banner');d.append(target,title.wrap,description.wrap,media.wrap,message,
+      actions(button('Cancel',()=>d.close()),button('Prepare for review',async()=>{
+        try{await rpc('publications.prepare',{provider:account.provider,accountId:account.id,title:title.input.value,description:description.input.value,...(media.input.value?{mediaPath:media.input.value}:{})});d.close();await pollPublications();}
+        catch(error){message.textContent=error.message;}
+      },'primary')));
+  });}
+  async function openPublication(id){
+    if($('action-dialog').open)return;
+    const opened=await rpc('publications.open',{id}),record=opened.publication;
+    if($('action-dialog').open)return;
+    publicationSeen.add(id);
+    modal('Review publication',d=>{
+      d.dataset.publicationId=id;
+      let closed=false,verified=!record.account.media,busy=false,submitted=false,url;
+      const profile=node('div'),handle=node('strong');handle.dataset.noI18n='';handle.textContent=record.account.handle;profile.append(handle);void accountAvatar(record.request.provider,profile,record.account);
+      const preview=node('div'),message=node('p',undefined,'banner'),status=node('p','pending_publication');status.dataset.publicationState='pending_publication';
+      const title=field('Title','text',record.request.title),description=field('Description','textarea',record.request.description),privacy=node('select');privacy.id='publication-privacy';privacy.setAttribute('aria-label',t('Privacy'));
+      const placeholder=node('option','Choose privacy');placeholder.value='';placeholder.disabled=true;privacy.append(placeholder);
+      for(const value of record.account.privacy){const option=node('option',value);option.value=value;privacy.append(option);}privacy.value='';
+      function check(label,id,disabled=false){const wrap=node('label',undefined,'field'),input=node('input');input.type='checkbox';input.id=id;input.checked=false;input.disabled=disabled;wrap.append(input,node('span',label));return {wrap,input};}
+      const comments=check('Comments','publication-comments',true),duet=check('Duet','publication-duet',true),stitch=check('Stitch','publication-stitch',true),commercial=check('Commercial disclosure','publication-commercial',record.request.provider!=='tiktok'),own=check('Own brand','publication-own-brand'),branded=check('Branded content','publication-branded-content'),terms=check('I accept the platform terms','publication-terms');
+      const publish=node('button','Publish','primary');publish.type='button';publish.id='publication-confirm';
+      const cancel=button('Cancel publication',async()=>{try{const result=await rpc('publications.cancel',{id});message.textContent=t(result.cancellationRequested?'Cancellation requested; delivery may already have started.':'Publication cancelled.');await update();}catch(error){message.textContent=error.message;}});
+      const close=button('Close',()=>d.close());
+      function validate(){own.input.disabled=branded.input.disabled=!commercial.input.checked||submitted;publish.disabled=closed||busy||submitted||!verified||!privacy.value||!terms.input.checked||(commercial.input.checked&&!own.input.checked&&!branded.input.checked);}
+      for(const input of [privacy,terms.input,commercial.input,own.input,branded.input])input.onchange=()=>{if(!commercial.input.checked){own.input.checked=false;branded.input.checked=false;}validate();};
+      publish.onclick=async()=>{
+        validate();if(publish.disabled)return;busy=true;validate();
+        try{await rpc('publications.confirm',{id,confirmation:opened.confirmation,title:title.input.value,description:description.input.value,privacy:privacy.value,comments:false,duet:false,stitch:false,commercial:commercial.input.checked,ownBrand:own.input.checked,brandedContent:branded.input.checked,termsAccepted:terms.input.checked});submitted=true;privacy.disabled=true;title.input.disabled=true;description.input.disabled=true;terms.input.disabled=true;commercial.input.disabled=true;status.textContent=t('queued');status.dataset.publicationState='queued';}
+        catch(error){message.textContent=error.message;}finally{busy=false;validate();}
+      };
+      async function update(){
+        try{const result=await rpc('publications.list');if(closed)return;const latest=result.publications?.find(entry=>entry.id===id);if(!latest)return;
+          status.textContent=t(latest.state);status.dataset.publicationState=latest.state;
+          if(publicationTerminal(latest.state)){submitted=true;cancel.disabled=true;validate();if(latest.error)message.textContent=t(latest.error==='delivery_unknown'?'Delivery is uncertain. Check the platform before preparing another publication.':'Publication failed.');}
+        }catch{if(!closed)message.textContent=t('Service request failed. Check the local bridge and try again.');}
+      }
+      if(opened.diagnostics){const diagnostic=node('pre');diagnostic.dataset.accountDiagnostics='';diagnostic.textContent=JSON.stringify(opened.diagnostics,null,2);d.append(diagnostic);}
+      d.append(profile,preview,status,title.wrap,description.wrap,node('label','Privacy'),privacy,comments.wrap,duet.wrap,stitch.wrap,commercial.wrap,own.wrap,branded.wrap,terms.wrap,message,actions(close,cancel,publish));
+      d.append(node('p','Unavailable controls are not applied by this platform adapter.','muted'));
+      if(record.request.provider==='tiktok')d.append(node('p','TikTok inbox draft only. Complete title, description, privacy and commercial disclosures in TikTok before posting. These fields are review reminders, not applied by the inbox API.','banner'));
+      validate();const timer=setInterval(()=>void update(),1000);
+      d.addEventListener('close',()=>{closed=true;clearInterval(timer);if(url)URL.revokeObjectURL(url);delete d.dataset.publicationId;},{once:true});
+      d.addEventListener('cancel',()=>{/* Escape closes review without sending or silently cancelling an upload. */},{once:true});
+      if(record.account.media)void(async()=>{
+        try{const media=record.account.media,parts=[];let offset=0,mime;
+          while(offset<media.bytes){const chunk=await rpc('publications.preview',{id,offset,length:24576});if(closed)return;
+            if(chunk.offset!==offset||chunk.bytes!==media.bytes||chunk.sha256!==media.sha256||!['image/png','image/jpeg','image/webp','video/mp4'].includes(chunk.mime)||mime&&mime!==chunk.mime)throw Error('Immutable preview verification failed');
+            mime=chunk.mime;const data=Uint8Array.from(atob(chunk.data),c=>c.charCodeAt(0));if(!data.length||data.length>24576||offset+data.length>media.bytes)throw Error('Immutable preview verification failed');parts.push(data);offset+=data.length;
+          }
+          const blob=new Blob(parts,{type:mime}),bytes=await blob.arrayBuffer(),hash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),v=>v.toString(16).padStart(2,'0')).join('');
+          if(hash!==media.sha256||closed)throw Error('Immutable preview verification failed');
+          url=URL.createObjectURL(blob);const element=node(mime==='video/mp4'?'video':'img');element.src=url;element.dataset.publicationPreview='';if(mime==='video/mp4'){element.controls=true;element.preload='metadata';}else element.alt=t('Immutable media preview');element.style.maxWidth='100%';preview.append(element);verified=true;validate();
+        }catch{if(!closed){message.textContent=t('Immutable preview verification failed');verified=false;validate();}}
+      })();
+    });
+  }
+
+  let accountsTimer;
+  function accounts(root){
+    pageHead(root,'Accounts','OAuth uses your system browser. Account tokens stay in the operating system secret store.');
+    const list=node('div',undefined,'grid');root.append(list);let last='',busy=false;
+    function configuration(record){modal('Configure OAuth application',d=>{
+      const client=field('OAuth client ID','text',record.clientId|| (record.provider==='notion'?'crot-desktop':'')),secret=field('OAuth application secret','password');secret.input.autocomplete='off';
+      if(record.provider==='notion'){client.input.readOnly=true;d.append(node('p','Notion requires the configured CROT OAuth broker. No application secret is stored in the desktop app.','banner'));}
+      d.append(client.wrap);if(record.provider!=='notion')d.append(secret.wrap);
+      d.append(actions(button('Cancel',()=>d.close()),button('Save OAuth application',async()=>{
+        const value=secret.input.value;secret.input.value='';
+        await rpc('accounts.configure',{provider:record.provider,clientId:client.input.value,...(value?{clientSecret:value}:{})});
+        d.close();last='';await refresh();
+      },'primary')));
+    });}
+    async function refresh(){if(!root.isConnected||busy)return;busy=true;try{
+      const r=await rpc('accounts.list');if(!root.isConnected)return;const signature=JSON.stringify(r);if(signature===last)return;last=signature;clear(list);
+      const labels={youtube:'YouTube',tiktok:'TikTok',x:'X',github:'GitHub',notion:'Notion'},states={disconnected:'Not connected',connected:'Connected',reauth_required:'Reauthorization required',restricted:'Restricted'};
+      for(const record of r.accounts){const card=panel(labels[record.provider]),pending=r.pending?.includes(record.provider);card.dataset.socialAccount=record.provider;card.firstChild.prepend(brandIcon(labels[record.provider]));
+        if(connectedAccount(record))void accountAvatar(record.provider,card.firstChild,record);
+        card.append(badge(states[record.state],record.state==='connected'));if(record.handle){const identity=node('p');identity.textContent=record.handle;identity.dataset.noI18n='';card.append(identity);}
+        if(record.restriction){const note=node('p',undefined,'banner');note.textContent=record.restriction==='tiktok_private_or_draft_only'?t('TikTok is limited to private or draft uploads.'):record.restriction;card.append(note);}
+        if(record.diagnostics){const diagnostics=node('details'),summary=node('summary','Account diagnostics'),facts=node('pre');facts.dataset.accountDiagnostics=record.provider;facts.textContent=JSON.stringify(record.diagnostics,null,2);diagnostics.append(summary,facts);card.append(diagnostics);}
+        if(record.revocation==='failed')card.append(node('p','Provider revocation failed. Local tokens were removed; review provider application permissions.','banner'));
+        if(pending)card.append(node('p','Complete authorization in your system browser.','muted'),button('Cancel authorization',async()=>{await rpc('accounts.cancel',{provider:record.provider});last='';await refresh();}));
+        if(connectedAccount(record)&&['youtube','tiktok','x'].includes(record.provider))card.append(button('Create publication',()=>newPublication(record)));
+        const connected=['connected','restricted'].includes(record.state),menu=node('details'),summary=node('summary','⋯');summary.setAttribute('aria-label',t('Account actions'));menu.append(summary);
+        menu.append(button('Configure OAuth application',()=>configuration(record),'',connected||pending));
+        menu.append(button('Disconnect account',()=>confirm('Disconnect account',async()=>{await rpc('accounts.disconnect',{provider:record.provider});last='';await refresh();},record.provider==='youtube'?'Revoking Google authorization can also revoke other grants for this application. Local account secrets will be removed.':'Provider authorization will be revoked and local account secrets removed.')));
+        card.append(actions(button(record.state==='reauth_required'?'Authorize again':'Connect account',async()=>{await rpc('accounts.connect',{provider:record.provider});last='';await refresh();},'primary',connected||pending||!record.clientId),button('Check account connection',async()=>{await rpc('accounts.check',{provider:record.provider});last='';await refresh();},'',!connected||record.cleanup==='failed'),menu));list.append(card);
+      }
+      renderPublications(root);
+      list.append(node('p','Instagram is deferred until after v1. Publication always requires a separate human confirmation.','muted'));
+    }catch(error){feedback(error.message);}finally{busy=false;}}
+    void refresh();accountsTimer=setInterval(()=>void refresh(),1000);
+  }
+  function renderPage(){clearInterval(accountsTimer);clearInterval(processTimer);clearInterval(chatTimer);const root=$('page');clear(root);if(['Files','Terminal','Git','Docker'].includes(active))pageHead(root,active,'Project: '+(project?.name||t('No project selected')));if(['Files','Terminal','Git','Docker'].includes(active)&&!project){root.append(empty('Open a project to get started.'));return;}const routes={Home:home,Chat:chat,Accounts:accounts,Projects:projectsPage,Agents:agents,Connectors:connectors,'MCP Servers':mcp,Browser:browser,Files:files,Terminal:terminal,Git:git,Docker:docker,Tasks:tasksPage,Monitoring:monitoring,Settings:settings};if(active!=='Home'){const bar=node('nav',undefined,'context-tools');bar.setAttribute('aria-label',t('Workspace tools'));for(const label of ['Projects','MCP Servers','Browser','Files','Terminal','Git','Docker','Tasks','Monitoring','Settings']){const b=button(label,()=>navigate(label));b.id='tool-'+label.toLowerCase().replaceAll(' ','-');if(active===label)b.setAttribute('aria-current','page');bar.append(b);}root.prepend(bar);}if(active==='Permissions'){pageHead(root,'Permissions','Capability and workspace restrictions always apply.');security(root);const effective=panel('Permissions'),out=node('div');effective.append(button('Inspect service policy',()=>resultInto(out,'crot_status')),out);root.append(effective);}else (routes[active]||home)(root);syncI18n();}
   auth();buildShell();
   const refreshMascots=()=>{for(const n of document.querySelectorAll('img[data-mascot],.auth-mole,.plan-brand>img:first-child,.brand>img'))n.src=document.documentElement.dataset.theme==='dark'?PRODUCT.mascotDark:PRODUCT.mascot;};refreshMascots();new MutationObserver(refreshMascots).observe(document.documentElement,{attributes:true,attributeFilter:['data-theme']});
   document.addEventListener('crot:language',event=>{language=event.detail;renderHeader();if(stage==='plans')renderPlans();renderPage();});
-  api.onView(next=>{const wasConnected=view.connection==='connected',previousWorkspace=view.workspace;view=next;if(authPending&&next.pairing?.state==='pairing')authPairingSeen=true;if(authPending&&authPairingSeen&&next.pairing?.state!=='pairing'&&next.pairing?.state!=='paired'&&next.accountSignedIn!==true){authPending=false;authPairingSeen=false;text('auth-feedback','Sign-in could not be verified. Please try again.');}if(next.connection==='connected'&&(!wasConnected||!projects.length||previousWorkspace!==next.workspace)){void refreshProjects().then(()=>{renderHeader();renderPage();}).catch(error=>feedback(error.message));}text('headline',next.headline||'CROT Control Center');renderHeader();showApp();if($('approvals'))approvals($('approvals'));document.querySelectorAll('[data-chat-approvals]').forEach(approvals);const important=JSON.stringify([next.workspace,next.cards,next.connection,next.presets,next.clients,next.remoteMode,next.fullControl,next.modules]);if(important!==lastView){lastView=important;if(!document.activeElement?.matches('input,textarea,select')&&!$('action-dialog').open){if(active==='Home'||active==='Agents'||active==='Monitoring'||active==='Settings')renderPage();}}else if(active==='Home'&&$('approvals'))approvals($('approvals'));});
+  api.onView(next=>{const wasConnected=view.connection==='connected',previousWorkspace=view.workspace;view=next;if(authPending&&next.pairing?.state==='pairing')authPairingSeen=true;if(authPending&&authPairingSeen&&next.pairing?.state!=='pairing'&&next.pairing?.state!=='paired'&&next.accountSignedIn!==true){authPending=false;authPairingSeen=false;text('auth-feedback','Sign-in could not be verified. Please try again.');}if(next.connection==='connected'&&(!wasConnected||!projects.length||previousWorkspace!==next.workspace)){void refreshProjects().then(()=>{renderHeader();renderPage();}).catch(error=>feedback(error.message));}text('headline',next.headline||'CROT Control Center');renderHeader();showApp();if($('approvals'))approvals($('approvals'));document.querySelectorAll('[data-chat-approvals]').forEach(approvals);const important=JSON.stringify([next.workspace,next.cards,next.connection,next.presets,next.clients,next.remoteMode,next.fullControl,next.modules,next.commercial]);if(important!==lastView){lastView=important;if(!document.activeElement?.matches('input,textarea,select')&&!$('action-dialog').open){if(active==='Home'||active==='Agents'||active==='Monitoring'||active==='Settings')renderPage();}}else if(active==='Home'&&$('approvals'))approvals($('approvals'));});
   navigate('Home',false);showApp();api.ready();
+  const publicationPoll=setInterval(()=>void pollPublications(),1500);
+  window.addEventListener('pagehide',()=>clearInterval(publicationPoll),{once:true});
 })();
 `;

@@ -5,6 +5,7 @@
  * literal values or remove variables and never reach withheld ones.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { MemoryAuditSink } from "../../src/core/audit/audit.js";
 import type { CrotCore } from "../../src/core/crot-core.js";
 import { CHILD_ENV_ALLOWLIST, createChildEnvironment } from "../../src/core/platform/child-environment.js";
 import { createTestCore, isWindows, makeTempDirs, testContext as ctx, waitFor, type TempDirs } from "../helpers.js";
@@ -89,22 +90,21 @@ describe("process tools get an allowlisted environment", () => {
 
   it("overrides set literal values and remove variables; they cannot reach withheld ones", async () => {
     const script =
-      "process.stdout.write(JSON.stringify({k: process.env.CROT_TEST_API_KEY ?? null, m: process.env.MYAPP_MODE ?? null, x: process.env.CROT_TEST_X ?? null, d: process.env.DBUS_SESSION_BUS_ADDRESS ?? null}))";
+      "process.stdout.write(JSON.stringify({k: process.env.CROT_TEST_API_KEY ?? null, m: process.env.MYAPP_MODE ?? null, x: process.env.MY_LITERAL ?? null, d: process.env.DBUS_SESSION_BUS_ADDRESS ?? null}))";
     const r = await core.processes.exec(ctx, {
       command: node,
       args: ["-e", script],
       // A literal value is just that value; null removes; naming a withheld variable cannot "inherit" it.
       env: {
-        CROT_TEST_X: "$CROT_TEST_API_KEY %CROT_TEST_API_KEY%",
+        MY_LITERAL: "$CROT_TEST_API_KEY %CROT_TEST_API_KEY%",
         MYAPP_MODE: null,
-        DBUS_SESSION_BUS_ADDRESS: "unix:path=/chosen",
       },
     });
     expect(JSON.parse(r.stdout)).toEqual({
       k: null,
       m: null,
       x: "$CROT_TEST_API_KEY %CROT_TEST_API_KEY%",
-      d: "unix:path=/chosen",
+      d: null,
     });
   });
 
@@ -171,4 +171,39 @@ describe("createChildEnvironment", () => {
       createTestCore({ workspace: { root: dirs.workspace }, environment: { allow: ["*"] } }),
     ).rejects.toMatchObject({ code: "CONFIG_ERROR" });
   });
+});
+
+it("reserved OAuth/owner session variables cannot be allowlisted or injected through process or scratch skill execution", async () => {
+  const audit = new MemoryAuditSink();
+  await core.shutdown();
+  core = await createTestCore({ workspace: { root: dirs.workspace }, permissions: { mode: "full_control" } }, audit);
+  const inherited = createChildEnvironment(
+    {
+      PATH: "/bin",
+      CROT_OWNER_RPC_SECRET: "owner-private",
+      OAUTH_ACCESS_TOKEN: "oauth-private",
+      DBUS_SESSION_BUS_ADDRESS: "unix:path=/private",
+    },
+    ["CROT_*", "OAUTH_*", "DBUS_SESSION_BUS_ADDRESS"],
+    false,
+  );
+  expect(inherited.base).toEqual({ PATH: "/bin" });
+  for (const name of ["CROT_OWNER_RPC_SECRET", "OAUTH_ACCESS_TOKEN", "OWNER_RPC_SOCKET", "DBUS_SESSION_BUS_ADDRESS"]) {
+    await expect(
+      core.processes.exec(ctx, { command: node, args: ["-e", PRINT_ENV], env: { [name]: "must not launch" } }),
+    ).rejects.toMatchObject({ code: "PUBLICATION_BYPASS_DENIED" });
+    // Custom Skills use this same checked scratch execution path; it must refuse before launchScratch admission.
+    await expect(
+      core.processes.execInScratch(
+        ctx,
+        { command: node, args: ["-e", PRINT_ENV], env: { [name]: "must not launch" } },
+        ".",
+      ),
+    ).rejects.toMatchObject({ code: "PUBLICATION_BYPASS_DENIED" });
+  }
+  expect(audit.events).toHaveLength(8);
+  expect(
+    audit.events.every((event) => event.outcome === "denied" && event.error?.code === "PUBLICATION_BYPASS_DENIED"),
+  ).toBe(true);
+  expect(JSON.stringify(audit.events)).not.toContain("must not launch");
 });

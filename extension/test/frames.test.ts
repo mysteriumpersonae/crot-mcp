@@ -280,3 +280,28 @@ describe("refs and snapshots across processes", () => {
     await expect(verifyRef(registry, cdp, "e1", TAB)).resolves.toMatchObject({ frameId: MAIN });
   });
 });
+
+it("refuses a protected OAuth/publication frame before snapshot DOM inspection", async () => {
+  const { chrome, cdp } = setup();
+  const original = chrome.debugger.respond;
+  chrome.debugger.respond = (tabId, method, params, sessionId) =>
+    method === "Page.getFrameTree" && sessionId === undefined
+      ? {
+          frameTree: {
+            frame: { id: MAIN, url: "https://top.example/", loaderId: "L0" },
+            childFrames: [
+              {
+                frame: {
+                  id: SAME,
+                  parentId: MAIN,
+                  url: "https://accounts.google.com/o/oauth2/v2/auth?code=secret",
+                  loaderId: "L1",
+                },
+              },
+            ],
+          },
+        }
+      : original(tabId, method, params, sessionId);
+  await expect(tabFrames(cdp, TAB)).rejects.toMatchObject({ code: "PUBLICATION_BYPASS_DENIED" });
+  expect(chrome.debugger.sent.some((command) => command.method === "DOMSnapshot.captureSnapshot")).toBe(false);
+});

@@ -1,3 +1,4 @@
+import { socialAuthorizationUrl } from "../service/social/browser-url.js";
 import { TRAY_MARK } from "../ui/brand-tray.js";
 /**
  * CROT tray (WP-22, AD-19 point 1): an Electron process that is only a
@@ -361,7 +362,22 @@ function registerIpc(): void {
     const params = parseProduct(method, input);
     if (!params) return { ok: false, message: "Invalid request" };
     try {
-      return await controller.product(method as ProductMethod, params);
+      const result = await controller.product(method as ProductMethod, params);
+      if (method === "accounts.connect" && isRecord(result) && result.ok === true) {
+        const target = socialAuthorizationUrl(String(params.provider), result.authorizationUrl);
+        if (!target) {
+          await controller.product("accounts.cancel", { provider: params.provider });
+          return { ok: false, message: "Invalid account authorization destination" };
+        }
+        try {
+          await shell.openExternal(target);
+        } catch {
+          await controller.product("accounts.cancel", { provider: params.provider });
+          return { ok: false, message: "System browser could not be opened" };
+        }
+        return { ok: true, flowId: result.flowId };
+      }
+      return result;
     } catch {
       return { ok: false, message: "Request refused. Check service policy and connection." };
     }

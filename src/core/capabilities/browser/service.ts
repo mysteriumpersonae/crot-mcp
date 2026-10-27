@@ -1,3 +1,4 @@
+import { publicationBrowserControlTarget, publicationBrowserTarget } from "../../publications/browser-boundary.js";
 import { DEFAULT_TAB_POLICY, parseTabPolicy, type BrowserTabPolicy } from "./tab-policy.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { TabQueue } from "./tab-queue.js";
@@ -115,6 +116,7 @@ const PASS_THROUGH_CODES: ReadonlySet<CrotErrorCode> = new Set<CrotErrorCode>([
   "BROWSER_NOT_CONNECTED",
   "BROWSER_BRIDGE_IN_USE",
   "BROWSER_PAGE_RESTRICTED",
+  "PUBLICATION_BYPASS_DENIED",
   "BROWSER_STALE_REF",
   "BROWSER_DIALOG_OPEN",
 ]);
@@ -243,14 +245,16 @@ export class BrowserService {
         for (const id of this.owners.keys()) if (!live.has(id)) this.owners.delete(id);
         const scope = this.scope(context);
         return {
-          tabs: result.tabs.map((t) => ({
-            ...t,
-            openedBy: this.owners.has(t.tabId)
-              ? this.owners.get(t.tabId) === scope
-                ? ("this-context" as const)
-                : ("crot" as const)
-              : ("other" as const),
-          })),
+          tabs: result.tabs
+            .filter((t) => !publicationBrowserTarget(t.url))
+            .map((t) => ({
+              ...t,
+              openedBy: this.owners.has(t.tabId)
+                ? this.owners.get(t.tabId) === scope
+                  ? ("this-context" as const)
+                  : ("crot" as const)
+                : ("other" as const),
+            })),
         };
       },
     );
@@ -980,6 +984,7 @@ export class BrowserService {
           const connectionId = bound?.connectionId ?? this.connectionId();
           this.ownership();
           const complete = async (): Promise<T> => {
+            if (target && "url" in target && publicationBrowserTarget(target.url)) throw publicationBypassDenied();
             const result = await execute(bound);
             if (connectionId !== this.connectionId()) return result;
             const record = result as Record<string, unknown>;
@@ -1040,6 +1045,28 @@ export class BrowserService {
                   "The browser connection changed while the command was queued.",
                 );
               }
+              const current = validate(
+                BrowserTabActionResultSchema,
+                await this.send("tabs.resolve", { tabId: concreteTab }, undefined, id),
+                "tabs.resolve",
+              );
+              if (
+                publicationBrowserTarget(current.url) ||
+                ([
+                  "browser.click",
+                  "browser.type",
+                  "browser.hover",
+                  "browser.scroll",
+                  "browser.drag",
+                  "browser.press_key",
+                  "browser.select_option",
+                  "browser.set_checked",
+                  "browser.file_upload",
+                  "browser.dialog_handle",
+                ].includes(operation) &&
+                  publicationBrowserControlTarget(current.url))
+              )
+                throw publicationBypassDenied();
               return this.executing.run({ tabId: concreteTab, connectionId: id }, complete);
             },
             context.signal,
@@ -1064,6 +1091,7 @@ export class BrowserService {
     if (state.kind !== "connected") throw new CrotError("BROWSER_NOT_CONNECTED", WAITING_DETAIL);
     const connectionId = state.connectionId;
     if ("url" in target) {
+      if (publicationBrowserTarget(target.url)) throw publicationBypassDenied();
       const origin = normalizedHttpOrigin(target.url);
       if (origin === undefined) throw new CrotError("INVALID_INPUT", "The URL has no http(s) origin.");
       return { browser: { origin, connectionId } };
@@ -1071,6 +1099,7 @@ export class BrowserService {
     const raw = await this.send("tabs.resolve", tab(target.tabId), undefined, connectionId);
     const resolved = validate(BrowserTabActionResultSchema, raw, "tabs.resolve");
     if (target.tabId !== undefined && resolved.tabId !== target.tabId) throw invalidResponse("tabs.resolve");
+    if (publicationBrowserTarget(resolved.url)) throw publicationBypassDenied();
     const origin = normalizedHttpOrigin(resolved.url);
     if (origin === undefined) throw new CrotError("BROWSER_PAGE_RESTRICTED", "The tab has no http(s) origin.");
     return {
@@ -1195,6 +1224,12 @@ export class BrowserService {
   }
 }
 
+function publicationBypassDenied(): CrotError {
+  return new CrotError(
+    "PUBLICATION_BYPASS_DENIED",
+    "Publication and OAuth interfaces require the authenticated owner flow",
+  );
+}
 function describeState(state: BrowserConnectionState | undefined): BrowserStatus {
   if (!state) return { state: "disabled", detail: DISABLED_DETAIL };
   switch (state.kind) {

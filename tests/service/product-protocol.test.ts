@@ -87,3 +87,44 @@ it("project inspection never accepts arbitrary paths or commands", () => {
   for (const params of [{ path: "/etc" }, { command: "node" }, { project: "other" }])
     expect(parseProduct("projects.inspect", params)).toBeUndefined();
 });
+
+it("account owner RPC never accepts access/refresh tokens, endpoint overrides or unknown providers", () => {
+  expect(
+    parseProduct("accounts.configure", { provider: "github", clientId: "app", clientSecret: "secret" }),
+  ).toMatchObject({ provider: "github" });
+  for (const method of ["accounts.list", "accounts.connect", "accounts.disconnect", "accounts.check"])
+    expect(parseProduct(method, { provider: "github", access_token: "forbidden" })).toBeUndefined();
+  expect(parseProduct("accounts.connect", { provider: "instagram" })).toBeUndefined();
+  expect(
+    parseProduct("accounts.connect", { provider: "github", endpoint: "https://attacker.example" }),
+  ).toBeUndefined();
+  expect(
+    parseProduct("accounts.configure", { provider: "github", clientId: "app", clientSecret: "a\nb" }),
+  ).toBeUndefined();
+});
+
+it("publication owner RPC binds authority outside JSON and bounds escaped UTF-8 frames", () => {
+  const id = "dd2c1e62-a271-4b7c-851a-da324bd6af8e";
+  expect(parseProduct("publications.open", { id })).toEqual({ id });
+  for (const method of ["publications.open", "publications.confirm", "publications.cancel", "publications.preview"])
+    expect(parseProduct(method, { id, owner: { authenticated: true }, access_token: "no" })).toBeUndefined();
+  expect(parseProduct("publications.preview", { id, offset: 0, length: 24577 })).toBeUndefined();
+  expect(
+    parseProduct("publications.confirm", {
+      id,
+      confirmation: "a".repeat(43),
+      title: "",
+      description: "",
+      termsAccepted: true,
+    }),
+  ).toBeUndefined();
+  expect(
+    parseProduct("publications.prepare", {
+      provider: "x",
+      accountId: "x:1",
+      title: "",
+      description: "😀".repeat(10000),
+    }),
+  ).toBeUndefined();
+  expect(parseProduct("accounts.avatar", { provider: "x", url: "https://evil.test" })).toBeUndefined();
+});

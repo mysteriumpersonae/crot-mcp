@@ -16,6 +16,7 @@ import type { CoreActivity, CoreCompositionHandle, CrotCore } from "../core/crot
 /** Core members whose methods start operations; calls into them are counted. */
 const SERVICE_MEMBERS: ReadonlySet<PropertyKey> = new Set([
   "filesystem",
+  "publications",
   "processes",
   "git",
   "docker",

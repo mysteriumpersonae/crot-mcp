@@ -23,6 +23,9 @@ import { ClientTokenRegistry, clientTokenPath } from "./client-tokens.js";
 import { RuntimePermissionState } from "../core/permissions/runtime.js";
 import { newAuditEventId } from "../core/audit/audit.js";
 import { newLocalExposureScope } from "../core/auth/principal.js";
+import { authorizeProductionPublication } from "./publications/authorization.js";
+import { PublicationRuntime } from "./publications/runtime.js";
+import { SocialAccountRuntime } from "./social/runtime.js";
 import { ProductRuntime, productPaths } from "./product-runtime.js";
 import type net from "node:net";
 import { launchControlCenter } from "../tray/launch.js";
@@ -108,6 +111,16 @@ export interface ServiceOptions {
   readonly credentials?: CredentialStore;
   /** Platform inputs and seams of the secret store (tests). */
   readonly secretsHost?: SecretStoreHost;
+  /** In-process OAuth integration fixture only; never CLI/JSON configuration. */
+  readonly socialAccounts?: Pick<
+    import("./social/runtime.js").SocialRuntimeHost,
+    "secrets" | "adapters" | "loopbackFixtures"
+  >;
+  /** In-process publication integration fixture ONLY, never CLI/JSON configuration or production release input. */
+  readonly publicationFixture?: {
+    publisher: import("./publications/platforms.js").PlatformPublisher;
+    authorizePublication(): Promise<void>;
+  };
   readonly idleExitMs?: number;
   readonly firstClientTimeoutMs?: number;
   readonly windows?: boolean;
@@ -153,6 +166,8 @@ export class CrotService {
   private bridge: BrowserBridge | undefined;
   private clientTokens: ClientTokenRegistry | undefined;
   private product: ProductRuntime | undefined;
+  private socialAccounts: SocialAccountRuntime | undefined;
+  private publications: PublicationRuntime | undefined;
   private readonly runtimePermissions = new RuntimePermissionState();
   private killing: Promise<Record<string, unknown>> | undefined;
   private holder: CoreHolder | undefined;
@@ -441,6 +456,11 @@ export class CrotService {
         : undefined;
       const coreOptions: CrotCoreOptions = {
         checkedCommands: true,
+        preparePublication: (context, input) => {
+          if (!this.publications || !this.holder)
+            throw new CrotError("PERMISSION_DENIED", "Publication runtime unavailable");
+          return this.holder.hold(() => this.publications!.prepare(context, input));
+        },
         runtimePermissions: this.runtimePermissions,
         protectedPaths,
         secretPaths,
@@ -549,7 +569,34 @@ export class CrotService {
           ]);
         },
       });
+      this.socialAccounts = await SocialAccountRuntime.open({
+        ...this.options.socialAccounts,
+        stateDir,
+        privateFiles: servicePlatform.privateFiles,
+        audit: async (event) =>
+          holder.composition.recordControlEvent({
+            kind: "control",
+            id: newAuditEventId(),
+            timestamp: new Date().toISOString(),
+            action: "social_account",
+            actor: { channel: "control" },
+            outcome: event.cleanup === "failed" ? "failed" : "applied",
+            value: JSON.stringify(event),
+          }),
+      });
       this.product = await ProductRuntime.open({
+        socialAccounts: this.socialAccounts,
+        publications: () => this.publications,
+        unlimitedProjects: async () => {
+          await identity.refreshCommercialIfNeeded();
+          const status = identity.commercialStatus();
+          return (
+            status.state === "current" &&
+            status.entitled === true &&
+            status.status === "active" &&
+            ["pro", "trial", "team"].includes(status.plan ?? "")
+          );
+        },
         tokens: this.clientTokens,
         secretFiles: {
           status: () => ({
@@ -573,6 +620,36 @@ export class CrotService {
           await control.selectWorkspace(root);
           activeWorkspace = root;
         },
+      });
+      this.publications = await PublicationRuntime.open({
+        stateDir,
+        privateFiles: servicePlatform.privateFiles,
+        core: () => holder.instance,
+        project: () => this.product!.activeProject.id,
+        accounts: this.socialAccounts,
+        authorizePublication: async () => {
+          if (this.runtimePermissions.halted) throw new CrotError("PERMISSION_DENIED", "Service is halted");
+          if (this.options.publicationFixture) {
+            await this.options.publicationFixture.authorizePublication();
+            return;
+          }
+          await authorizeProductionPublication({
+            identity,
+            core: () => holder.instance,
+            halted: () => this.runtimePermissions.halted,
+          });
+        },
+        ...(this.options.publicationFixture ? { publisher: this.options.publicationFixture.publisher } : {}),
+        audit: (event) =>
+          holder.composition.recordControlEvent({
+            kind: "control",
+            id: newAuditEventId(),
+            timestamp: new Date().toISOString(),
+            action: "publication",
+            actor: { channel: "control" },
+            outcome: event.state === "failed" ? "failed" : "applied",
+            value: JSON.stringify(event),
+          }),
       });
       control.product = this.product;
       holder.operation = (member, method, args, run) => this.product!.execute(member, method, args, run);
@@ -1058,6 +1135,12 @@ export class CrotService {
     await this.tunnel?.close();
     if (this.http) await this.http.close();
     await this.clientTokens?.close();
+    await this.publications?.close();
+    await this.socialAccounts?.close();
+    // AD-58 Windows pins private state against replacement while actors exist.
+    // Drain/verify and close admission BEFORE final vault persistence, retaining
+    // the audit until owner runtime shutdown finishes. Never retry around a lease.
+    if (this.holder) await this.holder.instance.quiesce();
     await this.product?.close();
     if (this.holder) await this.holder.instance.shutdown();
     await this.control?.flush();
@@ -1084,6 +1167,8 @@ export class CrotService {
     const results = await Promise.allSettled([
       core.emergencyStop(),
       this.product?.abortAll(),
+      this.publications?.close(),
+      this.socialAccounts?.close(),
       this.tunnel?.close(),
       this.http?.close(),
       ...[...this.shims].map(async (shim) => {

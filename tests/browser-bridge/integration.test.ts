@@ -340,8 +340,10 @@ describe("browser extension chain (built crot-mcp + crot-browser-relay)", () => 
         ["tabs.list", {}],
         ["tabs.open", { url: "https://example.com/docs", active: true }],
         ["tabs.resolve", {}],
+        ["tabs.resolve", { tabId: 7 }],
         ["page.read", { tabId: 7, format: "text", maxBytes: 10 }],
         ["tabs.resolve", {}],
+        ["tabs.resolve", { tabId: 7 }],
         ["page.click", { tabId: 7, selector: "#go" }],
         ["tabs.list", {}],
       ]);

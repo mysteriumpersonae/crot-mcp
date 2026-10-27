@@ -39,7 +39,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y gcc meson ninja-build pkg-config libcap-dev xz-utils curl \
-            apparmor apparmor-utils openssh-server openssl
+            apparmor apparmor-utils openssh-server openssl libsecret-tools gnome-keyring dbus-x11
 
       - name: Install the L1 components and policy
         run: sudo bash scripts/l1-install.sh install

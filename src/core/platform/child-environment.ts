@@ -20,7 +20,8 @@
  * and PSModulePath (a PowerShell 7 value breaks Windows PowerShell; PowerShell
  * builds its default module path without it). PSModuleAnalysisCachePath, a
  * cache location, is passed: without it module auto-loading re-analyses every
- * installed module. The owner can still allow any name with environment.allow.
+ * installed module. AD-67 reserves service/OAuth/session-bus names even when
+ * explicitly listed in environment.allow; other extra names remain available.
  *
  * Git keeps its own rules on top of this base (GIT_* removed, fixed
  * variables; AD-2); Docker keeps its narrower list (AD-3).
@@ -140,7 +141,14 @@ export interface ChildEnvironment {
   allows(name: string): boolean;
 }
 
-/** Filter `env` to the allowlist plus `extra` (environment.allow). */
+/** Reserved service/session channels never become child configuration, even with environment.allow. */
+export function isServiceSecretEnvironmentName(name: string): boolean {
+  return /^(?:CROT_|OAUTH_|OWNER_RPC_|DBUS_SESSION_BUS_ADDRESS$|DBUS_STARTER_|KEYCHAIN_|CREDENTIAL_MANAGER_)/i.test(
+    name,
+  );
+}
+
+/** Filter `env` to the allowlist plus `extra`, excluding reserved service/session names. */
 export function createChildEnvironment(
   env: Readonly<Record<string, string | undefined>>,
   extra: readonly string[],
@@ -154,6 +162,7 @@ export function createChildEnvironment(
     else exact.add(norm(entry));
   }
   const allows = (name: string) => {
+    if (isServiceSecretEnvironmentName(name)) return false;
     const n = norm(name);
     return exact.has(n) || prefixes.some((p) => n.startsWith(p));
   };

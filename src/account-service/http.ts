@@ -280,11 +280,25 @@ export class AccountHttp {
     }
     if (pathname === "/account/checkout") {
       const body = await jsonBody(req);
-      if (!body || Object.keys(body).join(",") !== "plan" || (body.plan !== "pro" && body.plan !== "team"))
+      if (
+        !body ||
+        Object.keys(body).some((key) => !["plan", "term"].includes(key)) ||
+        (body.plan !== "pro" && body.plan !== "team") ||
+        (body.term !== undefined &&
+          (body.plan !== "pro" ||
+            typeof body.term !== "string" ||
+            !["monthly", "annual", "founderAnnual"].includes(body.term)))
+      )
         return reply(400, "invalid_plan");
       if (!this.options.billing) return reply(503, "billing_unavailable");
       try {
-        return reply(200, "checkout", { url: await this.options.billing.checkout(account, body.plan) });
+        return reply(200, "checkout", {
+          url: await this.options.billing.checkout(
+            account,
+            body.plan,
+            body.term as "monthly" | "annual" | "founderAnnual" | undefined,
+          ),
+        });
       } catch {
         return reply(503, "billing_unavailable");
       }

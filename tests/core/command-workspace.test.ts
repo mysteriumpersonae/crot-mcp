@@ -21,6 +21,9 @@ describe("AD-58 command workspace composition", () => {
       node = await createNodePlatform();
     let scope: ConfinementScope | undefined;
     const nativeClose = vi.fn(async () => undefined);
+    const createScratch = vi.fn(async (dir: string) => {
+      await mkdir(dir, { mode: 0o700 });
+    });
     const core = await createTestCore(
       {
         workspace: { root: d.workspace },
@@ -39,6 +42,7 @@ describe("AD-58 command workspace composition", () => {
             inspect: async () => ({ ownerOnly: true, mechanism: "posix-mode", detail: "unit stub" }),
           },
           confinement: {
+            createScratchDirectory: createScratch,
             probe: async () => ready,
             open: async (s) => {
               scope = s;
@@ -64,6 +68,8 @@ describe("AD-58 command workspace composition", () => {
         "renders/preview",
       );
       expect(result.exitCode).toBe(0);
+      expect(createScratch).toHaveBeenCalledTimes(1);
+      expect(createScratch).toHaveBeenCalledWith(scope!.workspace);
       expect(result.stdout.trim()).toBe(path.join(scope!.workspace, "renders", "preview"));
       await expect(access(path.join(d.workspace, "renders"))).rejects.toMatchObject({ code: "ENOENT" });
       await symlink(

@@ -6,7 +6,7 @@ import { CONNECTOR_MANIFESTS } from "../../src/service/connector-manifests.js";
 import { TOOLS } from "../../src/adapters/mcp/tools.js";
 
 describe("Control Center product architecture", () => {
-  it("has sixteen distinct sections, seven project tabs and eleven settings sections", () => {
+  it("has sixteen distinct sections, seven project tabs and twelve settings sections including Subscription", () => {
     expect(PRIMARY_SECTIONS).toEqual([
       "Home",
       "Chat",
@@ -22,7 +22,11 @@ describe("Control Center product architecture", () => {
     expect(SECTIONS).toHaveLength(16);
     expect(new Set(SECTIONS).size).toBe(16);
     expect(PROJECT_TABS).toHaveLength(7);
-    expect(SETTINGS).toHaveLength(11);
+    expect(SETTINGS).toHaveLength(12);
+    expect(new Set(SETTINGS).size).toBe(12);
+    expect(SETTINGS).toContain("Subscription");
+    expect(TRAY_ASSETS["/renderer.js"]!.body).toContain("Verified paid-through date:");
+    expect(TRAY_ASSETS["/renderer.js"]!.body).toContain("ui.openPortal");
     expect(SECTIONS.indexOf("Agents")).not.toBe(SECTIONS.indexOf("MCP Servers"));
     expect(CONNECTORS).toEqual(CONNECTOR_MANIFESTS.map((m) => [m.id, m.category, m.kind]));
     expect(new Set(CONNECTORS.map(([id]) => id)).size).toBe(CONNECTOR_MANIFESTS.length);

@@ -1,6 +1,6 @@
 /** Provider credentials remain on the cloud host. No Core or device dependency. */
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { PLAN_CATALOG } from "./catalog.js";
+import { PLAN_CATALOG, proPriceContract, type BillingPrices, type ProBillingTerm } from "./catalog.js";
 import type { AuthorizationRevoker, SubscriptionStatus } from "./service.js";
 export interface SubscriptionUpdate {
   eventId: string;
@@ -12,7 +12,7 @@ export interface SubscriptionUpdate {
 }
 export interface BillingProvider {
   verifyAndResolve(raw: Buffer, signature: string): Promise<SubscriptionUpdate | undefined>;
-  checkout(accountId: string, plan: "trial" | "pro" | "team"): Promise<string>;
+  checkout(accountId: string, plan: "trial" | "pro" | "team", term?: ProBillingTerm): Promise<string>;
   portal?(accountId: string, subscriptionId: string): Promise<string>;
 }
 /** Bounded, fixed-provider HTTPS; redirects never carry server credentials to another host. */
@@ -49,7 +49,7 @@ export class StripeBillingProvider implements BillingProvider {
     private readonly options: {
       secretKey: string;
       webhookSecret: string;
-      prices: { pro: string; team: string };
+      prices: BillingPrices;
       returnUrl: string;
       now?: () => number;
       fetch?: typeof fetch;
@@ -58,19 +58,25 @@ export class StripeBillingProvider implements BillingProvider {
     if (
       !options.secretKey ||
       !options.webhookSecret ||
-      options.prices.pro === options.prices.team ||
-      !/^price_[A-Za-z0-9]+$/.test(options.prices.pro) ||
-      !/^price_[A-Za-z0-9]+$/.test(options.prices.team) ||
+      new Set(Object.values(options.prices)).size !== Object.values(options.prices).length ||
+      ![options.prices.pro, options.prices.team, ...Object.values(options.prices)].every(
+        (id) => typeof id === "string" && /^price_[A-Za-z0-9]+$/.test(id),
+      ) ||
       new URL(options.returnUrl).protocol !== "https:"
     )
       throw new Error("invalid billing configuration");
   }
-  async checkout(accountId: string, plan: "trial" | "pro" | "team"): Promise<string> {
-    // Do not advertise $3 and silently send an operator's stale $15 price to Checkout.
+  async checkout(accountId: string, plan: "trial" | "pro" | "team", term: ProBillingTerm = "monthly"): Promise<string> {
+    if (!["monthly", "annual", "founderAnnual"].includes(term) || (plan !== "pro" && term !== "monthly"))
+      throw new Error("invalid billing term");
+    const contract = proPriceContract(term);
+    const selectedPrice = plan === "team" ? this.options.prices.team : this.options.prices[contract.key];
+    if (!selectedPrice) throw new Error("billing term is not configured");
+    // Never send an operator's stale or mismatched price to Checkout.
     // The cloud verifies the live price; the device cannot supply an amount or price ID.
     if (plan === "pro" || plan === "trial") {
       const price = (await providerJson(
-        "https://api.stripe.com/v1/prices/" + this.options.prices.pro,
+        "https://api.stripe.com/v1/prices/" + selectedPrice,
         this.options.secretKey,
         { method: "GET" },
         this.options.fetch ?? fetch,
@@ -82,18 +88,18 @@ export class StripeBillingProvider implements BillingProvider {
         recurring?: { interval?: unknown; interval_count?: unknown };
       };
       if (
-        price.id !== this.options.prices.pro ||
+        price.id !== selectedPrice ||
         price.active !== true ||
-        price.unit_amount !== PLAN_CATALOG.pro.monthlyUsdCents ||
+        price.unit_amount !== contract.amount ||
         price.currency !== PLAN_CATALOG.pro.currency ||
-        price.recurring?.interval !== PLAN_CATALOG.pro.interval ||
+        price.recurring?.interval !== contract.interval ||
         price.recurring?.interval_count !== 1
       )
-        throw new Error("configured Pro price must be USD 3 per month");
+        throw new Error(`configured Pro price must be USD ${contract.amount / 100} per ${contract.interval}`);
     }
     const fields = new URLSearchParams({
       mode: "subscription",
-      "line_items[0][price]": this.options.prices[plan === "trial" ? "pro" : plan],
+      "line_items[0][price]": selectedPrice,
       "line_items[0][quantity]": "1",
       success_url: this.options.returnUrl,
       cancel_url: this.options.returnUrl,
@@ -196,7 +202,12 @@ export class StripeBillingProvider implements BillingProvider {
       throw new Error("unknown subscription");
     const price = items[0]?.price?.id;
     const paidPlan =
-      price === this.options.prices.pro ? "pro" : price === this.options.prices.team ? "team" : undefined;
+      price &&
+      [this.options.prices.pro, this.options.prices.proAnnual, this.options.prices.proFounderAnnual].includes(price)
+        ? "pro"
+        : price === this.options.prices.team
+          ? "team"
+          : undefined;
     const trial = s.status === "trialing";
     if (
       trial &&
@@ -205,7 +216,8 @@ export class StripeBillingProvider implements BillingProvider {
         !Number.isSafeInteger(s.trial_start) ||
         !Number.isSafeInteger(s.trial_end) ||
         s.trial_end! - s.trial_start! !== 7 * 86400 ||
-        paidPlan !== "pro")
+        paidPlan !== "pro" ||
+        price !== this.options.prices.pro)
     )
       throw new Error("unverified card-backed trial");
     const plan = trial ? "trial" : paidPlan;

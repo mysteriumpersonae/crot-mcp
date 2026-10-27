@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
-import { PORTAL_CSS } from "../../src/account-service/portal.js";
+import { PORTAL_CSS, PORTAL_HTML } from "../../src/account-service/portal.js";
 import { RelayHarness } from "../cloud-relay/harness.js";
 let relay: RelayHarness | undefined;
 afterEach(async () => {
@@ -40,4 +40,11 @@ describe("unconditional public HTML before MCP admission", () => {
     expect((await fetch(relay.origin + "/portal", { method: "POST" })).status).toBe(405);
     expect((await fetch(relay.origin + "/account")).status).toBe(401);
   });
+});
+
+it("advertises only approved public Free/Pro prices without a Team purchase button", () => {
+  expect(PORTAL_HTML).toContain("up to 3 projects, full L1 sandbox and audit journal");
+  expect(PORTAL_HTML).toContain("$5 / month, $39 / year or $29 / year founder");
+  expect(PORTAL_HTML).not.toContain('id="team"');
+  expect(PORTAL_HTML).not.toContain("$3 / month");
 });

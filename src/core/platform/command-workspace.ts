@@ -93,7 +93,8 @@ export async function openCommandWorkspace(
       if (!(await platform.privateFiles.inspect(privateRoot)).ownerOnly)
         throw blocked("private storage is not owner-only");
       const scratch = path.join(privateRoot, "work");
-      await mkdir(scratch, { mode: 0o700 });
+      if (platform.confinement.createScratchDirectory) await platform.confinement.createScratchDirectory(scratch);
+      else await mkdir(scratch, { mode: 0o700 });
       const native = await openNative(scratch);
       return { root, scratch, native, nativeReady: true };
     } catch (cause) {

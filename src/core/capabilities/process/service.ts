@@ -1,3 +1,4 @@
+import { isServiceSecretEnvironmentName } from "../../platform/child-environment.js";
 import { ScratchDirectorySchema } from "../../platform/scratch-directory.js";
 import { stat } from "node:fs/promises";
 import type { AuthContext } from "../../auth/principal.js";
@@ -480,6 +481,11 @@ export class ProcessService {
   }
 
   private env(overrides: EnvOverrides): Record<string, string> {
+    if (Object.entries(overrides ?? {}).some(([name, value]) => value !== null && isServiceSecretEnvironmentName(name)))
+      throw new CrotError(
+        "PUBLICATION_BYPASS_DENIED",
+        "Service OAuth/owner-RPC/session environment variables are not available to commands",
+      );
     return this.deps.platform.environment.merge(
       this.deps.baseEnv ?? this.deps.platform.baseEnvironment,
       overrides ?? {},

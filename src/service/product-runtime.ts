@@ -1,3 +1,9 @@
+import { publicationProtection } from "./publications/authorization.js";
+import { PublicationAuditSchema } from "../core/publications/service.js";
+import { AccountAvatars } from "./social/avatars.js";
+import type { SocialAccountRuntime } from "./social/runtime.js";
+import type { SocialProvider } from "./social/account-secrets.js";
+import { PLAN_CATALOG } from "../account-service/catalog.js";
 import { checkLoopbackPort } from "./system-check.js";
 import { parseTabPolicy, type BrowserTabPolicy } from "../core/capabilities/browser/tab-policy.js";
 import { CONNECTOR_MANIFESTS, SkillSchema, type CustomSkill } from "./connector-manifests.js";
@@ -123,10 +129,15 @@ interface Vault {
 }
 export interface ProductHost {
   stateDir: string;
+  socialAccounts?: SocialAccountRuntime;
+  /** Trusted composition lookup; unavailable until service initialization has completed. */
+  publications?(): import("./publications/runtime.js").PublicationRuntime | undefined;
   secrets: SecretStore;
   privateFiles: PrivateFileProtection;
   core(): CrotCore;
   selectWorkspace(root: string): Promise<void>;
+  /** Service-verified current entitlement; absent/offline cannot grant new unlimited registrations. */
+  unlimitedProjects?(): Promise<boolean>;
   secretFiles?: { status(): Record<string, unknown>; set(input: unknown): Promise<Record<string, unknown>> };
   disconnectAgent?(id: string): Promise<void>;
   holdActivity?(work: () => Promise<unknown>): Promise<unknown>;
@@ -145,6 +156,9 @@ const limited = <T>(values: T[], limit = 500): T[] => values.slice(-limit);
 export const productPaths = (dir: string) => [
   path.join(dir, "product-state.json"),
   path.join(dir, "product-vault.enc"),
+  path.join(dir, "oauth-secret-store.json"),
+  path.join(dir, "social-accounts.json"),
+  path.join(dir, "publications.json"),
 ];
 
 class PipeTransport implements Transport {
@@ -210,6 +224,7 @@ export class ProductRuntime {
   private poller: NodeJS.Timeout | undefined;
   private schemaValidator = new AjvJsonSchemaValidator();
   private readonly chat: ChatRuntime;
+  private readonly avatars = new AccountAvatars();
   private constructor(private host: ProductHost) {
     this.chat = new ChatRuntime({
       core: () => this.host.core(),
@@ -266,7 +281,10 @@ export class ProductRuntime {
     for (const a of r.state.agents) a.connected = false;
     for (const s of r.state.servers) s.status = "Disconnected";
     const root = await realpath(host.core().workspace.root);
-    if (!r.state.projects.some((p) => p.path === root)) r.state.projects.push(r.newProject(root));
+    if (!r.state.projects.some((p) => p.path === root)) {
+      await r.assertProjectAdmission();
+      r.state.projects.push(r.newProject(root));
+    }
     // An explicit CLI/config workspace change wins over the last UI selection.
     // Restarts with the same launch root restore the selected project.
     if (!r.state.active || (r.state.launchWorkspace && r.state.launchWorkspace !== root))
@@ -283,6 +301,13 @@ export class ProductRuntime {
   }
   get activeProject(): Project {
     return this.state.projects.find((p) => p.id === this.state.active)!;
+  }
+  private async assertProjectAdmission(): Promise<void> {
+    if (this.state.projects.length < PLAN_CATALOG.free.advertisedProjects) return;
+    if (await this.host.unlimitedProjects?.()) return;
+    fail(
+      "Free supports up to 3 registered projects. A current verified Pro entitlement is required to add more; existing projects and L1 remain available.",
+    );
   }
   private newProject(root: string, name?: string): Project {
     return {
@@ -346,9 +371,35 @@ export class ProductRuntime {
         async () => undefined,
       );
   }
-  async request(method: ProductMethod, input: unknown): Promise<Record<string, unknown>> {
+  endOwnerSession(owner: object): void {
+    this.host.publications?.()?.endOwnerSession(owner);
+  }
+  async request(method: ProductMethod, input: unknown, owner?: object): Promise<Record<string, unknown>> {
     const params = parseProduct(method, input);
     if (!params) fail("Invalid product request");
+    if (method.startsWith("publications.")) {
+      const runtime = this.host.publications?.();
+      if (!runtime || !owner)
+        throw new CrotError("PERMISSION_DENIED", "Authenticated publication owner session unavailable");
+      const id = String(params!.id ?? "");
+      switch (method) {
+        case "publications.prepare":
+          return {
+            ok: true,
+            publication: await this.host.core().publications.preparePublication(this.context(), params),
+          };
+        case "publications.list":
+          return runtime.list(owner);
+        case "publications.open":
+          return runtime.openForOwner(owner, id);
+        case "publications.preview":
+          return runtime.preview(owner, params);
+        case "publications.confirm":
+          return runtime.confirm(owner, params);
+        case "publications.cancel":
+          return runtime.cancel(owner, id);
+      }
+    }
     if (method === "security.kill") {
       if (!this.host.emergencyStop) fail("Emergency stop unavailable in this host");
       return this.host.emergencyStop!();
@@ -379,6 +430,7 @@ export class ProductRuntime {
       method === "security.status" ||
       (method.startsWith("chat.") && method !== "chat.configure") ||
       method.startsWith("tokens.") ||
+      method.startsWith("accounts.") ||
       method.endsWith(".list") ||
       method.startsWith("monitoring.") ||
       method === "connectors.testConnection" ||
@@ -463,6 +515,38 @@ export class ProductRuntime {
   }
   private async dispatch(method: ProductMethod, p: Record<string, unknown>): Promise<Record<string, unknown>> {
     const id = String(p.id ?? "");
+    if (method.startsWith("accounts.")) {
+      const social = this.host.socialAccounts;
+      if (!social) return fail("Social account runtime unavailable");
+      const provider = p.provider as SocialProvider;
+      switch (method) {
+        case "accounts.list":
+          return social.list();
+        case "accounts.avatar": {
+          const account = social.list().accounts.find((a) => a.provider === provider);
+          if (!account || (p.accountId && (p.accountId !== account.id || p.generation !== account.generation)))
+            return { ok: true };
+          const result = await this.avatars.get(account);
+          const current = social.list().accounts.find((a) => a.provider === provider);
+          return current?.generation === account.generation && current.state === account.state ? result : { ok: true };
+        }
+        case "accounts.configure":
+          return social.configure(provider, String(p.clientId), p.clientSecret as string | undefined);
+        case "accounts.connect":
+          return social.connect(provider);
+        case "accounts.check":
+          return social.check(provider);
+        case "accounts.cancel":
+          return social.cancel(provider);
+        case "accounts.disconnect":
+          this.avatars.clear();
+          {
+            const accountId = social.list().accounts.find((a) => a.provider === provider)?.id;
+            if (accountId) this.host.publications?.()?.abortAccount(accountId);
+          }
+          return social.disconnect(provider);
+      }
+    }
     switch (method) {
       case "browser.policy.get":
         return { ok: true, policy: this.appliedTabPolicy ?? this.host.core().browser.getTabPolicy() };
@@ -545,7 +629,12 @@ export class ProductRuntime {
       }
       case "system.check": {
         const core = this.host.core();
-        const l1 = await core.refreshConfinement().catch(() => core.confinementStatus());
+        const l1 = await core.refreshConfinement().catch(() => ({
+          ...core.confinementStatus(),
+          available: false,
+          reason: "self_test_failed" as const,
+          detail: "Native L1 readiness refresh failed; no unconfined retry",
+        }));
         const ports = await checkLoopbackPort();
         const inspection = await core.inspectProject(this.context());
         return {
@@ -557,6 +646,8 @@ export class ProductRuntime {
             ports,
             bridge: core.status().browser,
             project: inspection,
+            accounts: this.host.socialAccounts?.list().accounts.map((account) => account.diagnostics) ?? [],
+            publicationProtection: publicationProtection(l1),
             nativeCommandPrerequisiteMet: l1.available,
             detail: l1.available
               ? "Native L1 ready; permissions, approvals and halt state still apply"
@@ -651,7 +742,10 @@ export class ProductRuntime {
         const input = String(p.path);
         if (!path.isAbsolute(input)) fail("Project path must be absolute");
         // Owner explicitly registers directories. No tool or agent can invoke this configuration RPC.
-        if (method === "projects.create") await mkdir(input, { recursive: false, mode: 0o700 });
+        if (method === "projects.create") {
+          await this.assertProjectAdmission();
+          await mkdir(input, { recursive: false, mode: 0o700 });
+        }
         const root = await realpath(input);
         if (!(await stat(root)).isDirectory()) fail("Choose a directory");
         if (
@@ -659,9 +753,12 @@ export class ProductRuntime {
           (productPaths(this.host.stateDir).some((f) => f.startsWith(root + path.sep)) && root === this.host.stateDir)
         )
           fail("Service state cannot be a project");
-        const project =
-          this.state.projects.find((v) => v.path === root) ?? this.newProject(root, p.name as string | undefined);
-        if (!this.state.projects.includes(project)) this.state.projects.push(project);
+        let project = this.state.projects.find((v) => v.path === root);
+        if (!project) {
+          await this.assertProjectAdmission();
+          project = this.newProject(root, p.name as string | undefined);
+          this.state.projects.push(project);
+        }
         await this.persist();
         await this.event(method, project.id);
         return { ok: true, project };
@@ -932,6 +1029,8 @@ export class ProductRuntime {
             secrets: "redacted; request/response bodies omitted",
           },
         };
+      default:
+        return fail("Unknown product request");
     }
   }
   private async testConnector(id: string): Promise<Record<string, unknown>> {
@@ -1322,9 +1421,18 @@ export class ProductRuntime {
       }
       const task = tasks.get(String(e.requestId));
       const details = object(e.details);
-      const project = task?.project ?? details.project;
+      let publication: import("zod").infer<typeof PublicationAuditSchema> | undefined;
+      if (e.action === "publication" && typeof e.value === "string" && Buffer.byteLength(e.value) <= 8192) {
+        try {
+          const parsed = PublicationAuditSchema.safeParse(JSON.parse(e.value));
+          if (parsed.success) publication = parsed.data;
+        } catch {
+          /* Invalid content never becomes display text. */
+        }
+      }
+      const project = task?.project ?? publication?.project ?? details.project;
       const agent = task?.agent ?? details.agent;
-      const type = e.operation ?? e.action ?? e.event ?? e.kind;
+      const type = e.operation ?? publication?.operation ?? e.action ?? e.event ?? e.kind;
       if (
         (p.from && String(e.timestamp) < String(p.from)) ||
         (p.to && String(e.timestamp) > String(p.to)) ||
@@ -1344,6 +1452,9 @@ export class ProductRuntime {
         project: project ?? null,
         agent: agent ?? null,
         errorCode: object(e.error).code ?? null,
+        ...(publication
+          ? { publicationId: publication.id, provider: publication.provider, publicationState: publication.state }
+          : {}),
       });
     }
     return result.slice(-Number(p.limit ?? 200)).reverse();
@@ -1381,6 +1492,7 @@ export class ProductRuntime {
     await this.persist();
   }
   async close(): Promise<void> {
+    this.avatars.close();
     await this.chat.close();
     clearInterval(this.poller);
     for (const controller of this.serverControllers.values()) controller.abort();

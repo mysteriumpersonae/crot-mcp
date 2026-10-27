@@ -220,6 +220,8 @@ export interface CommercialStatus {
   readonly deviceCount?: number;
   readonly maxDevices?: number;
   readonly checkedAt?: number;
+  /** Verified paid-through / trial-end time, not a promise of automatic renewal. */
+  readonly expiresAt?: number;
 }
 export interface ControlOverview {
   /** Owner UI presentation only: verified account sign-in, not device/remote entitlement. */
