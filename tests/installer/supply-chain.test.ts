@@ -37,5 +37,10 @@ describe("WP-34 release supply chain", () => {
     expect(sbom.components.length).toBeGreaterThan(0);
     expect(await readFile(path.join(out, "SHA256SUMS"), "utf8")).toContain("release-identity.json");
     expect(await readFile(path.join(out, "THIRD_PARTY_NOTICES.md"), "utf8")).toContain("Third-Party Notices");
+    expect(await readFile(path.join(out, "docs/legal/TERMS_OF_SERVICE.ru.md"), "utf8")).toContain("AD-58");
+    expect(await readFile(path.join(out, "docs/legal/PRIVACY_POLICY.md"), "utf8")).toContain(
+      "not yet an effective notice",
+    );
+    expect(await readFile(path.join(out, "SHA256SUMS"), "utf8")).toContain("docs/legal/PRIVACY_POLICY.ru.md");
   }, 120000);
 });

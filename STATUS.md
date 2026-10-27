@@ -36,3 +36,8 @@ Production `mcp.crot.network`, live Stripe, vendor signing/notarization, GUI ins
 Unique branch decisions are retained in [BRANCH_RECONCILIATION](docs/BRANCH_RECONCILIATION.md). No branch deletion/history rewriting is part of normalization. Local `opencode.json` is private and must be preserved.
 
 The former mixed status narrative remains [historical](docs/history/STATUS.md).
+
+
+## Stage D repository hardening
+
+Runtime dependency remediation, strict production extension inventory, safer desktop bundle outputs and substantive EN/RU legal drafts are tracked in [release hardening](docs/RELEASE-HARDENING.md). The CI matrix now requires a clean runtime audit. Exact final-head checks, package smoke scope and merge evidence belong in PR #8; this paragraph is not a substitute for observing them. Legal operator fields/counsel approval, published URLs, complete signed runtime installers and live operations remain external gates.
