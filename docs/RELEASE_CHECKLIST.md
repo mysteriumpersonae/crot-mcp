@@ -4,6 +4,8 @@
 
 This checklist separates repository evidence from actions only the release operator can perform. A generated RC is not GA. Each operator item needs an owner, timestamp and immutable evidence link.
 
+See [Stage D hardening and exact external key/configuration checklist](RELEASE-HARDENING.md) and the [EN/RU legal publication register](legal/README.md).
+
 ## Build the RC
 
 1. Use a clean reviewed commit and pinned Node/lockfile environment.

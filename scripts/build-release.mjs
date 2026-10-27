@@ -49,6 +49,13 @@ try {
   const { cp } = await import("node:fs/promises");
   await cp(temp, out, { recursive: true });
   await cp(path.join(root, "THIRD_PARTY_NOTICES.md"), path.join(out, "THIRD_PARTY_NOTICES.md"));
+  const legalFiles = execFileSync("git", ["ls-files", "-z", "docs/legal"], { cwd: root, encoding: "utf8" })
+    .split("\0")
+    .filter((file) => file.endsWith(".md"));
+  await mkdir(path.join(out, "docs", "legal"), { recursive: true });
+  for (const file of legalFiles) await cp(path.join(root, file), path.join(out, file));
+  for (const file of ["INSTALL.md", "RELEASE-HARDENING.md"])
+    await cp(path.join(root, "docs", file), path.join(out, "docs", file));
   // Inventory only reviewed tracked native sources, never ignored local keys/build products.
   const nativeFiles = execFileSync("git", ["ls-files", "-z", "native"], { cwd: root, encoding: "utf8" })
     .split("\0")
