@@ -1,8 +1,11 @@
 import { rename, writeFile, readFile } from "node:fs/promises";
 import path from "node:path";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { ownerRequest, publicationFixture, fixtureImage } from "./fixture.js";
 import type { PublicationRecord } from "../../../src/core/publications/service.js";
+import { DeviceIdentity } from "../../../src/service/identity.js";
+import { CrotCore } from "../../../src/core/crot-core.js";
+import type { ConfinementStatus } from "../../../src/core/platform/types.js";
 import { waitFor } from "../../helpers.js";
 import { connectChannel, MAX_SERVER_FRAME_BYTES } from "../../../src/service/channel.js";
 import { secretCredentialStore, serviceEndpoint } from "../../../src/service/endpoints.js";
@@ -10,6 +13,7 @@ import { createPrivateFileProtection } from "../../../src/core/platform/private-
 const cleanup: Array<() => Promise<void>> = [];
 afterEach(async () => {
   for (const close of cleanup.splice(0)) await close();
+  vi.restoreAllMocks();
 });
 type Rows = { publications: Array<{ id: string; state: string; error?: string }> };
 const fields = (id: string, confirmation: string) => ({
@@ -169,5 +173,44 @@ it(
     expect(result.isError).toBe(true);
     expect(f.writes()).toBe(0);
     expect(await f.owner.request("ping")).toMatchObject({ state: "running" });
+  },
+);
+
+// Host status seams prove production wiring, NOT OS or commercial qualification.
+// Only preparation is admitted. Readiness is revoked before confirm; no live send is authorized.
+it(
+  "production admits a qualified Pro draft but rechecks native isolation before delivery",
+  { timeout: 30000 },
+  async () => {
+    vi.spyOn(DeviceIdentity.prototype, "refreshCommercialIfNeeded").mockResolvedValue();
+    vi.spyOn(DeviceIdentity.prototype, "commercialStatus").mockReturnValue({
+      state: "current",
+      plan: "pro",
+      status: "active",
+      entitled: true,
+    });
+    const mechanisms = { linux: "linux-bubblewrap", darwin: "macos-seatbelt", win32: "windows-appcontainer" } as const;
+    const ready: ConfinementStatus = {
+      available: true,
+      sourceAccess: "core-only",
+      reason: null,
+      network: "on",
+      detail: "AD-58 scratch",
+      mechanism: mechanisms[process.platform as keyof typeof mechanisms],
+    };
+    const refresh = vi.spyOn(CrotCore.prototype, "refreshConfinement").mockResolvedValue(ready);
+    const f = await publicationFixture({ productionGate: true });
+    cleanup.push(f.close);
+    const draft = await f.prepare();
+    expect(draft.state).toBe("pending_publication");
+    const opened = await ownerRequest<{ confirmation: string }>(f.owner, "publications.open", { id: draft.id });
+    refresh.mockResolvedValue({ ...ready, available: false, reason: "self_test_failed" });
+    await expect(f.prepare()).rejects.toThrow("fresh native credential/control isolation");
+    await f.owner.request("publications.confirm", fields(draft.id, opened.confirmation));
+    await waitFor(
+      async () => (await ownerRequest<Rows>(f.owner, "publications.list")).publications[0]?.state === "failed",
+    );
+    expect(f.writes()).toBe(0);
+    expect(refresh.mock.calls.length).toBeGreaterThanOrEqual(3);
   },
 );

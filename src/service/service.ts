@@ -23,6 +23,7 @@ import { ClientTokenRegistry, clientTokenPath } from "./client-tokens.js";
 import { RuntimePermissionState } from "../core/permissions/runtime.js";
 import { newAuditEventId } from "../core/audit/audit.js";
 import { newLocalExposureScope } from "../core/auth/principal.js";
+import { authorizeProductionPublication } from "./publications/authorization.js";
 import { PublicationRuntime } from "./publications/runtime.js";
 import { SocialAccountRuntime } from "./social/runtime.js";
 import { ProductRuntime, productPaths } from "./product-runtime.js";
@@ -632,21 +633,11 @@ export class CrotService {
             await this.options.publicationFixture.authorizePublication();
             return;
           }
-          await identity.refreshCommercialIfNeeded();
-          const commercial = identity.commercialStatus();
-          if (!(
-            commercial.state === "current" &&
-            commercial.entitled === true &&
-            commercial.status === "active" &&
-            ["pro", "trial", "team"].includes(commercial.plan ?? "")
-          ))
-            throw new CrotError("PERMISSION_DENIED", "A current verified Pro entitlement is required for publication");
-          // Generic Core HTTP has a social-write boundary, but arbitrary subprocess and browser
-          // requests are NOT yet proven covered. Never default-allow the publisher on that evidence.
-          throw new CrotError(
-            "PERMISSION_DENIED",
-            "Publication unavailable: managed-channel anti-bypass qualification is incomplete",
-          );
+          await authorizeProductionPublication({
+            identity,
+            core: () => holder.instance,
+            halted: () => this.runtimePermissions.halted,
+          });
         },
         ...(this.options.publicationFixture ? { publisher: this.options.publicationFixture.publisher } : {}),
         audit: (event) =>

@@ -250,3 +250,39 @@ controller credentials and vault keep their original protections. The portable
 composition test verifies this hook is used before native open. The real OS
 credential/control negative assertions remain mandatory and unchanged. These
 are fixes pending CI evidence, not production activation or completion claims.
+
+
+#### AD-61 native qualification complete on predecessor; final activation gate
+
+The full CI for `693a55715000513d0fa16d5bb911fc75db419403` completed **11/11
+successfully**: Ubuntu/macOS/Windows Node 20/22, all four Linux L1 matrices,
+and real Chromium. Both Windows jobs completed their full suites, not only the
+early mandatory credential/control step. Evidence:
+[main CI](https://github.com/crotMcp/crot/actions/runs/40315533860),
+[Linux L1](https://github.com/crotMcp/crot/actions/runs/40315533955),
+[Chromium](https://github.com/crotMcp/crot/actions/runs/40315533857).
+
+Only after observing that evidence, the unconditional production refusal is
+replaced with fresh verified active Pro/trial/legacy Team and qualified host-native
+AD-58 readiness. Missing core-only source access, unknown/wrong-host mechanism,
+unavailable native L1, non-null failure reason, thrown refresh, halt or Core
+replacement refuses publication; no stale-positive/unconfined fallback exists.
+The gate runs on preparation and again before delivery. Informational scratch
+status detail does not count as a failure. Snapshot, recipient/account generation,
+explicit privacy/consent, one-use owner connection permit and audit are unchanged.
+
+`system.check` now reports native credential/control readiness, owner-enabled raw
+network-on without DPI, native network-off blocking, and the remaining Pro,
+owner-confirmation and immutable-snapshot requirements. A refresh exception is
+reported unavailable even if the previous cached status was successful.
+Regressions cover commercial/native admission and refusal, repeated refresh,
+errors and mid-await halt/entitlement/Core changes, actual production service
+wiring (host status doubles only), and the real product diagnostic RPC handler.
+All delivery tests use local HTTP fixtures; the production-wiring test revokes
+readiness before confirm so no production-provider send is authorized.
+
+Earlier open-barrier checkpoints above are historical, superseded by this gate
+implementation and the owner-approved AD-61 contract; they are not deleted.
+Final local checks and new-head 11/11 remain required before Ready/merge. The
+predecessor's green CI does not qualify this change. No public release, live
+Stripe/provider acceptance, signing or installer completion is claimed.

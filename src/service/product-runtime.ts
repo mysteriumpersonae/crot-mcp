@@ -1,3 +1,4 @@
+import { publicationProtection } from "./publications/authorization.js";
 import { PublicationAuditSchema } from "../core/publications/service.js";
 import { AccountAvatars } from "./social/avatars.js";
 import type { SocialAccountRuntime } from "./social/runtime.js";
@@ -628,7 +629,12 @@ export class ProductRuntime {
       }
       case "system.check": {
         const core = this.host.core();
-        const l1 = await core.refreshConfinement().catch(() => core.confinementStatus());
+        const l1 = await core.refreshConfinement().catch(() => ({
+          ...core.confinementStatus(),
+          available: false,
+          reason: "self_test_failed" as const,
+          detail: "Native L1 readiness refresh failed; no unconfined retry",
+        }));
         const ports = await checkLoopbackPort();
         const inspection = await core.inspectProject(this.context());
         return {
@@ -641,11 +647,7 @@ export class ProductRuntime {
             bridge: core.status().browser,
             project: inspection,
             accounts: this.host.socialAccounts?.list().accounts.map((account) => account.diagnostics) ?? [],
-            publicationProtection: {
-              browserRoutes: "system_guard",
-              managedCommandEgress: "not_qualified",
-              production: "fail_closed",
-            },
+            publicationProtection: publicationProtection(l1),
             nativeCommandPrerequisiteMet: l1.available,
             detail: l1.available
               ? "Native L1 ready; permissions, approvals and halt state still apply"

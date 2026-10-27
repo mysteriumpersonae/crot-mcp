@@ -6270,6 +6270,10 @@ A real `CrotService` integration test uses its authenticated owner control conne
 
 ### AD-65 — Immutable publication staging and fixed platform delivery protocols
 
+Historical checkpoint: the activation/qualification status below is superseded by
+the AD-61 activation clarification at the end of this decision log. Security
+invariants remain in force; general network-on DPI was explicitly rejected.
+
 Publication preparation captures a portable, non-secret project-relative media file through the checked Core filesystem read guard. Links, special files, traversal, `.git`/`.crot`, `.env*`, `*.pem` and `*.key` are refused. The source descriptor and path identity are rechecked after reading. The staging store owns a byte copy, commits it under a generated UUID in an owner-private directory, and records SHA-256, MIME, byte count and project identity. It refuses active document formats, unprotected directories and malformed manifests. Each snapshot is limited to 64 MiB, with 64 snapshots / 512 MiB total capacity; exhaustion is an explicit refusal, never a live-source fallback. Interrupted unreferenced blobs are removed on restart. Generic Core operations cannot read the reserved staging directory, avatar directory or publication journal, including in Full Control.
 
 Preview chunks and delivery read only a freshly descriptor-checked, hash-verified staging copy. Source edits, atomic replacement and later secret renaming do not substitute its bytes. The publication engine's existing HMAC permit binds the frozen request, account generation and snapshot metadata. A separate synchronous confirmation assertion allows an authenticated owner transport to acknowledge queued work without waiting for a long upload; actual confirmation still consumes the permit synchronously before its first await. Closing the owner connection must revoke its permits, and revocation/kill must abort delivery leases. These transport/lifecycle hooks remain integration requirements, not authority delegated to caller-supplied JSON.
@@ -6280,6 +6284,10 @@ A trusted publication runtime now composes the checked filesystem, account-gener
 
 ### AD-66 — Transport-owned publication review sessions and staged runtime activation
 
+Historical checkpoint: the activation/qualification status below is superseded by
+the AD-61 activation clarification at the end of this decision log. Security
+invariants remain in force; general network-on DPI was explicitly rejected.
+
 The service now owns the publication runtime lifecycle (startup, shutdown and emergency stop). Agent-facing `publication_prepare` is a guarded Core capability: it can only request a draft and capture checked immutable media; neither confirmation nor credentials exist in the MCP catalog. The owner protocol exposes closed prepare/list/open/preview/confirm/cancel shapes. Confirmation authority is bound to the **actual authenticated control connection object**, never an owner identifier supplied in JSON. Closing any connection invalidates its permits even if it never subscribed to approvals; ended objects cannot acquire another permit. Pending cancellation changes state synchronously, invalidates every outstanding confirmation, persists and audits `publication.cancelled`. Cancellation of an active upload aborts transport but cannot promise rollback of content already received by the platform.
 
 Publication metadata and confirmation have escaped UTF-8 budgets below the control frame limit; preview chunks remain bounded to 24 KiB. The renderer verifies SHA-256 of the assembled snapshot before enabling confirmation, uses a local blob preview (not a workspace URL), starts with no selected privacy and unchecked consent, and only calls confirmation on a human button action. Unsupported platform controls are disabled rather than advertised as applied. TikTok inbox upload is explicitly a draft handoff: title, description and disclosure fields are review reminders that must be completed in TikTok, not direct-post settings applied by that API.
@@ -6289,6 +6297,10 @@ Avatars use provider-specific HTTPS host allowlists, reject redirects and creden
 **Activation barrier remains fail-closed.** Production must have a fresh verified Pro entitlement, but that is not sufficient: subprocess/Custom Skill and browser direct-publication anti-bypass qualification is still outstanding. Until it is implemented and proven, service preparation/send refuses publication rather than relying solely on the existing generic Core HTTP boundary. A deliberately named, in-process-only `publicationFixture` composes actual local OAuth/platform HTTP in integration tests; it is not configurable through CLI, files, RPC or renderer and is not production isolation evidence. This does not disable terminal/browser features to simulate protection and does not represent a complete Stage C Pass. PR #7 remains Draft pending actual anti-bypass implementation, shipped Chromium acceptance and exact-head CI.
 
 ### AD-67 — Mandatory managed-browser route boundary and explicit command-egress qualification
+
+Historical checkpoint: the activation/qualification status below is superseded by
+the AD-61 activation clarification at the end of this decision log. Security
+invariants remain in force; general network-on DPI was explicitly rejected.
 
 Publication and OAuth routes have a non-configurable system guard shared by Core
 and the shipped extension. It is independent of Full Control, tab domain grants
@@ -6341,3 +6353,40 @@ source roots, credentials, directories and all other protected paths keep their
 full identity guards; there is no user-configurable exception or syscall bypass.
 The mandatory native canary test also holds the same actor across a real owner
 vault replacement and requires continued read and owner-channel denial.
+
+
+#### AD-61 activation clarification — qualified native gate replaces temporary refusal
+
+Exact head `693a55715000513d0fa16d5bb911fc75db419403` completed all 11/11 CI
+checks, including both full Windows Node 20/22 jobs, both macOS jobs, four Linux
+L1 matrices and real Chromium. Native credential/control qualification therefore
+precedes replacement of the temporary unconditional production refusal. Evidence:
+[CI](https://github.com/crotMcp/crot/actions/runs/40315533860),
+[Linux L1](https://github.com/crotMcp/crot/actions/runs/40315533955),
+[Chromium](https://github.com/crotMcp/crot/actions/runs/40315533857).
+This is predecessor evidence, not final-head verification of the gate change.
+
+The shipped service now requires refreshed commercial status (current, active,
+entitled Pro/trial/legacy Team) and fresh native confinement readiness on every
+preparation and delivery authorization. Readiness requires `available === true`,
+`sourceAccess === "core-only"`, null failure reason and the qualified native
+mechanism matching the host OS (Linux bubblewrap, macOS Seatbelt, Windows
+AppContainer). A thrown refresh, unavailable/inconsistent state or changed Core
+refuses publication, with no cached-success or unconfined fallback. Informational
+AD-58 detail is not a failure code. Halt and entitlement are checked again after
+asynchronous readiness. The test-only publication fixture remains in-process-only.
+
+The system-check report uses the same readiness predicate, describes native
+credential/control isolation, explicit owner-enabled raw `network=on` without
+TLS/DPI, and native network blocking with `network=off`. Refresh errors cannot
+reuse cached availability. Ready isolation is a prerequisite, not permission to
+publish: fresh verified Pro, the immutable SHA-256 snapshot, account/recipient
+binding, explicit privacy/consent, one-use real owner-connection confirmation and
+audit remain mandatory. Core HTTP/browser/extension system guards are unchanged.
+No live account publication, revocation or payment is part of acceptance.
+
+This supersedes earlier AD-65/66/67 *temporary activation-barrier status*, not their
+security invariants or historical evidence. A new final SHA must itself pass
+11/11 before the owner-authorized Ready/merge. Signing, installers, production
+DNS/TLS/Stripe, provider registration and live-provider qualification remain
+separate external delivery/operations gates; this is not a public release.
