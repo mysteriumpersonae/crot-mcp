@@ -231,7 +231,11 @@ try {
     process.exitCode = 1;
   }
   await writeFile(output, JSON.stringify(report, null, 2) + "\n");
+  // Native AppKit/automation handles may survive successful cleanup. This standalone
+  // qualification process must exit only AFTER its durable report and stdout flush;
+  // preserve every failure exit code rather than timing out a passed report in CI.
   process.stdout.write(
     JSON.stringify({ status: report.status, checks: report.checks.length, errors: report.errors.length }) + "\n",
+    () => process.exit(process.exitCode ?? 0),
   );
 }
