@@ -6390,3 +6390,20 @@ security invariants or historical evidence. A new final SHA must itself pass
 11/11 before the owner-authorized Ready/merge. Signing, installers, production
 DNS/TLS/Stripe, provider registration and live-provider qualification remain
 separate external delivery/operations gates; this is not a public release.
+
+## Screen 01 recovery: local identity and OS-vault bootstrap
+
+The installed Electron UI now uses a fixed main-process `desktop-auth` IPC API.
+Pending accounts become active only after a one-use SMTP code; passwords and codes
+are salted scrypt hashes. The renderer cannot submit an accepted provider profile,
+custom callback URL, database path or mail-delivery policy. Google/GitHub use the
+system browser, loopback state/S256 PKCE, verified provider identities and no silent
+email account linking. This local session is not a cloud identity or paid entitlement.
+
+Provider bootstrap is local to the current OS owner, with masked write-only fields.
+Main verifies Gmail TLS authentication before replacing one OS credential record;
+OAuth bootstrap checks format only. Windows Credential Manager/macOS Keychain/Linux
+Secret Service are used with no `.env`, plaintext or kernel-keyring fallback. A locked
+vault fails closed for provider setup; existing verified password login is independent.
+No provider secret or OTP is logged or returned to renderer status calls. Exact setup,
+trust limits and owner live-provider acceptance are in [Screen 01 auth](docs/SCREEN-01-AUTH.md).
