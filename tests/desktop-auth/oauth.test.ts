@@ -24,6 +24,7 @@ describe("Screen 01 provider PKCE", () => {
     let url!: URL,
       exchanged = 0,
       accepted = 0;
+    const activate = vi.fn(() => true);
     const realFetch = fetch;
     const request = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       const target = String(url);
@@ -58,6 +59,7 @@ describe("Screen 01 provider PKCE", () => {
         accepted++;
         expect(p.email).toBe("verified@example.test");
       },
+      activate,
     );
     closers.push(flow.cancel);
     expect(url.origin + url.pathname).toBe("https://accounts.google.com/o/oauth2/v2/auth");
@@ -84,6 +86,15 @@ describe("Screen 01 provider PKCE", () => {
     await flow.completion;
     expect(exchanged).toBe(1);
     expect(accepted).toBe(1);
+    expect(activate).not.toHaveBeenCalled();
+    const link = html.match(/http:\/\/127\.0\.0\.1:\d+\/continue\/[A-Za-z0-9_-]+/)?.[0];
+    expect(link).toBeTruthy();
+    expect(completed.headers.get("content-security-policy")).toContain("connect-src " + new URL(link!).origin);
+    const returned = await realFetch(link!, { method: "POST", headers: { origin: callback.origin } });
+    expect(returned.status).toBe(204);
+    expect(activate).toHaveBeenCalledTimes(1);
+    flow.disposeReturn();
+    await expect(realFetch(link!)).rejects.toThrow();
   });
   it("renders a failure card when local acceptance fails, without exposing diagnostics", async () => {
     const port = await freePort();

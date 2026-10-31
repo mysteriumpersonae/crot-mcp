@@ -225,6 +225,7 @@ try {
   await page.click("#choose-free");
   await page.locator("#app:not([hidden])").waitFor();
   await shot("09-home-sign-out");
+  await page.click("#account-avatar");
   await page.click("#session-logout");
   await page.locator('#auth-gate:not([hidden])[data-auth-mode="login"]').waitFor();
   await remain();
