@@ -118,6 +118,40 @@ describe("Screen 01 provider PKCE", () => {
     expect(html).not.toContain("private-fixture-code");
     await expect(flow.completion).rejects.toThrow("OAUTH_FAILED");
   });
+  it("finishes local acceptance even if the browser closes while verification is pending", async () => {
+    const port = await freePort();
+    let opened!: URL, release!: () => void;
+    const realFetch = fetch;
+    vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
+      if (String(url) === "https://oauth2.googleapis.com/token") return response({ access_token: "fixture-token" });
+      if (String(url) === "https://openidconnect.googleapis.com/v1/userinfo")
+        return response({ sub: "fixture", email: "fixture@example.test", email_verified: true });
+      return realFetch(url, init);
+    });
+    const flow = await beginOAuth(
+      "google",
+      { GOOGLE_CLIENT_ID: "fixture", GOOGLE_CLIENT_SECRET: "fixture", CROT_AUTH_CALLBACK_PORT: port },
+      async (url) => {
+        opened = new URL(url);
+      },
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+    );
+    closers.push(flow.cancel);
+    const callback = new URL(opened.searchParams.get("redirect_uri")!);
+    callback.searchParams.set("code", "fixture-code");
+    callback.searchParams.set("state", opened.searchParams.get("state")!);
+    const abort = new AbortController();
+    const pending = realFetch(callback, { signal: abort.signal });
+    const closed = expect(pending).rejects.toThrow();
+    await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+    abort.abort();
+    await closed;
+    release();
+    await flow.completion;
+  });
   it("denied/cancelled/browser failure cannot admit", async () => {
     const port = await freePort();
     let url!: URL;

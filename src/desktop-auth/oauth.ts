@@ -162,6 +162,16 @@ export async function beginOAuth(
       });
       res.end(html ? callbackPage(status === 200, /^ru\b/i.test(req.headers["accept-language"] ?? ""), nonce) : text);
     };
+    const result = (error?: Error) => {
+      // Closing the browser must not leave a completed local sign-in stuck in OAuth.
+      if (res.destroyed) {
+        end(error);
+        return;
+      }
+      res.once("finish", () => end(error));
+      res.once("close", () => end(error));
+      send(error ? 400 : 200, "", true);
+    };
     if (
       req.method !== "GET" ||
       req.headers.host !== host ||
@@ -188,8 +198,7 @@ export async function beginOAuth(
       return send(400, "Invalid OAuth state");
     if (q.has("error")) {
       used = true;
-      res.once("finish", () => end(new AuthError("OAUTH_DENIED")));
-      send(400, "", true);
+      result(new AuthError("OAUTH_DENIED"));
       return;
     }
     const code = q.get("code");
@@ -201,13 +210,11 @@ export async function beginOAuth(
         if (finished) return;
         await accept(profile);
         if (finished) return;
-        res.once("finish", () => end());
-        send(200, "", true);
+        result();
       } catch (e) {
         if (finished) return;
         const error = e instanceof AuthError ? e : new AuthError("OAUTH_FAILED");
-        res.once("finish", () => end(error));
-        send(400, "", true);
+        result(error);
       }
     })();
   });
