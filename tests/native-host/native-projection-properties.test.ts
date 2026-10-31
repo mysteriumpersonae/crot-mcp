@@ -16,11 +16,12 @@ async function projection() {
       projected = path.join(target, "public.txt");
     await writeFile(source, "public-before");
     await link(source, projected);
-    const a = await stat(source),
-      b = await stat(projected);
+    // NTFS file IDs can exceed Number.MAX_SAFE_INTEGER. Preserve all bits.
+    const a = await stat(source, { bigint: true }),
+      b = await stat(projected, { bigint: true });
     expect(a.dev).toBe(b.dev);
     expect(a.ino).toBe(b.ino);
-    expect(a.nlink).toBe(2);
+    expect(a.nlink).toBe(2n);
     return { dirs, target, source, projected };
   } catch (error) {
     await dirs.cleanup();
@@ -33,7 +34,7 @@ it("hardlinks perform real in-place original writes before teardown, without cop
   try {
     await writeFile(p.projected, "direct-after");
     expect(await readFile(p.source, "utf8")).toBe("direct-after");
-    expect((await stat(p.source)).ino).toBe((await stat(p.projected)).ino);
+    expect((await stat(p.source, { bigint: true })).ino).toBe((await stat(p.projected, { bigint: true })).ino);
   } finally {
     await p.dirs.cleanup();
   }
@@ -47,7 +48,7 @@ it("projected atomic save breaks direct original-file identity", async () => {
     await rename(temporary, p.projected);
     expect(await readFile(p.projected, "utf8")).toBe("atomic-after");
     expect(await readFile(p.source, "utf8")).toBe("public-before");
-    expect((await stat(p.source)).ino).not.toBe((await stat(p.projected)).ino);
+    expect((await stat(p.source, { bigint: true })).ino).not.toBe((await stat(p.projected, { bigint: true })).ino);
   } finally {
     await p.dirs.cleanup();
   }
@@ -167,7 +168,7 @@ $other=(Get-Acl -LiteralPath $projected).Sddl
       sourceChanged: true,
       sameSecurity: true,
     });
-    expect((await stat(p.source)).ino).toBe((await stat(p.projected)).ino);
+    expect((await stat(p.source, { bigint: true })).ino).toBe((await stat(p.projected, { bigint: true })).ino);
   } finally {
     await p.dirs.cleanup();
   }
