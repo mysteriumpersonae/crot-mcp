@@ -65,8 +65,10 @@ describe("AD-42 owner design system", () => {
     const code = TRAY_ASSETS["/renderer.js"]!.body;
     for (const method of ["chat.providers", "chat.configure", "chat.models", "chat.start", "chat.poll", "chat.stop"])
       expect(code).toContain(`rpc('${method}'`);
-    expect(code).toContain("enabled.filter(f=>f.input.checked)");
-    expect(code).toContain("part.append(pre(b.text))");
+    expect(code).toContain("tools:[...chatTools]");
+    expect(code).toContain("if(f.input.checked)chatTools.add(name)");
+    expect(code).toContain("pre(b.text)");
+    expect(code).toContain("content.textContent=b.text");
     expect(code).not.toMatch(/fetch\(|XMLHttpRequest|WebSocket\(/);
     expect(code).not.toMatch(/innerHTML|insertAdjacentHTML/);
   });
