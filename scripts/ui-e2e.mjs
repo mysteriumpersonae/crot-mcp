@@ -391,40 +391,65 @@ try {
     await screenshot("home-account-menu");
     await evaluate("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'}))");
     assert(await evaluate("document.getElementById('account-menu').hidden"), "Profile menu Escape failed");
-    for (const [width, height] of [
-      [1584, 993],
-      [1280, 900],
-      [390, 844],
-    ]) {
-      await size(width, height);
-      await screenshot("home-composition-" + width);
-      if (width === 390) {
-        await evaluate("document.querySelector('.content').scrollTop=700");
-        assert(
-          await evaluate("document.querySelector('.content').scrollTop>0"),
-          "Mobile Home cannot scroll to lower cards",
-        );
-        await screenshot("home-mobile-middle");
-        await evaluate("document.querySelector('.content').scrollTop=100000");
-        assert(
-          await evaluate(
-            "(()=>{const r=document.querySelector('.home-system summary').getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight;})()",
-          ),
-          "Home bottom actions are unreachable",
-        );
-        await screenshot("home-mobile-bottom");
-        await evaluate("document.querySelector('.content').scrollTop=0");
+    for (const lang of ["ru", "en"]) {
+      await evaluate(`window.CrotI18n.setLanguage('${lang}')`);
+      for (const [width, height] of [
+        [1920, 1080],
+        [1920, 600],
+        [1584, 993],
+        [1440, 900],
+        [1280, 900],
+        [1280, 820],
+        [1280, 720],
+        [1180, 680],
+        [1100, 600],
+        [960, 600],
+      ]) {
+        await size(width, height);
+        await delay(60); // ResizeObserver aligns the four paths after the viewport settles.
+        const fit = await evaluate(`(()=>{
+          const content=document.querySelector('.content'),dashboard=document.querySelector('.home-dashboard');
+          const visible=[...document.querySelectorAll('.home-active .sidebar-note,.home-active .sidebar>button'),...dashboard.querySelectorAll('.category-card,.category-card strong,.category-description,.category-services,.service-mini,.core-lens,.core-lens>*,.home-banner,.home-banner h2,.home-banner p,.home-banner button,.home-status-action')].filter(e=>e.getClientRects().length);
+          const outside=visible.filter(e=>{const r=e.getBoundingClientRect();return r.top<0||r.left<0||r.bottom>innerHeight+1||r.right>innerWidth+1;}).map(e=>({class:e.className,text:e.textContent.slice(0,50),rect:JSON.stringify(e.getBoundingClientRect().toJSON())}));
+          const lens=document.querySelector('.core-lens').getBoundingClientRect(),svg=document.querySelector('.core-connectors').getBoundingClientRect();const detached=[...document.querySelectorAll('.core-connectors circle')].filter((_,i)=>i%2).some(dot=>{const x=svg.left+Number(dot.getAttribute('cx')),y=svg.top+Number(dot.getAttribute('cy'));return Math.abs(Math.hypot((x-lens.left-lens.width/2)/(lens.width/2),(y-lens.top-lens.height/2)/(lens.height/2))-1)>.015;});
+          const clipped=[...dashboard.querySelectorAll('.category-card,.core-lens,.home-banner')].filter(e=>e.scrollHeight>e.clientHeight+2||e.scrollWidth>e.clientWidth+2).map(e=>e.className);
+          return {ok:content.scrollHeight<=content.clientHeight+1&&content.scrollWidth<=content.clientWidth+1&&document.documentElement.scrollHeight<=innerHeight+1&&!outside.length&&!clipped.length&&!detached,detached,contentHeight:content.clientHeight,scrollHeight:content.scrollHeight,outside,clipped};
+        })()`);
+        assert(fit.ok, `Home must fit without scrolling at ${width}x${height} (${lang}): ${JSON.stringify(fit)}`);
+        await screenshot(`home-fit-${lang}-${width}x${height}`);
       }
     }
+    await evaluate("window.CrotI18n.setLanguage('ru')");
+    await size(390, 844);
+    await screenshot("home-composition-390");
+    await evaluate("document.querySelector('.content').scrollTop=700");
+    assert(
+      await evaluate("document.querySelector('.content').scrollTop>0"),
+      "Mobile Home cannot scroll to lower cards",
+    );
+    await screenshot("home-mobile-middle");
+    await evaluate("document.querySelector('.content').scrollTop=100000");
+    assert(
+      await evaluate(
+        "(()=>{const r=document.querySelector('.home-status-action').getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight;})()",
+      ),
+      "Mobile Home bottom actions are unreachable",
+    );
+    await screenshot("home-mobile-bottom");
+    await evaluate("document.querySelector('.content').scrollTop=0");
     await evaluate("fixture.connection='disconnected';render(fixture)");
     assert(await evaluate("!document.querySelector('#nav-chat .chat-live')"), "Offline bridge falsely marked Live");
     await size(1280, 900);
     await screenshot("home-offline");
-    await evaluate(
-      "document.querySelector('.home-system').open=true;document.querySelector('.content').scrollTop=100000",
-    );
+    await evaluate("document.querySelector('.home-status-action').click()");
     await screenshot("home-expanded-health");
-    await evaluate("document.querySelector('.home-system').open=false;document.querySelector('.content').scrollTop=0");
+    assert(
+      await evaluate(
+        "document.getElementById('action-dialog').open&&document.querySelector('.home-status-dialog .home-health')",
+      ),
+      "Home connection status dialog missing",
+    );
+    await evaluate("document.getElementById('action-dialog').close()");
     await evaluate("document.documentElement.dataset.theme='dark'");
     await delay(250);
     assert(
