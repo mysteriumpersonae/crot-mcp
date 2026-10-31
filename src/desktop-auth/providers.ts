@@ -90,7 +90,11 @@ export class ProviderSettings {
     try {
       const v = validateProviders(input);
       const entry = await this.entry();
+      // First-run provisioning only. Never trust renderer visibility as authorization.
+      // A malformed existing record is locked too; recovery belongs to the OS owner.
+      if ((await entry.getPassword()) !== null) return { ok: false, error: "PROVIDERS_LOCKED" };
       await this.verify(v);
+      if ((await entry.getPassword()) !== null) return { ok: false, error: "PROVIDERS_LOCKED" };
       await entry.setPassword(JSON.stringify(v));
       return { ok: true, configured: true, smtpVerified: true, oauthFormatValid: true };
     } catch (e) {

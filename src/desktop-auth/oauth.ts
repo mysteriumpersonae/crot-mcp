@@ -1,5 +1,6 @@
 /** Dedicated desktop login: system browser, loopback-only callback, state + S256 PKCE. */
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { callbackPage } from "./callback-page.js";
 import { createServer } from "node:http";
 import { AuthError, validEmail, type Provider } from "./store.js";
 import type { AuthEnvironment } from "./config.js";
@@ -150,15 +151,26 @@ export async function beginOAuth(
   const timer = setTimeout(() => end(new AuthError("OAUTH_TIMEOUT")), 300000);
   timer.unref();
   server.on("request", (req, res) => {
-    const send = (status: number, text: string) => {
+    const send = (status: number, text: string, html = false) => {
+      const nonce = randomBytes(18).toString("base64");
       res.writeHead(status, {
-        "content-type": "text/plain; charset=utf-8",
+        "content-type": html ? "text/html; charset=utf-8" : "text/plain; charset=utf-8",
         "cache-control": "no-store",
         "referrer-policy": "no-referrer",
-        "content-security-policy": "default-src 'none'; frame-ancestors 'none'",
+        "content-security-policy": `default-src 'none'; img-src data:; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`,
         "x-content-type-options": "nosniff",
       });
-      res.end(text);
+      res.end(html ? callbackPage(status === 200, /^ru\b/i.test(req.headers["accept-language"] ?? ""), nonce) : text);
+    };
+    const result = (error?: Error) => {
+      // Closing the browser must not leave a completed local sign-in stuck in OAuth.
+      if (res.destroyed) {
+        end(error);
+        return;
+      }
+      res.once("finish", () => end(error));
+      res.once("close", () => end(error));
+      send(error ? 400 : 200, "", true);
     };
     if (
       req.method !== "GET" ||
@@ -185,25 +197,24 @@ export async function beginOAuth(
     )
       return send(400, "Invalid OAuth state");
     if (q.has("error")) {
-      send(400, "Sign-in cancelled. Return to CROT.");
-      end(new AuthError("OAUTH_DENIED"));
+      used = true;
+      result(new AuthError("OAUTH_DENIED"));
       return;
     }
     const code = q.get("code");
     if (!code || code.length > 4096 || /[\r\n\0]/.test(code)) return send(400, "Invalid authorization code");
     used = true;
-    send(
-      200,
-      "CROT is verifying your account. Return to the application to see the result. This window can be closed.",
-    );
     void (async () => {
       try {
         const profile = await providerProfile(provider, code, verifier, redirectUri, env, controller.signal);
         if (finished) return;
         await accept(profile);
-        end();
+        if (finished) return;
+        result();
       } catch (e) {
-        end(e instanceof AuthError ? e : new AuthError("OAUTH_FAILED"));
+        if (finished) return;
+        const error = e instanceof AuthError ? e : new AuthError("OAUTH_FAILED");
+        result(error);
       }
     })();
   });
