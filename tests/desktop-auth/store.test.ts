@@ -138,6 +138,35 @@ describe("Screen 01 durable real authentication", () => {
     await writeFile(f.file, '{"version":2,"users":[]}');
     await expect(DesktopAuth.open(f.file, f.options)).rejects.toThrow("UNSAFE_STORAGE");
   });
+  it("explicit logout is idempotent, preserves the account and rejects late password completion", async () => {
+    const f = await fixture();
+    const c = new DesktopAuthController(f.auth, {}, async () => {});
+    const registration = await c.call("register", {
+      login: "logout_user",
+      email: "logout@example.test",
+      password: "long-password",
+    });
+    await c.call("verify", { challengeId: registration.challengeId!, code: f.delivered.at(-1)!.code });
+    expect(await c.call("status", {})).toMatchObject({ authenticated: true });
+    const saved = await readFile(f.file, "utf8");
+    expect(await c.call("logout", { all: true })).toMatchObject({ ok: false, error: "INVALID_REQUEST" });
+    expect(await c.call("status", {})).toMatchObject({ authenticated: true });
+    expect(await c.call("logout", {})).toEqual({ ok: true, authenticated: false });
+    expect(await c.call("logout", {})).toEqual({ ok: true, authenticated: false });
+    expect(await readFile(f.file, "utf8")).toBe(saved);
+    expect(await c.call("login", { identifier: "logout_user", password: "wrong" })).toMatchObject({ ok: false });
+    expect(await c.call("login", { identifier: "logout@example.test", password: "long-password" })).toMatchObject({
+      authenticated: true,
+    });
+    await c.call("logout", {});
+    const late = c.call("login", { identifier: "logout_user", password: "long-password" });
+    await c.call("logout", {});
+    expect(await late).toMatchObject({ ok: false, authenticated: false, error: "AUTH_CANCELLED" });
+    expect(await c.call("status", {})).toEqual({ ok: true, authenticated: false });
+    expect(await c.call("login", { identifier: "logout_user", password: "long-password" })).toMatchObject({
+      authenticated: true,
+    });
+  });
   it("fixed main API rejects arbitrary inputs and honestly reports missing OAuth credentials", async () => {
     const f = await fixture(),
       c = new DesktopAuthController(f.auth, {}, async () => {

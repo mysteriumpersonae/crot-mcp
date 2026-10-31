@@ -1,4 +1,4 @@
-/* global document, window, innerWidth */
+/* global document, window, innerWidth, location */
 /** Shipped UI + actual local auth; only IPC/vault/Gmail verification are synthetic fixtures. */
 import assert from "node:assert/strict";
 import { URL } from "node:url";
@@ -186,6 +186,43 @@ try {
   await page.click("#auth-submit");
   await page.locator("#plan-gate:not([hidden])").waitFor();
   await start();
+  for (const p of ["google", "github"]) {
+    await page.click("#" + p);
+    await page.waitForFunction(() => document.getElementById("auth-feedback").textContent.includes("CLIENT_ID"));
+    await remain();
+  }
+  // Actual logout API must revoke the main session without deleting accounts/vault.
+  await page.click("#login");
+  await page.fill("#auth-username", "qa_user");
+  await page.fill("#auth-password", "qa-password-123");
+  await page.click("#auth-submit");
+  await page.locator("#plan-gate:not([hidden])").waitFor();
+  const vaultBeforeLogout = stored;
+  await page.click("#plan-logout");
+  await page.locator('#auth-gate:not([hidden])[data-auth-mode="login"]').waitFor();
+  assert.deepEqual(await page.evaluate(() => window.crot.auth("status", {})), { ok: true, authenticated: false });
+  assert.equal(stored, vaultBeforeLogout);
+  for (const id of ["auth-username", "work-email", "auth-password", "auth-code"])
+    assert.equal(await page.inputValue("#" + id), "");
+  assert.equal(await page.getAttribute("#auth-password", "type"), "password");
+  await shot("07-signed-out");
+  await page.evaluate(() => {
+    location.hash = "#projects";
+  });
+  await remain();
+  await page.fill("#auth-username", "qa_user");
+  await page.fill("#auth-password", "qa-password-123");
+  await page.click("#auth-submit");
+  await page.locator("#plan-gate:not([hidden])").waitFor();
+  await shot("08-plans-sign-out");
+  await page.click("#choose-free");
+  await page.locator("#app:not([hidden])").waitFor();
+  await shot("09-home-sign-out");
+  await page.click("#session-logout");
+  await page.locator('#auth-gate:not([hidden])[data-auth-mode="login"]').waitFor();
+  await remain();
+  assert.deepEqual(await page.evaluate(() => window.crot.auth("status", {})), { ok: true, authenticated: false });
+  assert.equal(stored, vaultBeforeLogout);
   for (const p of ["google", "github"]) {
     await page.click("#" + p);
     await page.waitForFunction(() => document.getElementById("auth-feedback").textContent.includes("CLIENT_ID"));

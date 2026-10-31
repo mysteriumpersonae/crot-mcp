@@ -80,3 +80,17 @@ This does not change Core/Relay permissions or grant remote/paid access.
 Tests use synthetic credentials. Live owner Gmail delivery and provider consent must
 be tested locally after entering keys. Never paste live credentials into chat. A
 compiled source tree is not a signed autonomous Windows installer.
+
+## Sign out and test another method
+
+Use **Sign out / Выйти** on the plan-selection screen or in the workspace top bar
+(and the Account menu). It revokes the local main-process session, cancels pending
+OAuth completion, clears login/password/OTP fields and returns to Screen 01 in login
+mode. Accounts, OS-vault provider credentials, projects, subscriptions and device
+pairing are not deleted. Sign out does not log the system browser out of Google or
+GitHub and does not revoke their browser sessions. A late sign-in result cannot
+restore the session after sign-out.
+
+The next login may use another existing local account or configured provider.
+An email already owned by another sign-in method is still not silently linked;
+`ACCOUNT_LINK_REQUIRED` is a deliberate separate account-linking boundary.

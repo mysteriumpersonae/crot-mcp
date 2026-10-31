@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createServer } from "node:net";
 import { createHash } from "node:crypto";
 import { beginOAuth, providerProfile } from "../../src/desktop-auth/oauth.js";
+import { DesktopAuthController } from "../../src/desktop-auth/controller.js";
+import type { DesktopAuth } from "../../src/desktop-auth/store.js";
 const closers: (() => void)[] = [];
 afterEach(() => {
   for (const close of closers.splice(0)) close();
@@ -149,6 +151,32 @@ describe("Screen 01 provider PKCE", () => {
         invalid,
       ),
     ).rejects.toThrow("OAUTH_PROFILE_INVALID");
+  });
+  it("logout cancels an OAuth flow even while the system browser is still opening", async () => {
+    const port = await freePort();
+    let opened: URL | undefined;
+    let release!: () => void;
+    const logout = vi.fn();
+    const auth = { logout, status: () => ({ ok: true, authenticated: false }) } as unknown as DesktopAuth;
+    const c = new DesktopAuthController(
+      auth,
+      { GOOGLE_CLIENT_ID: "fixture-client", GOOGLE_CLIENT_SECRET: "fixture-secret", CROT_AUTH_CALLBACK_PORT: port },
+      async (url) => {
+        opened = new URL(url);
+        await new Promise<void>((r) => {
+          release = r;
+        });
+      },
+    );
+    closers.push(() => c.cancel());
+    const starting = c.call("oauth", { provider: "google" });
+    await vi.waitFor(() => expect(opened).toBeDefined());
+    expect(await c.call("logout", {})).toEqual({ ok: true, authenticated: false });
+    release();
+    expect(await starting).toEqual({ ok: true, authenticated: false });
+    expect(logout).toHaveBeenCalled();
+    expect(await c.call("status", {})).toEqual({ ok: true, authenticated: false });
+    await expect(fetch(opened!.searchParams.get("redirect_uri")!)).rejects.toThrow();
   });
   it("does not start OAuth without required configuration", async () => {
     const browser = vi.fn(),
