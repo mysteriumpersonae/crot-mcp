@@ -303,7 +303,7 @@ export async function runServiceScenarios({ real, evaluate, until, size, screens
   await click("Check system");
   await until("document.querySelector('main pre')?.textContent.includes('nativeCommandPrerequisiteMet')");
   await click("First-run setup");
-  await until("document.querySelector('dialog')?.textContent.includes('Step 1 / 4')");
+  await until("document.querySelector('#action-dialog[open]')?.textContent.includes('Step 1 / 4')");
   await click("Close", "dialog button");
   await writeFile(
     path.join(artifacts, "verification.json"),

@@ -67,6 +67,7 @@ export const LOGIN_CSS = String.raw`
 #auth-gate #otp-resend{margin:20px 0 0;min-height:44px;font-size:16px}
 #auth-gate #auth-back{margin:16px 0 0;min-height:44px;font-size:16px}
 @media(max-height:1100px){#auth-gate{padding-top:64px}#auth-gate .auth-mole{width:112px;height:88px;margin-bottom:8px}#auth-gate .auth-wordmark{width:172px;height:70px}#auth-gate .description{margin:8px -24px 24px;font-size:16px;line-height:24px}#auth-gate .field{font-size:16px;gap:4px;margin-bottom:12px}#auth-gate input{height:44px;min-height:44px;font-size:16px}#auth-gate .auth-submit,#auth-gate .oauth{height:48px;min-height:48px;font-size:16px}#auth-gate .account-line{margin:12px 0 16px}#auth-gate .divider{margin-bottom:16px}}
+@media(max-height:850px) and (min-width:601px){#auth-gate{padding:24px}#auth-gate .auth-mole{width:96px;height:72px;margin-bottom:4px}#auth-gate .auth-wordmark{width:150px;height:60px}#auth-gate .description{margin:4px -24px 16px}#auth-gate .field{margin-bottom:10px}#auth-gate .account-line{margin:8px 0 12px}#auth-gate .divider{margin-bottom:12px}#auth-gate .oauth{margin-bottom:8px}#auth-gate #provider-open{margin-top:4px}}
 @media(max-width:600px){#auth-gate{padding:88px 24px 24px}#auth-gate .description{margin-left:0;margin-right:0}#auth-gate .welcome-language{right:24px;top:24px}#auth-gate .auth-card{margin:auto 0}#auth-gate .auth-mole{width:100px;height:80px}#auth-gate .auth-wordmark{width:156px;height:64px}}
 @media(prefers-reduced-motion:reduce){#auth-gate *{transition:none!important;animation:none!important}}
 `;
