@@ -1,8 +1,8 @@
 /** Actual OS-store canary + shipped service/control + AD-58 command launches.
  * No missing-item, loader-failure or memory-backend substitute is acceptance evidence. */
-import { execFile, spawn, type ChildProcess } from "node:child_process";
+import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { access, constants, mkdir, mkdtemp, readFile, realpath, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -19,6 +19,7 @@ import type { SecretName } from "../../src/service/secrets/types.js";
 import { writePrivateFileAtomic } from "../../src/core/platform/write-private-file.js";
 import { testContext, waitFor } from "../helpers.js";
 import { buildLocalShimFixture } from "./windows-l1/diagnostics/local-shim-build.js";
+import { startLinuxSecretSession } from "./linux-secret-session.js";
 import { buildCredentialProbe } from "./windows-l1/diagnostics/credential-probe-build.js";
 const exec = promisify(execFile);
 export async function qualifyCredentialControl(): Promise<void> {
@@ -29,8 +30,7 @@ export async function qualifyCredentialControl(): Promise<void> {
   let service: CrotService | undefined, owner: ControlClient | undefined;
   let shim: Awaited<ReturnType<typeof buildLocalShimFixture>> | undefined;
   let probe: Awaited<ReturnType<typeof buildCredentialProbe>> | undefined;
-  const children: ChildProcess[] = [],
-    cleanup: Array<() => Promise<unknown>> = [];
+  const cleanup: Array<() => Promise<unknown>> = [];
   const canary = "qualification-only-" + randomUUID();
   let read: () => Promise<string | undefined>, remove: () => Promise<void>;
   let secretScript: string;
@@ -85,39 +85,24 @@ export async function qualifyCredentialControl(): Promise<void> {
       const args = ["find-generic-password", "-s", `crot-mcp:${stateKey(state)}`, "-a", name, "-w", keychain];
       secretScript = `const r=cp.spawnSync('/usr/bin/security',${JSON.stringify(args)},{encoding:'utf8',timeout:10000});if(r.error||r.status===null||r.status===0||r.stdout.trim())throw Error('Keychain isolation failed');`;
     } else {
-      // Private real D-Bus/gnome-keyring session; never touches the user's vault.
-      for (const executable of ["dbus-daemon", "gnome-keyring-daemon", "secret-tool"])
-        await access("/usr/bin/" + executable, constants.X_OK).catch(() => {
-          throw new Error("Native Secret Service qualification needs CI dependency: " + executable);
-        });
-      const address = `unix:path=${path.join(state, "secret-bus")}`;
-      const daemon = spawn("dbus-daemon", ["--session", "--nofork", "--print-address=1", "--address=" + address], {
-        stdio: ["ignore", "pipe", "pipe"],
-      });
-      children.push(daemon);
-      let busReady = false;
-      daemon.stdout!.on("data", () => {
-        busReady = true;
-      });
-      await waitFor(() => busReady, 5000);
-      const env = { ...process.env, DBUS_SESSION_BUS_ADDRESS: address };
-      const keyring = spawn(
-        "gnome-keyring-daemon",
-        ["--foreground", "--unlock", "--components=secrets", "--control-directory=" + path.join(state, "keyring")],
-        { env, stdio: ["pipe", "pipe", "pipe"] },
-      );
-      children.push(keyring);
-      keyring.stdin!.end("crot-test-only-password\n");
+      const session = await startLinuxSecretSession(state);
+      cleanup.push(session.close);
+      const env = session.env,
+        address = env.DBUS_SESSION_BUS_ADDRESS!;
       const backend = createLibsecretBackend(state, { tool: "/usr/bin/secret-tool", env });
       const name = "oauth-github-access" as SecretName;
-      await waitFor(async () => {
-        try {
-          await backend.set(name, canary);
-          return true;
-        } catch {
-          return false;
-        }
-      }, 15000);
+      try {
+        await waitFor(async () => {
+          try {
+            await backend.set(name, canary);
+            return (await backend.get(name)) === canary;
+          } catch {
+            return false;
+          }
+        }, 15000);
+      } catch {
+        throw new Error("Secret Service qualification: private canary write/read readiness failed");
+      }
       read = () => backend.get(name);
       remove = () => backend.delete(name);
       cleanup.push(remove);
@@ -225,7 +210,11 @@ const s=net.connect(${JSON.stringify(endpoint)});s.setTimeout(5000,()=>{console.
       errors += String(chunk);
     });
     try {
-      await waitFor(() => output.includes("PRIVATE-READY"), 15000);
+      try {
+        await waitFor(() => output.includes("PRIVATE-READY"), 15000);
+      } catch {
+        throw new Error("Credential/control qualification: confined actor PRIVATE-READY handshake timed out");
+      }
       const vault = path.join(state, "product-vault.enc");
       await writePrivateFileAtomic(vault, await readFile(vault), privateFiles);
       delayed.stdin!.end("go\n");
@@ -243,11 +232,6 @@ const s=net.connect(${JSON.stringify(endpoint)});s.setTimeout(5000,()=>{console.
     owner?.close();
     await service?.shutdown("credential/control qualification");
     for (const close of cleanup.reverse()) await close();
-    for (const child of children.reverse()) {
-      child.kill();
-      if (child.exitCode === null && child.signalCode === null)
-        await new Promise<void>((r) => child.once("exit", () => r()));
-    }
     await probe?.cleanup();
     await shim?.cleanup();
     // Windows may release native component handles asynchronously after shutdown.
