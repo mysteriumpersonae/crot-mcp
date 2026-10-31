@@ -29,6 +29,7 @@ export class DesktopAuthController {
       oauth: ["provider"],
       status: [],
       cancel: [],
+      logout: [],
     };
     if (
       !Object.hasOwn(keys, method) ||
@@ -36,6 +37,12 @@ export class DesktopAuthController {
       Object.values(p).some((v) => typeof v !== "string" || v.length > 512)
     )
       return { ok: false, error: "INVALID_REQUEST" };
+    if (method === "logout") {
+      this.cancel();
+      this.oauthError = undefined;
+      this.auth.logout();
+      return this.auth.status();
+    }
     if (method === "status")
       return this.oauthError
         ? { ok: false, error: this.oauthError }
@@ -49,21 +56,38 @@ export class DesktopAuthController {
     }
     if (this.busy || this.flow) return { ok: false, error: "AUTH_BUSY" };
     this.busy = true;
+    const generation = this.generation;
     this.oauthError = undefined;
     try {
-      if (method === "register") return await this.auth.register(p.login, p.email, p.password);
-      if (method === "login") return await this.auth.login(p.identifier, p.password);
-      if (method === "verify") return await this.auth.verify(p.challengeId, p.code);
-      if (method === "resend") return await this.auth.resend(p.challengeId);
+      if (["register", "login", "verify", "resend"].includes(method)) {
+        const result =
+          method === "register"
+            ? await this.auth.register(p.login, p.email, p.password)
+            : method === "login"
+              ? await this.auth.login(p.identifier, p.password)
+              : method === "verify"
+                ? await this.auth.verify(p.challengeId, p.code)
+                : await this.auth.resend(p.challengeId);
+        if (generation !== this.generation) {
+          this.auth.logout();
+          return { ok: false, authenticated: false, error: "AUTH_CANCELLED" };
+        }
+        return result;
+      }
       if (method === "oauth") {
         if (p.provider !== "google" && p.provider !== "github") throw new AuthError("INVALID_REQUEST");
         const provider = p.provider,
           generation = ++this.generation;
-        this.flow = await beginOAuth(provider, this.env, this.browser, async (profile) => {
+        const opened = await beginOAuth(provider, this.env, this.browser, async (profile) => {
           await this.auth.acceptProvider(provider, profile);
           if (generation !== this.generation) this.auth.logout();
         });
-        const flow = this.flow;
+        if (generation !== this.generation) {
+          opened.cancel();
+          return { ok: true, authenticated: false };
+        }
+        this.flow = opened;
+        const flow = opened;
         void flow.completion
           .catch((e) => {
             if (generation === this.generation) this.oauthError = e instanceof AuthError ? e.message : "OAUTH_FAILED";

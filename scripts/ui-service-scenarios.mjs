@@ -237,12 +237,22 @@ export async function runServiceScenarios({ real, evaluate, until, size, screens
   await real.configureChatApproval();
   await section("Chat");
   await until("document.querySelector('select[aria-label=\"Chat provider\"]')");
+  // Initial async provider loading resets the form. Wait before filling it.
+  await until("!document.querySelector('select[aria-label=\"Chat provider\"]').closest('[aria-busy]')");
   await evaluate(
     "(()=>{const p=document.querySelector('select[aria-label=\"Chat provider\"]');p.value='Local HTTP';p.dispatchEvent(new Event('change'));})()",
   );
   await fill("API base URL", state.endpoint.replace("/provider-probe", "/chat-provider/v1"));
   await click("Save chat provider");
   await confirm();
+  // Confirmation closes before the real save completes. Observe persisted state,
+  // not modal visibility, before asking the provider for its model inventory.
+  await until(
+    `(async()=>{const r=await window.crot.product('chat.providers');return r.providers?.some(p=>p.provider==='Local HTTP'&&p.endpoint===${JSON.stringify(state.endpoint.replace("/provider-probe", "/chat-provider/v1"))});})()`,
+  );
+  await until(
+    "Array.from(document.querySelectorAll('button')).some(b=>b.textContent.trim()==='Save chat provider'&&!b.disabled)",
+  );
   await click("Refresh models");
   await until("document.querySelector('select[aria-label=Model] option[value=ui-model]')");
   await evaluate(
