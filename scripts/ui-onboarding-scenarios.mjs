@@ -47,7 +47,7 @@ export async function runOnboardingScenarios({ evaluate, until, size, screenshot
       );
       await evaluate("document.getElementById('action-dialog').close()");
       await click("choose-free");
-      await until("document.querySelector('.home-dashboard')&&document.querySelectorAll('.recent-row').length>0");
+      await until("document.querySelector('.home-dashboard')&&document.querySelectorAll('.category-card').length===4");
       await geometry("home", ".home-overview");
       assert(
         await evaluate(

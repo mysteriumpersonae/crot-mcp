@@ -1,6 +1,6 @@
 # Screen 01: secure local login and provider setup
 
-Only Screen 01 is revised. Accounts are local per OS user, not a shared cloud
+This document covers Screen 01. Accounts are local per OS user, not a shared cloud
 identity, a remote-access entitlement, or a paid subscription.
 
 ## Start and configure without files
@@ -92,8 +92,8 @@ compiled source tree is not a signed autonomous Windows installer.
 
 ## Sign out and test another method
 
-Use **Sign out / Выйти** on the plan-selection screen or in the workspace top bar
-(and the Account menu). It revokes the local main-process session, cancels pending
+Use **Sign out / Выйти** on the plan-selection screen or in the workspace avatar
+menu (click the round account icon in the top bar). It revokes the local main-process session, cancels pending
 OAuth completion, clears login/password/OTP fields and returns to Screen 01 in login
 mode. Accounts, OS-vault provider credentials, projects, subscriptions and device
 pairing are not deleted. Sign out does not log the system browser out of Google or
@@ -111,9 +111,19 @@ shown only after token exchange, verified profile lookup and local acceptance;
 denial and exchange/account-link failures show a generic failure card. No code,
 state, identity or provider diagnostics are rendered. Strict nonce CSP, no external
 assets, no-store and no-referrer remain enabled; the script removes callback query
-parameters from the current browser history entry. Switch back through taskbar/Dock;
-there is no registered app deep-link handler, so no misleading “Open app” link.
-The close-tab button is best-effort (browsers may require manual closing).
+parameters from the current browser history entry.
+
+**Continue in CROT / Продолжить в CROT** activates the existing Electron window:
+restore if minimized, show, then focus (and show the macOS Dock entry). A separate
+loopback-only, random-capability endpoint lives for at most two minutes after the
+result. It accepts one POST from the exact callback origin. The return request has
+no OAuth code, state, identity or token; credentials are omitted. CSP permits only
+this endpoint for fetch, and CORS allows only the callback origin. No OS URL-scheme
+registration or second application launch is needed. Logout/new OAuth invalidates
+the old return capability. An expired link or an OS focus restriction leaves explicit
+taskbar/Dock instructions instead of claiming the browser can force an OS switch.
+Tests exercise the actual browser POST and the OAuth-to-return lifecycle; native
+window-manager behavior still requires acceptance on the target OS.
 
 Screen 01 has one subtle border/focus halo without stacked thick outlines, keeps
 keyboard focus visible, reserves space for the language chevron and groups OTP

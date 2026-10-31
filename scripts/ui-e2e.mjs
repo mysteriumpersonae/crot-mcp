@@ -358,7 +358,86 @@ try {
           await screenshot(slug + "-" + lang);
       }
     }
-    await evaluate("window.CrotI18n.setLanguage('en')");
+    await click("nav-home");
+    assert(
+      await evaluate(
+        "document.querySelectorAll('.category-card').length===4 && document.querySelectorAll('.category-services .service-mini').length===16",
+      ),
+      "Home capability cards or service tiles missing",
+    );
+    assert(
+      await evaluate(
+        "document.querySelectorAll('.core-connectors path').length===4 && document.querySelectorAll('.core-connectors circle').length===8",
+      ),
+      "Home connector geometry missing",
+    );
+    assert(
+      await evaluate(
+        "!document.getElementById('page').innerText.includes('Finish the four-step') && !document.getElementById('page').innerText.includes('Loading…')",
+      ),
+      "Home leaked first-run loading content",
+    );
+    assert(
+      await evaluate("document.querySelector('#nav-chat .chat-live')?.textContent==='Live'"),
+      "Live bridge badge missing",
+    );
+    await click("account-avatar");
+    assert(
+      await evaluate(
+        "!document.getElementById('account-menu').hidden && document.getElementById('account-avatar').getAttribute('aria-expanded')==='true'",
+      ),
+      "Profile menu did not open",
+    );
+    await screenshot("home-account-menu");
+    await evaluate("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'}))");
+    assert(await evaluate("document.getElementById('account-menu').hidden"), "Profile menu Escape failed");
+    for (const [width, height] of [
+      [1584, 993],
+      [1280, 900],
+      [390, 844],
+    ]) {
+      await size(width, height);
+      await screenshot("home-composition-" + width);
+      if (width === 390) {
+        await evaluate("document.querySelector('.content').scrollTop=700");
+        assert(
+          await evaluate("document.querySelector('.content').scrollTop>0"),
+          "Mobile Home cannot scroll to lower cards",
+        );
+        await screenshot("home-mobile-middle");
+        await evaluate("document.querySelector('.content').scrollTop=100000");
+        assert(
+          await evaluate(
+            "(()=>{const r=document.querySelector('.home-system summary').getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight;})()",
+          ),
+          "Home bottom actions are unreachable",
+        );
+        await screenshot("home-mobile-bottom");
+        await evaluate("document.querySelector('.content').scrollTop=0");
+      }
+    }
+    await evaluate("fixture.connection='disconnected';render(fixture)");
+    assert(await evaluate("!document.querySelector('#nav-chat .chat-live')"), "Offline bridge falsely marked Live");
+    await size(1280, 900);
+    await screenshot("home-offline");
+    await evaluate(
+      "document.querySelector('.home-system').open=true;document.querySelector('.content').scrollTop=100000",
+    );
+    await screenshot("home-expanded-health");
+    await evaluate("document.querySelector('.home-system').open=false;document.querySelector('.content').scrollTop=0");
+    await evaluate("document.documentElement.dataset.theme='dark'");
+    await delay(250);
+    assert(
+      await evaluate(
+        "(()=>{const s=getComputedStyle(document.getElementById('notifications'));return s.color!==s.backgroundColor;})()",
+      ),
+      "Dark Home notification control lacks contrast",
+    );
+    await screenshot("home-dark");
+    await evaluate("document.documentElement.dataset.theme='light'");
+    await delay(250);
+    await evaluate("fixture.connection='connected';render(fixture);window.CrotI18n.setLanguage('en')");
+    await size(1280, 820);
     await click("nav-agents");
     await evaluate(
       "[...document.querySelectorAll('#page button')].find(b=>b.textContent==='Copy configuration').click()",

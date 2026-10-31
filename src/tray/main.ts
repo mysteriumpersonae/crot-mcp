@@ -1,3 +1,4 @@
+import { websiteUrl } from "./website.js";
 import { ProviderSettings } from "../desktop-auth/providers.js";
 import { DesktopAuth } from "../desktop-auth/store.js";
 import { mailDelivery } from "../desktop-auth/config.js";
@@ -164,6 +165,8 @@ function menu(): Menu {
 
 function showWindow(): void {
   if (!window || window.isDestroyed()) createWindow();
+  if (window!.isMinimized()) window!.restore();
+  app.dock?.show();
   window!.show();
   window!.focus();
 }
@@ -312,12 +315,7 @@ async function runAction(name: unknown, params: unknown): Promise<boolean> {
       return true;
     }
     if (name === "ui.openPortal" || name === "ui.openInstall" || name === "ui.startTrial") {
-      const target = new URL(view.portalUrl ?? "https://relay-staging.crot.network/portal");
-      if (target.protocol !== "https:" || target.username || target.password) return false;
-      target.pathname = "/portal";
-      target.search = name === "ui.startTrial" ? "?intent=trial&provider=authkit" : "";
-      target.hash = name === "ui.openInstall" ? "install" : "";
-      await shell.openExternal(target.href);
+      await shell.openExternal(websiteUrl(name));
       return true;
     }
     return false;
@@ -433,9 +431,14 @@ function registerIpc(): void {
           const auth = await DesktopAuth.open(path.join(stateDir, "desktop-auth", "accounts.json"), {
             deliverCode: mailDelivery(env),
           });
-          return new DesktopAuthController(auth, env, async (url) => {
-            await shell.openExternal(url);
-          });
+          return new DesktopAuthController(
+            auth,
+            env,
+            async (url) => {
+              await shell.openExternal(url);
+            },
+            showWindow,
+          );
         })();
         try {
           desktopAuth = await desktopAuthOpening;

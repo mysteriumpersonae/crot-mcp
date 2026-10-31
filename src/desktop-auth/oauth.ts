@@ -1,3 +1,4 @@
+import { createAppReturn } from "./return-to-app.js";
 /** Dedicated desktop login: system browser, loopback-only callback, state + S256 PKCE. */
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { callbackPage } from "./callback-page.js";
@@ -114,6 +115,7 @@ export async function beginOAuth(
   env: AuthEnvironment,
   openBrowser: (url: string) => Promise<void>,
   accept: (profile: OAuthProfile) => Promise<void>,
+  activate?: () => boolean,
 ) {
   const cfg = SETTINGS[provider];
   if (!env[cfg.id]) throw new AuthError(provider === "google" ? "GOOGLE_NOT_CONFIGURED" : "GITHUB_NOT_CONFIGURED");
@@ -125,6 +127,7 @@ export async function beginOAuth(
   const host = `127.0.0.1:${port}`,
     redirectUri = `http://${host}/oauth/callback`;
   const controller = new AbortController();
+  let appReturn: Awaited<ReturnType<typeof createAppReturn>> | undefined;
   let used = false,
     finished = false,
     resolve!: () => void,
@@ -157,12 +160,25 @@ export async function beginOAuth(
         "content-type": html ? "text/html; charset=utf-8" : "text/plain; charset=utf-8",
         "cache-control": "no-store",
         "referrer-policy": "no-referrer",
-        "content-security-policy": `default-src 'none'; img-src data:; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`,
+        "content-security-policy": `default-src 'none'; img-src data:; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}'; base-uri 'none'; connect-src ${appReturn ? new URL(appReturn.url).origin : "'none'"}; form-action 'none'; frame-ancestors 'none'`,
         "x-content-type-options": "nosniff",
       });
-      res.end(html ? callbackPage(status === 200, /^ru\b/i.test(req.headers["accept-language"] ?? ""), nonce) : text);
+      res.end(
+        html
+          ? callbackPage(status === 200, /^ru\b/i.test(req.headers["accept-language"] ?? ""), nonce, appReturn?.url)
+          : text,
+      );
     };
-    const result = (error?: Error) => {
+    const result = async (error?: Error) => {
+      if (finished) return;
+      if (activate)
+        appReturn = await createAppReturn(redirectUri.slice(0, redirectUri.indexOf("/oauth")), activate).catch(
+          () => undefined,
+        );
+      if (finished) {
+        appReturn?.close();
+        return;
+      }
       // Closing the browser must not leave a completed local sign-in stuck in OAuth.
       if (res.destroyed) {
         end(error);
@@ -198,7 +214,7 @@ export async function beginOAuth(
       return send(400, "Invalid OAuth state");
     if (q.has("error")) {
       used = true;
-      result(new AuthError("OAUTH_DENIED"));
+      void result(new AuthError("OAUTH_DENIED"));
       return;
     }
     const code = q.get("code");
@@ -210,11 +226,11 @@ export async function beginOAuth(
         if (finished) return;
         await accept(profile);
         if (finished) return;
-        result();
+        await result();
       } catch (e) {
         if (finished) return;
         const error = e instanceof AuthError ? e : new AuthError("OAUTH_FAILED");
-        result(error);
+        await result(error);
       }
     })();
   });
@@ -242,5 +258,12 @@ export async function beginOAuth(
     end(new AuthError("OAUTH_BROWSER_OR_PORT_FAILED"));
     throw new AuthError("OAUTH_BROWSER_OR_PORT_FAILED");
   }
-  return { completion, cancel: () => end(new AuthError("OAUTH_CANCELLED")) };
+  return {
+    completion,
+    disposeReturn: () => appReturn?.close(),
+    cancel: () => {
+      appReturn?.close();
+      end(new AuthError("OAUTH_CANCELLED"));
+    },
+  };
 }

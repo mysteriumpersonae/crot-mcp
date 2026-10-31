@@ -7,13 +7,17 @@ export class DesktopAuthController {
   private oauthError?: string;
   private busy = false;
   private generation = 0;
+  private disposeReturn?: () => void;
   constructor(
     private auth: DesktopAuth,
     private env: AuthEnvironment,
     private browser: (url: string) => Promise<void>,
+    private activate?: () => void,
   ) {}
   cancel() {
     this.generation++;
+    this.disposeReturn?.();
+    this.disposeReturn = undefined;
     this.flow?.cancel();
     this.flow = undefined;
   }
@@ -78,13 +82,27 @@ export class DesktopAuthController {
         if (p.provider !== "google" && p.provider !== "github") throw new AuthError("INVALID_REQUEST");
         const provider = p.provider,
           generation = ++this.generation;
-        const opened = await beginOAuth(provider, this.env, this.browser, async (profile) => {
-          await this.auth.acceptProvider(provider, profile);
-          if (generation !== this.generation) {
-            this.auth.logout();
-            throw new AuthError("OAUTH_CANCELLED");
-          }
-        });
+        this.disposeReturn?.();
+        const opened = await beginOAuth(
+          provider,
+          this.env,
+          this.browser,
+          async (profile) => {
+            await this.auth.acceptProvider(provider, profile);
+            if (generation !== this.generation) {
+              this.auth.logout();
+              throw new AuthError("OAUTH_CANCELLED");
+            }
+          },
+          this.activate
+            ? () => {
+                if (generation !== this.generation) return false;
+                this.activate!();
+                return true;
+              }
+            : undefined,
+        );
+        this.disposeReturn = opened.disposeReturn;
         if (generation !== this.generation) {
           opened.cancel();
           return { ok: true, authenticated: false };
