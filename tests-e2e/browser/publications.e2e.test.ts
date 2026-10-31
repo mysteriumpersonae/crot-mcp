@@ -1,3 +1,5 @@
+import { DesktopAuth } from "../../src/desktop-auth/store.js";
+import { DesktopAuthController } from "../../src/desktop-auth/controller.js";
 /** Shipped renderer + actual authenticated owner/MCP channels + real local OAuth/platform HTTP.
  * HTTP is a test-only replacement for Electron IPC, NOT proof of browser/terminal anti-bypass. */
 import { spawn, type ChildProcess } from "node:child_process";
@@ -18,6 +20,19 @@ it(
   async () => {
     const f = await publicationFixture(),
       profile = await mkdtemp(path.join(os.tmpdir(), "crot-pub-ui-"));
+    let otp = "";
+    const auth = await DesktopAuth.open(path.join(profile, "accounts.json"), {
+      deliverCode: async (_email, code) => {
+        otp = code;
+        return "smtp";
+      },
+    });
+    const registered = await auth.register("fixture_user", "fixture@example.test", "fixture-password-123");
+    await auth.verify(registered.challengeId, otp);
+    auth.logout();
+    const authentication = new DesktopAuthController(auth, {}, async () => {
+      throw Error("No live OAuth");
+    });
     let origin = "",
       browser: ChildProcess | undefined,
       socket: WebSocket | undefined;
@@ -26,6 +41,17 @@ it(
     const server = createServer((req, res) => {
       void (async () => {
         const u = new URL(req.url!, origin);
+        if (u.pathname === "/_test-auth") {
+          let raw = "";
+          for await (const chunk of req) {
+            raw += chunk;
+            if (raw.length > 4096) throw Error("Fixture limit");
+          }
+          const { method, input } = JSON.parse(raw);
+          res.setHeader("content-type", "application/json");
+          res.end(JSON.stringify(await authentication.call(method, input)));
+          return;
+        }
         if (u.pathname === "/owner") {
           let raw = "";
           for await (const chunk of req) {
@@ -55,7 +81,7 @@ it(
           };
           res.setHeader("content-type", "text/javascript");
           res.end(
-            `let render;window.crot={product:async(method,params={})=>{const response=await fetch('/owner',{method:'POST',body:JSON.stringify({method,params})});return response.json();},onView(fn){render=fn;},ready(){render(${JSON.stringify(view)});},action:async()=>true,decide:async()=>true};`,
+            `let render;window.crot={auth:async(method,input)=>{const r=await fetch('/_test-auth',{method:'POST',body:JSON.stringify({method,input})});return r.json();},product:async(method,params={})=>{const response=await fetch('/owner',{method:'POST',body:JSON.stringify({method,params})});return response.json();},onView(fn){render=fn;},ready(){render(${JSON.stringify(view)});},action:async()=>true,decide:async()=>true};`,
           );
           return;
         }
@@ -149,7 +175,11 @@ it(
       await call("Page.navigate", { url: origin + "/index.html" });
       await until("document.readyState==='complete'&&!!window.crot");
       await evaluate("window.CrotI18n.setLanguage('en')");
-      await click("#local-mode");
+      await click("#login");
+      await evaluate(
+        "document.getElementById('auth-username').value='fixture_user';document.getElementById('auth-password').value='fixture-password-123';document.getElementById('auth-form').requestSubmit()",
+      );
+      await until("!document.getElementById('plan-gate').hidden");
       await click("#skip-plan");
       await until(`document.querySelector('#action-dialog[data-publication-id="${draft.id}"]')?.open===true`);
       await until("document.querySelector('[data-publication-preview]')?.complete===true");

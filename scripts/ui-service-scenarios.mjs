@@ -37,7 +37,10 @@ export async function runServiceScenarios({ real, evaluate, until, size, screens
   await navigate("/control-center");
   await until("document.getElementById('auth-gate')&&!document.getElementById('auth-gate').hidden");
   await screenshot("01-auth-real-service");
-  await click("Continue without an account");
+  await evaluate(
+    "document.getElementById('login').click();document.getElementById('auth-username').value='fixture_user';document.getElementById('auth-password').value='fixture-password-123';document.getElementById('auth-form').requestSubmit()",
+  );
+  await until("!document.getElementById('plan-gate').hidden");
   await click("Choose Free");
   await until("!document.getElementById('app').hidden");
   await until("document.querySelector('#project-select option')?.textContent");

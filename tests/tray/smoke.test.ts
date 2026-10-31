@@ -151,13 +151,13 @@ describe.skipIf(launch.problem !== undefined && !onCi)("WP-22: Electron tray smo
     expect(parsed, output).toMatchObject({
       connection: "connected",
       viewCards: 1,
-      onboarding: { auth: true, plans: true, home: true, approvals: true },
+      onboarding: { auth: true, plans: false, home: false, guestBypass: false },
     });
     expect(code).toBe(0);
     const page = parsed.page as Record<string, unknown>;
-    expect(page.cards).toBe(1);
+    expect(page.cards).toBe(0);
     expect(page.nodeVisible).toBe(false);
-    expect(page.api).toEqual(["action", "decide", "onView", "product", "ready", "repairL1", "tool"]);
+    expect(page.api).toEqual(["action", "auth", "decide", "onView", "product", "ready", "repairL1", "tool"]);
     expect(page.links).toBe(0);
     // The new UI uses bundled images, never arbitrary remote or approval-provided markup.
     const allowedImages = new Set([
@@ -171,7 +171,7 @@ describe.skipIf(launch.problem !== undefined && !onCi)("WP-22: Electron tray smo
     expect((page.images as string[]).length).toBeGreaterThan(0);
     for (const image of page.images as string[]) expect(allowedImages.has(image)).toBe(true);
     expect(page.headline).toBe("1 request waiting for your approval");
-    expect(page.text).toContain("evil[U+202E]txt.exe");
+    expect(page.text).not.toContain("evil[U+202E]txt.exe");
 
     // The smoke run never decides: the request is still waiting.
     expect(await pending()).toBe(1);

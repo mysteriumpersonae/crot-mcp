@@ -1,3 +1,4 @@
+import { authTestHarness } from "./auth-test-harness.mjs";
 /** Real Chromium rendering of shipped UI assets with an owner-IPC fixture.
  * Existing Electron/service and browser-bridge suites remain the integration gates.
  * No live Stripe/native installer qualification is claimed by this visual suite.
@@ -16,6 +17,7 @@ import { ReleaseDownloads } from "../dist/cloud-relay/downloads.js";
 import { TRAY_ASSETS } from "../dist/tray/assets.js";
 import { PORTAL_HTML, PORTAL_CSS, PORTAL_SCRIPT, LANDING_HTML } from "../dist/account-service/portal.js";
 
+const authentication = await authTestHarness();
 const serviceMode = process.argv.includes("--service");
 const real = serviceMode ? await (await import("./ui-service-harness.mjs")).serviceHarness() : undefined;
 const repo = fileURLToPath(new URL("../", import.meta.url));
@@ -54,23 +56,24 @@ const fixture = {
     { title: "Cloud tunnel", value: "Local mode", ready: false },
   ],
 };
-const shim = `window.fixture=${JSON.stringify(fixture)};window.actions=[];window.crot={product:async(name,input={})=>{window.actions.push([name,input]);const p={id:'fixture-project',name:'project',path:'/workspace/project',favorite:false,tools:[],agents:[],connectors:[]};return {ok:true,...(name==='accounts.list'?{accounts:['youtube','tiktok','x','github','notion'].map(provider=>({provider,state:'disconnected'})),pending:[]}:name==='projects.list'?{projects:[p],active:p.id}:name==='connectors.list'?{connectors:[]}:name==='mcpServers.list'?{servers:[]}:name==='agents.list'?{agents:[],calls:[]}:name==='tasks.list'?{tasks:[]}:name==='monitoring.queryAudit'?{events:[]}:name==='monitoring.metrics'?{tasks:{running:0,total:0},workspace:p.id,connectedServers:0}:{})}},tool:async(name,input)=>{window.actions.push([name,input]);return {content:[{type:"text",text:JSON.stringify(name==="fs_list_directory"?{entries:[{path:"README.md",type:"file"}]}:name==="fs_stat"?{exists:true,type:"directory"}:name==="fs_read_file"?{content:"# Test project"}:name==="browser_tabs_list"?{tabs:[{id:42,title:"Test tab",url:"https://example.test"}]}:{ok:true})}]}},repairL1:async()=>{window.actions.push(["repair-l1"]);return {ok:true,available:false}},onView(fn){window.render=fn},ready(){window.render(window.fixture)},decide:async(...args)=>{window.actions.push(args);return true},action:async(...args)=>{window.actions.push(args);return true}};window.chrome={runtime:{getURL:p=>'/extension/'+p,sendMessage:async(m)=>{window.actions.push(['extension',m.type]);return m.type==='crot.ui.openApp'?{ok:true}:{connection:'disconnected'}}},tabs:{create:async(o)=>{window.actions.push(['tab',o.url]);return o},query:async()=>[{status:'complete',windowId:1,groupId:-1}]},tabGroups:{query:async()=>[]}};`;
+const shim = `window.fixture=${JSON.stringify(fixture)};window.actions=[];window.crot={${authentication.shim}product:async(name,input={})=>{window.actions.push([name,input]);const p={id:'fixture-project',name:'project',path:'/workspace/project',favorite:false,tools:[],agents:[],connectors:[]};return {ok:true,...(name==='accounts.list'?{accounts:['youtube','tiktok','x','github','notion'].map(provider=>({provider,state:'disconnected'})),pending:[]}:name==='projects.list'?{projects:[p],active:p.id}:name==='connectors.list'?{connectors:[]}:name==='mcpServers.list'?{servers:[]}:name==='agents.list'?{agents:[],calls:[]}:name==='tasks.list'?{tasks:[]}:name==='monitoring.queryAudit'?{events:[]}:name==='monitoring.metrics'?{tasks:{running:0,total:0},workspace:p.id,connectedServers:0}:{})}},tool:async(name,input)=>{window.actions.push([name,input]);return {content:[{type:"text",text:JSON.stringify(name==="fs_list_directory"?{entries:[{path:"README.md",type:"file"}]}:name==="fs_stat"?{exists:true,type:"directory"}:name==="fs_read_file"?{content:"# Test project"}:name==="browser_tabs_list"?{tabs:[{id:42,title:"Test tab",url:"https://example.test"}]}:{ok:true})}]}},repairL1:async()=>{window.actions.push(["repair-l1"]);return {ok:true,available:false}},onView(fn){window.render=fn},ready(){window.render(window.fixture)},decide:async(...args)=>{window.actions.push(args);return true},action:async(...args)=>{window.actions.push(args);return true}};window.chrome={runtime:{getURL:p=>'/extension/'+p,sendMessage:async(m)=>{window.actions.push(['extension',m.type]);return m.type==='crot.ui.openApp'?{ok:true}:{connection:'disconnected'}}},tabs:{create:async(o)=>{window.actions.push(['tab',o.url]);return o},query:async()=>[{status:'complete',windowId:1,groupId:-1}]},tabGroups:{query:async()=>[]}};`;
 const inject = (html) => html.replace("<head>", '<head><script src="/ui-fixture.js"></script>');
 let origin;
 const downloads = new ReleaseDownloads({ origin: "https://relay-staging.crot.network" });
 const server = createServer((req, res) => {
   void (async () => {
     const pathname = new URL(req.url, origin).pathname;
+    if (await authentication.handle(req, res, pathname)) return;
     if (real && (await real.handle(req, res, pathname))) return;
     if (await downloads.handle(req, res, pathname)) return;
     let body, type;
     const key = pathname === "/control-center" ? "/index.html" : pathname;
     if (Object.hasOwn(TRAY_ASSETS, key)) {
       body = TRAY_ASSETS[key].body.replaceAll("crot-tray://app", origin);
-      if (real) body = body.replace("connect-src 'none'", "connect-src 'self'"); // Test IPC bridge only; production keeps network denied.
+      body = body.replace("connect-src 'none'", "connect-src 'self'"); // Test IPC bridge only; production keeps network denied.
       type = TRAY_ASSETS[key].type;
     } else if (pathname === "/ui-fixture.js") {
-      body = real ? real.shim : shim;
+      body = real ? real.shim.replace("window.crot={", "window.crot={" + authentication.shim) : shim;
       type = "text/javascript";
     } else if (pathname === "/portal.css") {
       body = PORTAL_CSS;
@@ -506,6 +509,7 @@ try {
   }
 } finally {
   await real?.close();
+  await authentication.close();
   socket?.close();
   if (browser && browser.exitCode === null) {
     const done = new Promise((resolve) => browser.once("exit", resolve));
