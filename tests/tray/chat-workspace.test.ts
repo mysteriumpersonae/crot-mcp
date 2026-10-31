@@ -29,6 +29,7 @@ describe("scoped Unified Chat workspace", () => {
       expect(chat).toContain("'" + method + "'");
     expect(chat).toContain("c.enabled&&c.status==='Connected'");
     expect(chat).toContain("a.state==='connected'");
+    expect(chat).toContain("id:'account:'+a.provider+':'+(a.id||a.generation)");
     expect(chat).toContain("tools:[...chatTools]");
     expect(chat).toContain("credentials are never included");
     expect(chat).toContain("message.value+context");
