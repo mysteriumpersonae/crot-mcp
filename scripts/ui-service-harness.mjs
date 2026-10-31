@@ -91,6 +91,7 @@ export async function serviceHarness() {
       await control.request("security.setPolicy", {
         strict: false,
         rules: [{ operation: "filesystem.write_file", state: "ask" }],
+        projectGrants: [],
       });
     },
     async verifyChat() {

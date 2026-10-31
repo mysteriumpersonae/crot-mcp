@@ -1,3 +1,4 @@
+import { CHAT_CSS } from "./control-center-chat.js";
 import { HOME_CSS } from "./home-style.js";
 import { LOGIN_CSS } from "./login-screen.js";
 import { LOGIN_RENDERER } from "./login-renderer.js";
@@ -28,7 +29,14 @@ const HTML = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta n
 ${WELCOME_HTML}
 <div id="app" class="app-shell" hidden><nav id="navigation" class="sidebar" aria-label="Control Center"><div class="brand"><img class="brand-mark" src="${mascotData()}" alt=""><div>CROT<small>CONTROL CENTER</small></div></div></nav><header class="topbar"><div class="actions"><button id="menu-toggle" class="mobile-menu" aria-label="Open navigation"></button><select id="project-select" class="project-switch" aria-label="Active project"></select></div><label class="search-box"><span class="sr-only">Search</span><input id="global-search" type="search" aria-label="Search projects, agents, connectors" placeholder="Search projects, agents, connectors..."></label><div class="actions header-account"><div id="service-indicators" class="actions service-indicators"></div><button id="notifications" aria-label="Notifications"><span id="notification-count" class="notifications-count">0</span></button><div class="account-controls"><button id="account-avatar" class="avatar" type="button" aria-label="Account" aria-expanded="false" aria-controls="account-menu">○</button><div id="account-menu" class="profile-dropdown" hidden><button id="account-profile" type="button">Device &amp; Account</button><button id="session-logout" type="button">Sign out</button></div></div><button id="plan-badge">Free (Local)</button><span id="top-language"></span></div></header><main class="content"><p id="notice" role="status" aria-live="polite" class="feedback"></p><div id="page"></div><span id="headline" hidden>CROT Control Center</span></main></div><dialog id="action-dialog" aria-label="Action details"></dialog></body></html>`;
 const CSS =
-  LOCAL_FONTS_CSS + CONTROL_CENTER_CSS + WELCOME_CSS + DESIGN_TOKENS_CSS + DESIGN_SYSTEM_CSS + LOGIN_CSS + HOME_CSS;
+  LOCAL_FONTS_CSS +
+  CONTROL_CENTER_CSS +
+  WELCOME_CSS +
+  DESIGN_TOKENS_CSS +
+  DESIGN_SYSTEM_CSS +
+  LOGIN_CSS +
+  HOME_CSS +
+  CHAT_CSS;
 const RENDERER = LOGIN_RENDERER + CONTROL_CENTER_RENDERER;
 export interface TrayAsset {
   readonly body: string;

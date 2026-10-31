@@ -14,7 +14,7 @@ export async function runServiceScenarios({ real, evaluate, until, size, screens
   };
   const fill = (label, value) =>
     evaluate(
-      `(()=>{const el=Array.from(document.querySelectorAll('label')).find(l=>l.querySelector('span')?.textContent===${JSON.stringify(label)})?.querySelector('input,textarea');if(!el)throw Error('Missing field');el.value=${JSON.stringify(value)};el.dispatchEvent(new Event('input',{bubbles:true}));})()`,
+      `(()=>{const el=Array.from(document.querySelectorAll('label')).find(l=>l.querySelector('span')?.textContent===${JSON.stringify(label)})?.querySelector('input,textarea')||Array.from(document.querySelectorAll('input,textarea')).find(n=>n.getAttribute('aria-label')===${JSON.stringify(label)});if(!el)throw Error('Missing field');el.value=${JSON.stringify(value)};el.dispatchEvent(new Event('input',{bubbles:true}));})()`,
     );
   const section = async (name) => {
     const slug = name.toLowerCase().replaceAll(" ", "-");
@@ -235,7 +235,7 @@ export async function runServiceScenarios({ real, evaluate, until, size, screens
     throw Error("Credential leaked to UI");
   // Real provider HTTP -> canonical guarded tool -> owner approval in the shared UI -> audit.
   await real.configureChatApproval();
-  await section("Chat");
+  await section("Agents");
   await until("document.querySelector('select[aria-label=\"Chat provider\"]')");
   // Initial async provider loading resets the form. Wait before filling it.
   await until("!document.querySelector('select[aria-label=\"Chat provider\"]').closest('[aria-busy]')");
@@ -253,22 +253,65 @@ export async function runServiceScenarios({ real, evaluate, until, size, screens
   await until(
     "Array.from(document.querySelectorAll('button')).some(b=>b.textContent.trim()==='Save chat provider'&&!b.disabled)",
   );
-  await click("Refresh models");
-  await until("document.querySelector('select[aria-label=Model] option[value=ui-model]')");
+  await section("Chat");
+  await until("document.querySelector('.chat-agent-pill')");
+  if (await evaluate("!!document.querySelector('#page .context-tools,#page input[type=password],#page .page-head')"))
+    throw Error("Technical configuration leaked into Chat");
+  await size(1584, 960);
+  await evaluate("window.CrotI18n.setLanguage('ru')");
+  await until("document.querySelector('.chat-welcome h1')?.textContent==='Начните диалог'");
+  await evaluate("document.activeElement?.blur()");
+  await screenshot("09a-chat-empty-ru");
+  await size(390, 844);
+  await screenshot("09a-chat-mobile-ru");
+  await size(1280, 960);
+  await evaluate("window.CrotI18n.setLanguage('en')");
+  await until("document.querySelector('.chat-agent-pill')");
+  if (
+    !(await evaluate(
+      "(()=>{const m=document.querySelector('main.content'),c=document.querySelector('.chat-compose').getBoundingClientRect(),p=document.querySelector('#page').getBoundingClientRect();return m.scrollHeight<=m.clientHeight+1&&c.bottom<=innerHeight&&p.width>innerWidth*.65;})()",
+    ))
+  )
+    throw Error("Chat escaped the content viewport or shrank to a narrow form");
+  await screenshot("09a-chat-empty");
+  await evaluate("document.querySelector('.chat-dropdown.web .chat-selector').click()");
+  await until("document.querySelector('.chat-dropdown.web .chat-popover:popover-open')");
+  await screenshot("09c-chat-web-popover");
   await evaluate(
-    "(()=>{const m=document.querySelector('select[aria-label=Model]');m.value='ui-model';m.dispatchEvent(new Event('change'));const l=Array.from(document.querySelectorAll('label')).find(l=>l.textContent==='fs_write_file');l.querySelector('input').click();})()",
+    "document.querySelector('.chat-popover:popover-open').hidePopover();document.querySelector('.chat-starter').click()",
+  );
+  if (
+    !(await evaluate(
+      "document.querySelector('.chat-welcome').hidden&&document.querySelector('.chat-compose textarea').value==='Analyze a file'",
+    ))
+  )
+    throw Error("Quick prompt did not replace welcome and populate the draft");
+  await evaluate(
+    "(()=>{const p=document.querySelector('.chat-compose input[type=file]'),d=new DataTransfer();d.items.add(new File(['hello'],'chat-fixture.txt',{type:'text/plain'}));p.files=d.files;p.dispatchEvent(new Event('change'));})()",
+  );
+  await until("document.querySelector('.chat-attachment')?.textContent.includes('chat-fixture.txt')");
+  await evaluate("document.querySelector('.chat-attachment button').click()");
+  if (await evaluate("!!document.querySelector('.chat-attachment')")) throw Error("Attachment removal failed");
+  await evaluate("document.querySelector('.chat-selectors .chat-dropdown.skills .chat-selector').click()");
+  await until("document.querySelector('.chat-popover:popover-open')");
+  await screenshot("09b-chat-skills-popover");
+  await evaluate(
+    "(()=>{const l=Array.from(document.querySelectorAll('.chat-tool-options label')).find(l=>l.textContent==='fs_write_file');l.closest('details').open=true;l.querySelector('input').click();document.querySelector('.chat-popover:popover-open').hidePopover();})()",
   );
   await fill("Message", "Run an approved fixture write");
-  await click("Send message");
+  await evaluate("document.querySelector('.chat-send').click()");
   await until(
     "document.querySelector('[data-chat-approvals] .card')&&document.body.textContent.includes('Waiting for approved write')",
   );
   await screenshot("09-chat-awaiting-real-approval");
   await click("Allow once", "[data-chat-approvals] button");
   await until("document.body.textContent.includes('UI streaming tool complete')");
+  await until(
+    "document.querySelector('.chat-send').dataset.running==='false'&&!document.querySelector('[data-chat-approvals] .card')",
+  );
   const chatEvidence = await real.verifyChat();
   await fill("Message", "Remember this operation for the project");
-  await click("Send message");
+  await evaluate("document.querySelector('.chat-send').click()");
   await until("document.querySelector('[data-chat-approvals] .card')");
   await click("Allow for project", "[data-chat-approvals] button");
   await confirm();
@@ -276,8 +319,9 @@ export async function runServiceScenarios({ real, evaluate, until, size, screens
   await until(
     "(async()=>{const p=await window.crot.product('chat.providers');return (await window.crot.product('chat.poll',{id:p.current})).state==='completed';})()",
   );
+  await until("document.querySelector('.chat-send').dataset.running==='false'");
   await fill("Message", "Repeat with the remembered project grant");
-  await click("Send message");
+  await evaluate("document.querySelector('.chat-send').click()");
   await until(
     "(async()=>{const p=await window.crot.product('chat.providers');return (await window.crot.product('chat.poll',{id:p.current})).state==='completed';})()",
   );
@@ -287,7 +331,24 @@ export async function runServiceScenarios({ real, evaluate, until, size, screens
   if (!grantPolicy.policy.projectGrants.some((g) => g.operation === "filesystem.write_file"))
     throw Error("UI project grant was not persisted");
 
+  await until("document.querySelector('.chat-send').dataset.running==='false'");
+  if ((await evaluate("document.querySelectorAll('.chat-user').length")) !== 3)
+    throw Error("Conversation transcript lost previous messages");
   await screenshot("10-chat-streaming-tool-real-service");
+  await real.configureChatApproval();
+  await fill("Message", "Cancel a pending tool call");
+  await evaluate("document.querySelector('.chat-send').click()");
+  await until(
+    "document.querySelector('[data-chat-approvals] .card')&&document.querySelector('.chat-send').dataset.running==='true'",
+  );
+  await evaluate("document.querySelector('.chat-send').click()");
+  await until(
+    "document.querySelector('.chat-send').dataset.running==='false'&&!document.querySelector('[data-chat-approvals] .card')",
+  );
+  const stopped = await evaluate(
+    "(async()=>{const r=await window.crot.product('chat.providers');return window.crot.product('chat.poll',{id:r.current});})()",
+  );
+  if (stopped.state !== "cancelled") throw Error("Stop button failed to cancel generation");
   await section("Monitoring");
   await fill("Event type", "filesystem.write_file");
   await click("Apply filters");

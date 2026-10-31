@@ -229,6 +229,26 @@ export const UI_ICONS = {
       },
     ],
   ],
+  chevronDown: [["path", { d: "m6 9 6 6 6-6" }]],
+  pencil: [
+    ["path", { d: "m16 3 5 5-13 13H3v-5z" }],
+    ["path", { d: "m14 5 5 5" }],
+  ],
+  play: [
+    ["rect", { x: "2", y: "4", width: "20", height: "16", rx: "3" }],
+    ["path", { d: "m10 8 6 4-6 4z" }],
+  ],
+  code: [["path", { d: "m8 5-7 7 7 7m8-14 7 7-7 7" }]],
+  square: [["rect", { x: "5", y: "5", width: "14", height: "14", rx: "2", fill: "currentColor" }]],
+  chatBubble: [
+    [
+      "path",
+      {
+        d: "M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9H13a8.5 8.5 0 0 1 8 8z",
+      },
+    ],
+    ["path", { d: "M8 11h.01M12 11h.01M16 11h.01", "stroke-width": "3" }],
+  ],
   menu: [
     ["path", { d: "M4 5h16" }],
     ["path", { d: "M4 12h16" }],
