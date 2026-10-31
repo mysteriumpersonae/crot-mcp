@@ -398,10 +398,44 @@ try {
     ]) {
       await size(width, height);
       await screenshot("home-composition-" + width);
+      if (width === 390) {
+        await evaluate("document.querySelector('.content').scrollTop=700");
+        assert(
+          await evaluate("document.querySelector('.content').scrollTop>0"),
+          "Mobile Home cannot scroll to lower cards",
+        );
+        await screenshot("home-mobile-middle");
+        await evaluate("document.querySelector('.content').scrollTop=100000");
+        assert(
+          await evaluate(
+            "(()=>{const r=document.querySelector('.home-system summary').getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight;})()",
+          ),
+          "Home bottom actions are unreachable",
+        );
+        await screenshot("home-mobile-bottom");
+        await evaluate("document.querySelector('.content').scrollTop=0");
+      }
     }
     await evaluate("fixture.connection='disconnected';render(fixture)");
     assert(await evaluate("!document.querySelector('#nav-chat .chat-live')"), "Offline bridge falsely marked Live");
+    await size(1280, 900);
     await screenshot("home-offline");
+    await evaluate(
+      "document.querySelector('.home-system').open=true;document.querySelector('.content').scrollTop=100000",
+    );
+    await screenshot("home-expanded-health");
+    await evaluate("document.querySelector('.home-system').open=false;document.querySelector('.content').scrollTop=0");
+    await evaluate("document.documentElement.dataset.theme='dark'");
+    await delay(250);
+    assert(
+      await evaluate(
+        "(()=>{const s=getComputedStyle(document.getElementById('notifications'));return s.color!==s.backgroundColor;})()",
+      ),
+      "Dark Home notification control lacks contrast",
+    );
+    await screenshot("home-dark");
+    await evaluate("document.documentElement.dataset.theme='light'");
+    await delay(250);
     await evaluate("fixture.connection='connected';render(fixture);window.CrotI18n.setLanguage('en')");
     await size(1280, 820);
     await click("nav-agents");
