@@ -1,3 +1,4 @@
+/* global document */
 /** Native chooser qualification: shipped Electron + real CrotService.
  * Linux runs under X11; AppKit/Windows use actual owned native dialog controls.
  * Never replaces dialog.showOpenDialog or IPC. No external accessibility bypass.
@@ -17,6 +18,7 @@ const load = (name) => import(pathToFileURL(path.join(buildRoot, name)).href);
 const { createPrivateFileProtection } = await load("core/platform/private-files.js");
 const { ControlClient } = await load("service/control-client.js");
 const { CrotService } = await load("service/service.js");
+const { DesktopAuth } = await load("desktop-auth/store.js");
 if (process.platform === "linux" && !process.env.DISPLAY)
   throw Error("Linux native qualification requires X11; use xvfb-run -a.");
 const output = process.argv.find((arg) => arg.startsWith("--output="))?.slice(9);
@@ -42,6 +44,16 @@ try {
   await writeFile(path.join(stateDir, "secrets.json"), JSON.stringify({ version: 1, backend: "file" }), {
     mode: 0o600,
   });
+  let otp;
+  const account = await DesktopAuth.open(path.join(stateDir, "desktop-auth", "accounts.json"), {
+    deliverCode: async (_email, code) => {
+      otp = code;
+      return "smtp";
+    },
+  });
+  const registration = await account.register("picker_fixture", "picker@example.test", "fixture-password-123");
+  assert.equal((await account.verify(registration.challengeId, otp)).authenticated, true);
+  account.logout();
   const privateFiles = createPrivateFileProtection(process.platform === "win32");
   service = await CrotService.start({
     command: {
@@ -88,7 +100,13 @@ try {
   electronChild = electron.process();
   page = await electron.firstWindow();
   page.on("pageerror", (error) => report.errors.push(String(error)));
-  await page.locator("#local-mode").click();
+  await page.waitForFunction(() => document.querySelector("#provider-bootstrap").dataset.ready === "true");
+  if (await page.locator("#provider-bootstrap").evaluate((el) => el.open))
+    await page.locator("#provider-close").click();
+  await page.locator("#login").click();
+  await page.locator("#auth-username").fill("picker_fixture");
+  await page.locator("#auth-password").fill("fixture-password-123");
+  await page.locator("#auth-submit").click();
   await page.locator("#choose-free").click();
   await page.locator("#nav-projects").click();
   const button = page.getByRole("button", { name: "Open Folder", exact: true });
@@ -213,7 +231,11 @@ try {
     process.exitCode = 1;
   }
   await writeFile(output, JSON.stringify(report, null, 2) + "\n");
+  // Native AppKit/automation handles may survive successful cleanup. This standalone
+  // qualification process must exit only AFTER its durable report and stdout flush;
+  // preserve every failure exit code rather than timing out a passed report in CI.
   process.stdout.write(
     JSON.stringify({ status: report.status, checks: report.checks.length, errors: report.errors.length }) + "\n",
+    () => process.exit(process.exitCode ?? 0),
   );
 }

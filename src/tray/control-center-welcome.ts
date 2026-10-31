@@ -1,19 +1,9 @@
+import { LOGIN_HTML } from "./login-screen.js";
 import { mascotData, wordmarkData } from "../ui/mascot.js";
 
 /** Trusted offline markup; all runtime/service values still use text nodes. */
 export const WELCOME_HTML = `
-<section id="auth-gate" class="welcome-screen" aria-labelledby="auth-title">
-<header id="auth-language" class="welcome-language"></header>
-<div class="auth-card">
-<img class="auth-mole" src="${mascotData()}" alt=""><h1 id="auth-title" class="sr-only">CROT Control Center</h1><img class="auth-wordmark" src="${wordmarkData()}" alt="CROT Control Center">
-<p class="description">Secure control for your local and remote agents.</p>
-<form id="auth-form"><label class="field"><span>Work email</span><input id="work-email" type="email" autocomplete="email" placeholder="name@company.com" aria-describedby="auth-feedback" required></label><button class="primary auth-submit" type="submit">Create account →</button></form>
-<p class="account-line"><span>Already have an account?</span><button id="login" class="link">Log in</button></p>
-<div class="divider"><span>or</span></div>
-<button id="google" class="oauth"><span class="google-logo" aria-hidden="true">G</span><span>Continue with Google</span></button>
-<button id="github" class="oauth"><span class="provider-icon" data-brand="GitHub"></span><span>Continue with GitHub</span></button>
-<button id="local-mode" class="link local">Continue without an account</button>
-<p id="auth-feedback" class="auth-feedback" role="status" aria-live="polite"></p></div></section>
+${LOGIN_HTML}
 <section id="plan-gate" class="welcome-screen" hidden aria-labelledby="plan-title"><header id="plan-language" class="welcome-language"></header><div class="plan-layout">
 <div class="plan-brand"><img src="${mascotData()}" alt=""><img class="plan-wordmark" src="${wordmarkData()}" alt="CROT Control Center"></div>
 <h1 id="plan-title">Choose your plan</h1><p class="plan-intro">Start working with CROT. Choose the right plan — you can always change it later.</p>

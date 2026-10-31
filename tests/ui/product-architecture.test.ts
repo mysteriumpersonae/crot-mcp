@@ -31,13 +31,15 @@ describe("Control Center product architecture", () => {
     expect(CONNECTORS).toEqual(CONNECTOR_MANIFESTS.map((m) => [m.id, m.category, m.kind]));
     expect(new Set(CONNECTORS.map(([id]) => id)).size).toBe(CONNECTOR_MANIFESTS.length);
   });
-  it("ships an auth gate with local admission and no SSO", () => {
+  it("ships an auth gate without guest bypass and with password/OTP fields", () => {
     const html = TRAY_ASSETS["/index.html"]!.body;
     expect(html).toContain('id="auth-gate"');
     expect(html).toContain('type="email"');
     expect(html).toContain('autocomplete="email"');
-    for (const label of ["Continue without an account", "Continue with Google", "Continue with GitHub", "Free (Local)"])
-      expect(html).toContain(label);
+    for (const label of ["Продолжить с Google", "Продолжить с GitHub", "Free (Local)"]) expect(html).toContain(label);
+    expect(html).not.toContain('id="local-mode"');
+    expect(html).toContain('id="auth-password"');
+    expect(html).toContain('id="auth-code"');
     expect(html).not.toMatch(/Single Sign-On|SSO|TARIF|UNKNOWN|tab-dashboard/);
     expect(TRAY_CSP).not.toMatch(/unsafe-inline|unsafe-eval|https:/);
     expect(TRAY_CSP).toContain("connect-src 'none'");

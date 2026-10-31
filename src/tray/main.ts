@@ -1,3 +1,7 @@
+import { ProviderSettings } from "../desktop-auth/providers.js";
+import { DesktopAuth } from "../desktop-auth/store.js";
+import { mailDelivery } from "../desktop-auth/config.js";
+import { DesktopAuthController } from "../desktop-auth/controller.js";
 import { socialAuthorizationUrl } from "../service/social/browser-url.js";
 import { TRAY_MARK } from "../ui/brand-tray.js";
 /**
@@ -96,6 +100,9 @@ let window: BrowserWindow | undefined;
 let tray: Tray | undefined;
 let quitting = false;
 let rendererReady = false;
+const providerSettings = new ProviderSettings();
+let desktopAuth: DesktopAuthController | undefined;
+let desktopAuthOpening: Promise<DesktopAuthController> | undefined;
 let view: TrayView = trayView({ connection: "connecting", pending: [] });
 
 const controller = new TrayController({
@@ -193,6 +200,7 @@ function createWindow(): void {
 
 function quit(): void {
   quitting = true;
+  desktopAuth?.cancel();
   controller.stop();
   void toolClient?.close();
   app.quit();
@@ -407,6 +415,41 @@ function registerIpc(): void {
       };
     }
   });
+  ipcMain.handle("desktop-auth", async (event, method: unknown, input: unknown) => {
+    if (smokeReport || !fromTray(event)) return { ok: false, error: "AUTH_UNAVAILABLE" };
+    try {
+      if (method === "providers-status" || method === "providers-save") {
+        if (desktopAuthOpening) return { ok: false, error: "AUTH_BUSY" };
+        const result = await providerSettings.call(method, input);
+        if (method === "providers-save" && result.ok) {
+          desktopAuth?.cancel();
+          desktopAuth = undefined;
+        }
+        return result;
+      }
+      if (!desktopAuth) {
+        desktopAuthOpening ??= (async () => {
+          const env = (await providerSettings.load().catch(() => undefined)) ?? {};
+          const auth = await DesktopAuth.open(path.join(stateDir, "desktop-auth", "accounts.json"), {
+            deliverCode: mailDelivery(env),
+          });
+          return new DesktopAuthController(auth, env, async (url) => {
+            await shell.openExternal(url);
+          });
+        })();
+        try {
+          desktopAuth = await desktopAuthOpening;
+          desktopAuthOpening = undefined;
+        } catch (e) {
+          desktopAuthOpening = undefined;
+          throw e;
+        }
+      }
+      return await desktopAuth.call(method, input);
+    } catch {
+      return { ok: false, error: "AUTH_UNAVAILABLE" };
+    }
+  });
   ipcMain.handle("repair-l1", async (event, ...args: unknown[]) => {
     if (smokeReport || !fromTray(event) || args.length || repairingL1) return { ok: false };
     repairingL1 = true;
@@ -455,23 +498,12 @@ async function smoke(file: string): Promise<void> {
   while (Date.now() < deadline && !(rendererReady && view.connection === "connected" && view.cards.length > 0))
     await wait(100);
   await wait(300);
-  // Exercise the same guest onboarding and notification controls as a user.
-  // This harness never decides approvals or calls tools; production startup is unchanged.
+  // Screen 01 must fail closed even when a connected service has pending approvals.
   const onboarding = window
     ? await window.webContents.executeJavaScript(`(() => {
         const visible = id => !document.getElementById(id).hidden;
-        const stages = { auth: visible("auth-gate") };
-        if (!stages.auth) throw new Error("Smoke test must start at Auth");
-        document.getElementById("local-mode").click();
-        stages.plans = visible("plan-gate") && !visible("app");
-        if (!stages.plans) throw new Error("Guest continuation must open Plans");
-        document.getElementById("choose-free").click();
-        stages.home = visible("app") && !visible("plan-gate") && !visible("auth-gate");
-        if (!stages.home) throw new Error("Choosing Free must open Home");
-        document.getElementById("notifications").click();
-        stages.approvals = document.getElementById("action-dialog").open;
-        if (!stages.approvals) throw new Error("Notifications must open the approvals dialog");
-        return stages;
+        document.getElementById("auth-form").requestSubmit();
+        return {auth:visible("auth-gate"),plans:visible("plan-gate"),home:visible("app"),guestBypass:!!document.getElementById("local-mode")};
       })()`)
     : undefined;
   const page = window

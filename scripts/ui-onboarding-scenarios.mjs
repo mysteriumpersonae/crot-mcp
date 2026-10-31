@@ -1,6 +1,13 @@
 /** Real Chromium viewport and state-machine checks. Account/entitlement events are explicitly IPC fixtures. */
 export async function runOnboardingScenarios({ evaluate, until, size, screenshot, navigate, assert }) {
   const click = (id) => evaluate(`document.getElementById(${JSON.stringify(id)}).click()`);
+  const signIn = async () => {
+    await click("login");
+    await evaluate(
+      "document.getElementById('auth-username').value='fixture_user';document.getElementById('auth-password').value='fixture-password-123';document.getElementById('auth-form').requestSubmit()",
+    );
+    await until("!document.getElementById('plan-gate').hidden");
+  };
   const geometry = async (name, selector) => {
     const result = await evaluate(
       `(()=>{const d=document.documentElement;const b=document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();return {scroll:d.scrollHeight<=d.clientHeight&&d.scrollWidth<=d.clientWidth,visible:b.top>=0&&b.left>=0&&b.bottom<=innerHeight+1&&b.right<=innerWidth+1, width:d.clientWidth,height:d.clientHeight};})()`,
@@ -22,10 +29,10 @@ export async function runOnboardingScenarios({ evaluate, until, size, screenshot
       );
       await geometry("auth", ".auth-card");
       await screenshot(`onboarding-01-auth-${lang}-${width}x${height}`);
-      await click("local-mode");
+      await signIn();
       assert(
         await evaluate("!document.getElementById('plan-gate').hidden&&document.getElementById('app').hidden"),
-        "local must enter plans, not internal tools",
+        "a verified password session must enter plans, not internal tools",
       );
       await geometry("plans", ".plan-layout");
       assert(
@@ -54,21 +61,23 @@ export async function runOnboardingScenarios({ evaluate, until, size, screenshot
   }
   await size(1280, 820);
   await navigate("/control-center");
-  await evaluate("window.CrotI18n.setLanguage('en');document.getElementById('work-email').value='person@example.test'");
-  for (const [id, provider] of [
-    ["google", "GoogleOAuth"],
-    ["github", "GitHubOAuth"],
-    ["login", "authkit"],
-  ]) {
+  await evaluate("window.CrotI18n.setLanguage('en');document.getElementById('auth-form').requestSubmit()");
+  assert(await evaluate("!document.getElementById('auth-gate').hidden"), "empty registration cannot admit");
+  for (const id of ["google", "github"]) {
     await click(id);
+    await until("!document.getElementById('" + id + "').disabled");
+    assert(await evaluate("!document.getElementById('auth-gate').hidden"), "unconfigured OAuth never admits");
     assert(
-      await evaluate(`actions.some(a=>a[0]==='pairing.start'&&a[1].provider==='${provider}')`),
-      "provider routing " + provider,
+      await evaluate("document.getElementById('auth-feedback').textContent.includes('CLIENT_ID')"),
+      "missing OAuth config is explicit",
     );
-    assert(await evaluate("!document.getElementById('auth-gate').hidden"), "opening OAuth is not authentication");
   }
-  await evaluate("fixture.accountSignedIn=true;render(fixture)");
-  assert(await evaluate("!document.getElementById('plan-gate').hidden"), "verified pairing must enter plans");
+  await evaluate("fixture.accountSignedIn=true;fixture.pairing.state='paired';render(fixture)");
+  assert(
+    await evaluate("!document.getElementById('auth-gate').hidden"),
+    "unrelated cloud account events cannot bypass Screen 01",
+  );
+  await signIn();
   await click("start-trial");
   assert(
     await evaluate("actions.some(a=>a[0]==='ui.startTrial')&&document.getElementById('app').hidden"),
@@ -85,6 +94,6 @@ export async function runOnboardingScenarios({ evaluate, until, size, screenshot
   // A new application launch must still start at the explicit auth gate.
   await navigate("/control-center?launch=" + Math.random() + "#files");
   assert(await evaluate("!document.getElementById('auth-gate').hidden"), "saved local mode must not bypass startup");
-  await click("local-mode");
+  await signIn();
   await click("skip-plan");
 }

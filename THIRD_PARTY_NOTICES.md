@@ -48,3 +48,10 @@ The yellow CROT mole vector is a vector tracing of the owner-supplied design ref
   neutral Lucide icon, not a fabricated brand. Package disclaimer remains applicable.
 - Hand-authored CROT mascot is an approximation of the owner-supplied screenshot.
   All app/tray/extension variants derive from the same SVG, not independently drawn marks.
+
+## OS credential storage binding
+
+`@napi-rs/keyring` 2.1.2 provides native Credential Manager / Keychain / Secret Service
+access. Preserve its LICENSE and platform `LICENSE.third-party.md` when distributing
+runtime dependencies. The Linux binary statically links libdbus under
+AFL-2.1 OR GPL-2.0-or-later; see the shipped notices for exact terms.
