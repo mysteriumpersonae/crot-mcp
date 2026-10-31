@@ -229,6 +229,11 @@ try {
     await (
       await import("./ui-service-scenarios.mjs")
     ).runServiceScenarios({ real, call, evaluate, until, size, screenshot, navigate, artifacts });
+  } else if (process.argv.includes("--chat-groups")) {
+    await (
+      await import("./ui-chat-groups-scenarios.mjs")
+    ).runChatGroupScenarios({ evaluate, until, size, screenshot, navigate, call, artifacts, assert });
+    if (runtimeErrors.length) throw new Error(JSON.stringify(runtimeErrors));
   } else if (process.argv.includes("--onboarding")) {
     await (
       await import("./ui-onboarding-scenarios.mjs")

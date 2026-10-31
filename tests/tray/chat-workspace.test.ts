@@ -20,6 +20,7 @@ describe("scoped Unified Chat workspace", () => {
       "connectors.list",
       "skills.list",
       "mcpServers.list",
+      "agents.list",
       "chat.providers",
       "chat.models",
       "chat.start",
@@ -35,6 +36,26 @@ describe("scoped Unified Chat workspace", () => {
     expect(chat).toContain("message.value+context");
     expect(chat).toContain("chatPast.push(...chatCurrent)");
     expect(chat).toContain("pop.setAttribute('popover','auto')");
+  });
+  it("separates platform, skill and agent roles without unrelated footer logos", () => {
+    expect(chat).toContain("menu('Connected Platforms','web')");
+    expect(chat).toContain("menu('Skills','skills')");
+    expect(chat).toContain("footer(skill.pop,'Connectors','Add skill',skillItems,'skills')");
+    expect(chat).toContain("document.querySelector('[data-create-skill]')?.click()");
+    expect(chat).toContain("items.slice(0,3)");
+    expect(chat).not.toContain("['GitHub','Notion','YouTube']");
+    expect(chat).toContain("a.connected&&!a.revoked");
+    expect(chat).toContain("This connection does not provide a direct chat transport.");
+    expect(chat).toContain("inventoryLoaded&&chatWeb");
+    expect(chat).toContain("inventoryLoaded&&chatSkill");
+  });
+  it("uses a subtle outer composer focus and a circular send button", () => {
+    expect(CHAT_CSS).toContain(".chat-compose:focus-within{border-color:#aeb6c2;box-shadow:none}");
+    expect(CHAT_CSS).toContain("outline:none;outline-offset:0;box-shadow:none;border:0");
+    expect(CHAT_CSS).toContain("width:44px;height:44px;min-width:44px;min-height:44px");
+    expect(TRAY_ASSETS["/app.css"]!.body).toContain(
+      "#notification-count{display:grid;place-items:center;width:20px;height:20px",
+    );
   });
   it("loads isolated Chat styles after existing Home styles", () => {
     expect(TRAY_ASSETS["/app.css"]!.body.endsWith(CHAT_CSS)).toBe(true);
