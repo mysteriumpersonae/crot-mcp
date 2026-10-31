@@ -136,9 +136,11 @@ try {
   assert(stored);
   await start();
   assert.equal(await page.locator("#provider-bootstrap").evaluate((el) => el.open), false);
-  await page.click("#provider-open");
-  for (const id of Object.keys(values)) assert.equal(await page.inputValue("#provider-" + id), "");
-  await page.keyboard.press("Escape");
+  assert.equal(await page.locator("#provider-open").isVisible(), false);
+  const retained = stored;
+  const denied = await page.evaluate((v) => window.crot.auth("providers-save", v), values);
+  assert.equal(denied.error, "PROVIDERS_LOCKED");
+  assert.equal(stored, retained);
   await page.click("#auth-submit");
   await remain();
   await page.fill("#auth-username", "qa_user");
@@ -165,6 +167,11 @@ try {
   await page.click("#auth-submit");
   await page.locator("#otp-form:not([hidden])").waitFor();
   await remain();
+  await page.locator("#auth-code").focus();
+  await shot("10-email-verification");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await shot("11-email-verification-mobile");
+  await page.setViewportSize({ width: 1280, height: 820 });
   const code = auth.codes.at(-1).code;
   await page.fill("#auth-code", code === "000000" ? "111111" : "000000");
   await page.click("#otp-submit");

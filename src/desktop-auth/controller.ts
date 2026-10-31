@@ -80,7 +80,10 @@ export class DesktopAuthController {
           generation = ++this.generation;
         const opened = await beginOAuth(provider, this.env, this.browser, async (profile) => {
           await this.auth.acceptProvider(provider, profile);
-          if (generation !== this.generation) this.auth.logout();
+          if (generation !== this.generation) {
+            this.auth.logout();
+            throw new AuthError("OAUTH_CANCELLED");
+          }
         });
         if (generation !== this.generation) {
           opened.cancel();

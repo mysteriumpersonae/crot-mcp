@@ -71,10 +71,52 @@ describe("Screen 01 provider PKCE", () => {
     expect(exchanged).toBe(0);
     expect(accepted).toBe(0);
     callback.searchParams.set("state", url.searchParams.get("state")!);
-    expect((await realFetch(callback)).status).toBe(200);
+    const completed = await realFetch(callback);
+    expect(completed.status).toBe(200);
+    expect(completed.headers.get("content-type")).toContain("text/html");
+    expect(completed.headers.get("cache-control")).toBe("no-store");
+    expect(completed.headers.get("content-security-policy")).toContain("script-src 'nonce-");
+    const html = await completed.text();
+    expect(html).toContain("Account verified");
+    expect(html).toContain("history.replaceState");
+    expect(html).not.toContain("genuine-code");
+    expect(html).not.toContain(url.searchParams.get("state"));
     await flow.completion;
     expect(exchanged).toBe(1);
     expect(accepted).toBe(1);
+  });
+  it("renders a failure card when local acceptance fails, without exposing diagnostics", async () => {
+    const port = await freePort();
+    let opened!: URL;
+    const realFetch = fetch;
+    vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
+      if (String(url) === "https://oauth2.googleapis.com/token") return response({ access_token: "fixture-token" });
+      if (String(url) === "https://openidconnect.googleapis.com/v1/userinfo")
+        return response({ sub: "fixture", email: "fixture@example.test", email_verified: true });
+      return realFetch(url, init);
+    });
+    const flow = await beginOAuth(
+      "google",
+      { GOOGLE_CLIENT_ID: "fixture", GOOGLE_CLIENT_SECRET: "fixture", CROT_AUTH_CALLBACK_PORT: port },
+      async (url) => {
+        opened = new URL(url);
+      },
+      async () => {
+        throw new Error("sensitive-provider-diagnostic");
+      },
+    );
+    closers.push(flow.cancel);
+    const callback = new URL(opened.searchParams.get("redirect_uri")!);
+    callback.searchParams.set("code", "private-fixture-code");
+    callback.searchParams.set("state", opened.searchParams.get("state")!);
+    const result = await realFetch(callback);
+    const html = await result.text();
+    expect(result.status).toBe(400);
+    expect(html).toContain("Sign-in wasn’t completed");
+    expect(html).not.toContain("Account verified");
+    expect(html).not.toContain("sensitive-provider-diagnostic");
+    expect(html).not.toContain("private-fixture-code");
+    await expect(flow.completion).rejects.toThrow("OAUTH_FAILED");
   });
   it("denied/cancelled/browser failure cannot admit", async () => {
     const port = await freePort();
@@ -93,7 +135,11 @@ describe("Screen 01 provider PKCE", () => {
     const callback = new URL(url.searchParams.get("redirect_uri")!);
     callback.searchParams.set("state", url.searchParams.get("state")!);
     callback.searchParams.set("error", "access_denied");
-    expect((await fetch(callback)).status).toBe(400);
+    const denied = await fetch(callback, { headers: { "accept-language": "ru-RU" } });
+    expect(denied.status).toBe(400);
+    const html = await denied.text();
+    expect(html).toContain("Вход не завершён");
+    expect(html).not.toContain("Account verified");
     await expect(flow.completion).rejects.toThrow("OAUTH_DENIED");
     expect(accepted).not.toHaveBeenCalled();
     await expect(

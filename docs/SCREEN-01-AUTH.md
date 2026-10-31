@@ -28,8 +28,17 @@ No `.env` or environment credentials are read by this desktop path. There is no
 terminal OTP, plaintext-file, encrypted-file, kernel-memory or basic_text fallback.
 Missing/locked OS storage is reported. An existing verified local account can still
 use password login without SMTP/OAuth access. Close the modal to sign in; reopen
-with **Provider settings**. To replace keys, re-enter all six fields. Existing
-credentials are never returned to the renderer.
+with **Provider settings** only while no vault record exists. After first save the
+link disappears and main-process `providers-save` rejects replacement with
+`PROVIDERS_LOCKED`, including after restart and for corrupt existing records.
+Credentials are never returned to the renderer. Rotation/recovery is deliberately
+not available to signed-out CROT users: quit CROT, use your OS credential manager
+to remove this application's named record, then relaunch and provision locally.
+Deleting a record affects every CROT account under that OS user. There is no
+separate CROT administrator role; first setup requires a trusted OS-owner session.
+This cannot isolate mutually untrusted people/processes sharing the same OS login;
+use separate OS accounts. Concurrent application instances are not an OS-level
+access-control boundary (the vault API has no compare-and-set primitive).
 
 ## System storage and local trust boundary
 
@@ -94,3 +103,18 @@ restore the session after sign-out.
 The next login may use another existing local account or configured provider.
 An email already owned by another sign-in method is still not silently linked;
 `ACCOUNT_LINK_REQUIRED` is a deliberate separate account-linking boundary.
+
+## OAuth browser return and input UX
+
+Google and GitHub share a centered, branded, responsive return card. Success is
+shown only after token exchange, verified profile lookup and local acceptance;
+denial and exchange/account-link failures show a generic failure card. No code,
+state, identity or provider diagnostics are rendered. Strict nonce CSP, no external
+assets, no-store and no-referrer remain enabled; the script removes callback query
+parameters from the current browser history entry. Switch back through taskbar/Dock;
+there is no registered app deep-link handler, so no misleading “Open app” link.
+The close-tab button is best-effort (browsers may require manual closing).
+
+Screen 01 has one subtle border/focus halo without stacked thick outlines, keeps
+keyboard focus visible, reserves space for the language chevron and groups OTP
+instructions, code, confirmation and resend without duplicate success copy.

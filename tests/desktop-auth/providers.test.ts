@@ -50,6 +50,29 @@ describe("OS-vault provider bootstrap", () => {
     expect((await reopened.load())?.SMTP_PASS).toBe("abcdefghijklmnop");
     expect(await reopened.call("providers-status", {})).toEqual({ ok: true, configured: true });
   });
+  it("locks configured and corrupt records across restarts without SMTP or mutation", async () => {
+    for (const record of [JSON.stringify(valid()), "corrupt-existing-record"]) {
+      const write = vi.fn(),
+        verify = vi.fn();
+      const entry = async () => ({ getPassword: async () => record, setPassword: write });
+      for (const p of [new ProviderSettings(entry, verify), new ProviderSettings(entry, verify)])
+        expect(await p.call("providers-save", valid())).toEqual({ ok: false, error: "PROVIDERS_LOCKED" });
+      expect(write).not.toHaveBeenCalled();
+      expect(verify).not.toHaveBeenCalled();
+    }
+  });
+  it("does not overwrite a record that appeared during SMTP verification", async () => {
+    let stored: string | null = null;
+    const write = vi.fn();
+    const p = new ProviderSettings(
+      async () => ({ getPassword: async () => stored, setPassword: write }),
+      async () => {
+        stored = "another-owner-setup";
+      },
+    );
+    expect(await p.call("providers-save", valid())).toEqual({ ok: false, error: "PROVIDERS_LOCKED" });
+    expect(write).not.toHaveBeenCalled();
+  });
   it("fails closed on locked/missing store without native diagnostics", async () => {
     const p = new ProviderSettings(async () => {
       throw Error(valid().googleSecret);
