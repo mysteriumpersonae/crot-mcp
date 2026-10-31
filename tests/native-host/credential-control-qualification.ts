@@ -250,7 +250,9 @@ const s=net.connect(${JSON.stringify(endpoint)});s.setTimeout(5000,()=>{console.
     }
     await probe?.cleanup();
     await shim?.cleanup();
-    await rm(root, { recursive: true, force: true });
+    // Windows may release native component handles asynchronously after shutdown.
+    // Retry only cleanup; never retry or relax the credential-isolation assertions.
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
   console.log(
     "CROT-native-credential-control",
