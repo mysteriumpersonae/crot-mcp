@@ -476,12 +476,16 @@ try {
     await evaluate("fixture.connection='connected';render(fixture);window.CrotI18n.setLanguage('en')");
     await size(1280, 820);
     await click("nav-agents");
-    await evaluate("document.querySelector('[data-integration=Claude]').click()");
-    await evaluate(
-      "[...document.querySelectorAll('#action-dialog button')].find(b=>b.textContent==='Copy local Claude Desktop configuration').click()",
+    assert(
+      await evaluate(
+        "!document.querySelector('[data-integration]')&&!document.querySelector('[data-relay-url]').value&&document.querySelector('[aria-label=\"Copy relay URL\"]').disabled",
+      ),
+      "Unpaired MCP view fabricated an integration or URL",
     );
-    await evaluate("document.getElementById('action-dialog').close()");
-    assert(await evaluate("actions.some(a=>a[0]==='ui.copyConfig')"), "config copy not delegated");
+    assert(
+      await evaluate("[...document.querySelectorAll('.agents-card input')].some(input=>input.value==='OAuth 2.1')"),
+      "Remote MCP authentication method missing",
+    );
     await click("nav-home");
     await evaluate(
       "fixture.cards=[{requestId:'test-approval',title:'Write project file',banners:['OUTSIDE THE WORKSPACE'],rows:[{label:'Path',value:'/workspace/evil[U+202E]txt.exe',marks:['outside workspace'],length:32}],expiresAt:'2026-10-22T05:00:00Z'}];render(fixture)",

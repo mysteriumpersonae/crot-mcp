@@ -29,4 +29,10 @@ export const AGENTS_CENTER_CSS = String.raw`
 @media(max-width:760px){.agents-key-row:has(> .agents-icon-button){flex-wrap:wrap}.agents-key-row:has(> .agents-icon-button)>.agents-key-input{flex-basis:100%}.agents-key-row>.agents-icon-button{padding:10px}}
 @media(max-width:1199px){.agents-active #page,.agents-center,.agents-column{height:auto}.agents-active main.content{overflow:auto}.agents-column{overflow:visible}.agents-center{align-items:start}}
 @media(min-width:1200px) and (max-height:860px){.agents-column-head{gap:12px;min-height:0}.agents-column-head h1{font-size:18px}.agents-column-head p{font-size:13px}.agents-column{padding:10px;gap:10px}.agents-card{padding:12px}.agents-column-head{padding-bottom:2px}.agents-accordion-body{padding-top:8px}.agents-accordion .agents-advanced{margin-bottom:6px}.agents-form-row{margin-bottom:6px}}
+
+/* One active section; stable header geometry and no feedback-driven parent scrollbar. */
+.agents-outbound{overflow:hidden}.agents-outbound .agents-accordion{padding:14px}.agents-outbound .agents-accordion>summary{align-items:center;min-height:40px}.agents-outbound .agents-accordion>summary h2{margin:0}.agents-accordion-body>p:first-child{font-size:14px;line-height:1.45;color:#657396;margin:0 0 12px}.agents-outbound .agents-accordion-body{overflow-y:auto;scrollbar-gutter:stable;padding-right:4px}.agents-accordion::details-content{interpolate-size:allow-keywords;height:0;overflow:clip;transition:height 220ms ease,content-visibility 220ms allow-discrete}.agents-accordion[open]::details-content{height:auto}
+@media(min-width:1200px) and (max-height:860px){.agents-outbound .agents-accordion{padding:12px}.agents-accordion-body>p:first-child{margin-bottom:8px}}
+@media(prefers-reduced-motion:reduce){.agents-accordion::details-content{transition:none}}
+@media(max-width:1199px){.agents-outbound{overflow:visible}.agents-outbound .agents-accordion-body{overflow:visible;max-height:none!important}}
 `;

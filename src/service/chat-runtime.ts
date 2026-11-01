@@ -10,10 +10,42 @@ import { invokeTool } from "../adapters/mcp/invoke.js";
 import { ChatEventStream } from "./chat-stream.js";
 import { ChatStartSchema, type ChatProvider, type ChatStart } from "./chat-protocol.js";
 
+export interface ProviderDiagnostic {
+  code: string;
+  stage: string;
+  httpStatus?: number;
+  networkCode?: string;
+}
+/** Never expose provider bodies, arbitrary thrown messages, URLs or credentials as diagnostics. */
+export function providerDiagnostic(error: unknown): ProviderDiagnostic {
+  if (!(error instanceof CrotError)) return { code: "OPERATION_FAILED", stage: "network" };
+  const d = error.details,
+    status = Number(d?.httpStatus),
+    errno = String(d?.errno ?? "");
+  return {
+    code: error.code,
+    stage: ["models", "workspace", "inventory"].includes(String(d?.stage)) ? String(d?.stage) : "network",
+    ...(Number.isInteger(status) && status >= 100 && status <= 599 ? { httpStatus: status } : {}),
+    ...([
+      "ENOTFOUND",
+      "EAI_AGAIN",
+      "ECONNREFUSED",
+      "ECONNRESET",
+      "ETIMEDOUT",
+      "CERT_HAS_EXPIRED",
+      "DEPTH_ZERO_SELF_SIGNED_CERT",
+      "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+      "ERR_TLS_CERT_ALTNAME_INVALID",
+    ].includes(errno)
+      ? { networkCode: errno }
+      : {}),
+  };
+}
 export interface ChatProviderConfig {
   endpoint: string;
   defaultModel?: string;
   username?: string;
+  connectionError?: ProviderDiagnostic;
   checkedAt?: string;
   connectionStatus?: "connected" | "failed";
 }
@@ -22,6 +54,8 @@ export const CHAT_ENDPOINTS: Record<ChatProvider, string> = {
   Anthropic: "https://api.anthropic.com/v1",
   "Google Gemini": "https://generativelanguage.googleapis.com/v1beta/openai",
   OpenRouter: "https://openrouter.ai/api/v1",
+  River: "https://api.river.ai/v1",
+  "OpenAI-compatible": "",
   "Local HTTP": "http://127.0.0.1:1234/v1",
   OpenCode: "http://127.0.0.1:4096",
   "Notion Agents": "https://api.notion.com/v1",
@@ -85,6 +119,7 @@ export class ChatRuntime {
       username: this.host.configuration(provider)?.username,
       credentialRequired: provider !== "Local HTTP" && provider !== "OpenCode",
       kind: provider === "OpenCode" || provider === "Notion Agents" ? "workspace" : "model",
+      connectionError: this.host.configuration(provider)?.connectionError,
       checkedAt: this.host.configuration(provider)?.checkedAt,
       connectionStatus: this.host.configuration(provider)?.connectionStatus,
       configured: !!this.host.configuration(provider),
@@ -130,14 +165,20 @@ export class ChatRuntime {
         followRedirects: false,
         maxResponseBytes: 256000,
       });
-      if (response.status !== 200 || response.truncated) return bad(`Model inventory failed (HTTP ${response.status})`);
+      if (response.status !== 200 || response.truncated)
+        throw new CrotError("OPERATION_FAILED", "Model inventory request failed", {
+          stage: "models",
+          httpStatus: response.status,
+          truncated: response.truncated,
+        });
       let body: Record<string, unknown>;
       try {
         body = record(JSON.parse(response.body));
       } catch {
         return bad("Invalid provider model inventory");
       }
-      if (!Array.isArray(body.data)) return bad("Provider returned no valid model inventory");
+      if (!Array.isArray(body.data))
+        throw new CrotError("OPERATION_FAILED", "Provider returned no valid model inventory", { stage: "inventory" });
       for (const item of array(body.data)) {
         const id = text(record(item).id);
         if (id && id.length <= 256) models.add(id);
@@ -167,7 +208,10 @@ export class ChatRuntime {
       maxResponseBytes: 256000,
     });
     if (response.status < 200 || response.status >= 300 || response.truncated)
-      return bad("Workspace agent request failed");
+      throw new CrotError("OPERATION_FAILED", "Workspace agent request failed", {
+        stage: "workspace",
+        httpStatus: response.status,
+      });
     try {
       return record(JSON.parse(response.body));
     } catch {

@@ -32,9 +32,7 @@ export async function runChatGroupScenarios({ evaluate, until, size, screenshot,
     };
     document.getElementById('nav-chat').click();
   })()`);
-  await until(
-    "document.querySelector('[data-agent-id=\"local:opencode\"]')&&document.querySelector('.chat-agent-pill[aria-pressed=true]')",
-  );
+  await until("document.querySelector('.chat-agent-pill[aria-pressed=true]')");
   const open = async (group) => {
     await evaluate(`document.querySelector('.chat-dropdown.${group} .chat-selector').click()`);
     await until(`document.querySelector('.chat-dropdown.${group} .chat-popover:popover-open')`);
@@ -60,21 +58,19 @@ export async function runChatGroupScenarios({ evaluate, until, size, screenshot,
   await evaluate("document.querySelector('#chat-menu-web [data-connection-id=\"mcp:notion-mcp\"]').click()");
   assert(
     await evaluate(
-      "(()=>{const p=document.querySelector('.chat-agent-pills');return ['OpenCode','Notion agent','Entrim','OpenAI'].every(n=>p.textContent.includes(n))&&!p.textContent.includes('Offline client')&&!p.textContent.includes('Revoked client')&&!p.textContent.includes('YouTube')&&!p.textContent.includes('FFmpeg');})()",
+      "(()=>{const p=document.querySelector('.chat-agent-pills');return p.textContent.includes('Local HTTP')&&['OpenCode','Notion agent','Entrim','OpenAI'].every(n=>!p.textContent.includes(n))&&!p.textContent.includes('Offline client')&&!p.textContent.includes('Revoked client')&&!p.textContent.includes('YouTube')&&!p.textContent.includes('FFmpeg');})()",
     ),
-    "Connected local/remote agents are missing or mixed with tools/platforms",
+    "Inbound clients or connector credentials masquerade as callable chat models",
   );
-  await evaluate("document.querySelector('.chat-agent-pills [data-agent-id=\"local:opencode\"]').click()");
-  await until("document.querySelector('#action-dialog[open]')");
   assert(
     await evaluate(
-      "document.querySelector('#action-dialog').textContent.includes('does not provide a direct chat transport')&&!chatGroupCalls.some(c=>c[0]==='chat.start')",
+      "!document.querySelector('.chat-agents [data-agent-id]')&&!chatGroupCalls.some(c=>c[0]==='chat.start')",
     ),
-    "A client connection was falsely routed as a chat transport",
+    "An inbound MCP client appeared as an outbound provider",
   );
-  await evaluate("document.querySelector('#action-dialog').close();window.CrotI18n.setLanguage('ru')");
+  await evaluate("window.CrotI18n.setLanguage('ru')");
   await until(
-    "document.querySelector('.chat-compose textarea')&&document.querySelector('.chat-agent-pills [data-agent-id=\"local:opencode\"]')",
+    "document.querySelector('.chat-compose textarea')&&document.querySelector('.chat-agent-pill[aria-pressed=true]')",
   );
   await evaluate("document.querySelector('.chat-compose textarea').focus()");
   const bounds = await evaluate(

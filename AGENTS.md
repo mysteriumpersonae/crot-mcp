@@ -11,3 +11,5 @@ Read [STATUS](STATUS.md), [ARCHITECTURE](ARCHITECTURE.md), [roadmap](CROT_IMPLEM
 - Release artifacts need safe output paths, signed canonical update manifest, staged hash checks, provenance and correct prerequisite notices. Repository-test artifacts are not qualified releases.
 - Production, Stripe, GUI installers/vendor signing, legal/store publication and live drills remain external gates. Owner reports staging deployed; do not turn that into unobserved live qualification.
 - Never merge without explicit permission.
+
+- Production UI must never claim official integrations, live connectivity or model capability from placeholders, stored credentials or a static catalog. Show only implemented adapters and observed verification scope; isolated test fixtures are not production qualification. Never substitute a local Bearer token for relay OAuth.
