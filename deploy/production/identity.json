@@ -1,6 +1,6 @@
 {
   "id": "production",
-  "issuer": "https://auth.crot.network",
+  "issuer": "https://crot.network",
   "relayHost": "crot.network",
   "pairingClientId": "crot-device-v1",
   "pairingRedirectPort": 0,
