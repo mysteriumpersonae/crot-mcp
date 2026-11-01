@@ -90,14 +90,6 @@ export const EnvironmentConfigSchema = z
   })
   .strict();
 
-/**
- * Authentication modes of the HTTP transport.
- *
- * local-token: provisional bearer token kept in the CROT secret store
- * (http.auth.storage; loopback only). Future verifiers (e.g. an OAuth/OIDC
- * resource-server verifier) are added as new modes behind the same verifier
- * interface; authorization always stays with the PermissionEngine.
- */
 export const HTTP_AUTH_MODES = ["local-token"] as const;
 export const HTTP_TOKEN_STORAGES = ["secret-store", "token-file"] as const;
 export type HttpAuthMode = (typeof HTTP_AUTH_MODES)[number];
@@ -105,51 +97,25 @@ export type HttpAuthMode = (typeof HTTP_AUTH_MODES)[number];
 export const HttpAuthConfigSchema = z
   .object({
     mode: z.enum(HTTP_AUTH_MODES).default("local-token"),
-    /**
-     * Where the local token is kept (WP-21). secret-store (default): the CROT
-     * secret store (OS secure storage, or an owner-only file where none is
-     * available); a configured tokenFile is migrated into it and deleted.
-     * token-file: compatibility mode, the token stays in tokenFile (plaintext,
-     * owner-only); CROT warns about it at every start.
-     */
     storage: z.enum(HTTP_TOKEN_STORAGES).default("secret-store"),
-    /**
-     * Legacy token file. With storage secret-store it is only migrated; with
-     * token-file it is the storage (default: http-token in the state directory).
-     */
     tokenFile: z.string().min(1).optional(),
   })
   .strict();
 
-/**
- * Streamable HTTP MCP transport. Read only by the HTTP adapter; Core does not
- * act on it. Disabled by default; when enabled it binds to loopback and every
- * request must be authenticated.
- */
 export const HttpConfigSchema = z
   .object({
     enabled: z.boolean().default(false),
-    /** Bind address. Only loopback addresses are accepted in this version. */
     host: z.string().min(1).default("127.0.0.1"),
-    /** TCP port (0 picks a free port). */
     port: z.number().int().min(0).max(65535).default(7337),
     auth: HttpAuthConfigSchema.default({ mode: "local-token", storage: "secret-store" }),
-    /** Browser origins allowed to call the endpoint. Empty: requests carrying an Origin header are rejected. */
     allowedOrigins: z.array(z.string().min(1)).default([]),
-    /** Maximum size of a request body. */
     maxRequestBytes: z
       .number()
       .int()
       .positive()
       .default(4 * 1024 * 1024),
-    /** Maximum number of concurrent MCP sessions. */
     maxSessions: z.number().int().positive().default(16),
-    /**
-     * Maximum number of 2026-07-28 (sessionless) requests served at the same
-     * time; more get HTTP 503 with Retry-After (WP-20).
-     */
     maxConcurrentRequests: z.number().int().positive().max(1024).default(32),
-    /** Sessions without requests for this long are closed. */
     sessionIdleTimeoutMs: z
       .number()
       .int()
@@ -158,13 +124,6 @@ export const HttpConfigSchema = z
   })
   .strict();
 
-/**
- * Browser bridge for the CROT Browser Extension (Chromium). Read only by the
- * CROT host, which starts the bridge and hands it to Core; Core does not act
- * on it. Disabled by default. Enabling the bridge grants nothing: browser
- * tools still require browser.read / browser.control from the
- * PermissionEngine (off in sandbox mode unless listed explicitly).
- */
 export const BrowserConfigSchema = z
   .object({
     enabled: z.boolean().default(false),
@@ -176,35 +135,20 @@ export const BrowserConfigSchema = z
   })
   .strict();
 
-/**
- * Secret store of the CROT service (WP-21, ARCHITECTURE.md §27 AD-18). Read
- * only by the service; Core does not act on it.
- * auto: OS secure storage when it is usable at first start, otherwise
- * owner-only files (the choice is recorded and kept); os: require OS secure
- * storage (migrates owner-only files into it); file: owner-only files.
- */
 export const SecretsConfigSchema = z
   .object({
     store: z.enum(["auto", "os", "file"]).default("auto"),
   })
   .strict();
 
-/**
- * Command confinement L1 (ARCHITECTURE.md §27 AD-20 point 8). Owner
- * configuration, part of the configuration digest; agents cannot change it.
- * network on (default): confined commands share the host network; off: a
- * loopback-only network shared by the confined processes of one Core.
- */
 export const ConfinementConfigSchema = z
   .object({
     network: z.enum(CONFINEMENT_NETWORK_MODES).default("on"),
   })
   .strict();
 
-/** One approval gate rule: an operation needs approval when every given condition matches. */
 export const ApprovalRuleConfigSchema = z
   .object({
-    /** Recorded in audit events and shown to the user ("why am I asked"). */
     id: z.string().min(1).max(100),
     match: z
       .object({
@@ -216,40 +160,48 @@ export const ApprovalRuleConfigSchema = z
           .optional(),
         modes: z.array(z.enum(PERMISSION_MODES)).min(1).optional(),
         outsideWorkspace: z.boolean().optional(),
-        /** The session's exposure state (AD-12): true after it read untrusted content. */
         exposed: z.boolean().optional(),
       })
       .strict(),
   })
   .strict();
 
-/**
- * Approval gates (ARCHITECTURE.md §27, AD-10, AD-12). No user rules by
- * default; the built-in `untrusted-content` rule is active unless turned off. With rules but without a registered approval provider (no tray app),
- * gated operations are denied.
- */
 export const ApprovalsConfigSchema = z
   .object({
     rules: z.array(ApprovalRuleConfigSchema).default([]),
-    /** How long a request waits for the user; then it expires (denied). At most 300 s. */
     timeoutMs: z.number().int().positive().max(MAX_APPROVAL_TIMEOUT_MS).default(DEFAULT_APPROVAL_TIMEOUT_MS),
-    /** Pending requests at the same time; more are denied immediately. */
     maxPending: z.number().int().positive().default(DEFAULT_APPROVAL_MAX_PENDING),
-    /**
-     * Built-in rule `untrusted-content` (AD-12): after a session read a web
-     * page, screenshot, tab list or network response, operations with effects
-     * need approval. On by default; "off" turns it off.
-     */
     untrustedContent: z.enum(UNTRUSTED_CONTENT_SETTINGS).default("require-approval"),
   })
   .strict();
+
+/**
+ * Default network allow-list for built-in AI chat providers and local model servers.
+ * These hosts are whitelisted by default so that owners can use Cloud LLM, Local Models
+ * and Workspaces sections without editing permissions.network.allow manually.
+ * All loopback entries require explicit IP rules because name rules never allow
+ * non-public addresses (NetworkPolicy contract).
+ */
+export const DEFAULT_AI_NETWORK_ALLOW: readonly string[] = [
+  // Cloud AI providers (HTTPS port 443 only)
+  "api.openai.com",
+  "api.anthropic.com",
+  "generativelanguage.googleapis.com",
+  "openrouter.ai",
+  "api.river.ai",
+  "api.notion.com",
+  // Local model servers — loopback must be IP/CIDR rules
+  "127.0.0.1:11434",  // Ollama default
+  "127.0.0.1:1234",   // LM Studio default
+  "127.0.0.1:4096",   // OpenCode default
+  "127.0.0.1:8080",   // common local model port
+];
 
 export const CrotConfigSchema = z
   .object({
     version: z.literal(1).default(1),
     workspace: z
       .object({
-        /** Workspace root. Relative values in a config file are resolved against the file's directory. */
         root: z.string().min(1),
         name: z.string().min(1).optional(),
       })
@@ -257,19 +209,15 @@ export const CrotConfigSchema = z
     permissions: z
       .object({
         mode: z.enum(PERMISSION_MODES).default("sandbox"),
-        /** Explicit capability set; omitted means the mode's defaults. */
         capabilities: z.array(CapabilitySchema).optional(),
-        /** Host policy of network.access; deny by default (ARCHITECTURE.md §27, AD-4). */
-        network: NetworkPolicyConfigSchema.default({ allow: [], deny: [] }),
-        /** Exact owner file opt-ins, bound to a canonical workspace. No capability or ask decision overrides default secret-file denial. */
+        network: NetworkPolicyConfigSchema.default({ allow: [...DEFAULT_AI_NETWORK_ALLOW], deny: [] }),
         projectSecrets: ProjectSecretAccessSchema.default({ allow: [] }),
-        /** Approval gates (AD-10). */
         approvals: ApprovalsConfigSchema.default(ApprovalsConfigSchema.parse({})),
       })
       .strict()
       .default({
         mode: "sandbox",
-        network: { allow: [], deny: [] },
+        network: { allow: [...DEFAULT_AI_NETWORK_ALLOW], deny: [] },
         approvals: ApprovalsConfigSchema.parse({}),
         projectSecrets: { allow: [] },
       }),

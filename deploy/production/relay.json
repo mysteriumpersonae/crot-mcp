@@ -1,0 +1,23 @@
+{
+  "environment": "production",
+  "relayHost": "crot.network",
+  "issuer": "https://auth.crot.network",
+  "pairingClientId": "crot-device-v1",
+  "host": "0.0.0.0",
+  "port": 8443,
+  "registryFile": "/state/devices.json",
+  "accountFile": "/state/accounts.json",
+  "metricsTokenFile": "/config/metrics.token",
+  "exchangeDeadlineMs": 900000,
+  "limits": {
+    "globalConcurrency": 128,
+    "clientConcurrency": 4,
+    "deviceConcurrency": 32,
+    "sourceConnections": 128,
+    "sourceHandshakes": 16,
+    "clientRequests": { "max": 120, "windowMs": 60000 },
+    "deviceRequests": { "max": 600, "windowMs": 60000 },
+    "accountRegistrations": { "max": 10, "windowMs": 60000 },
+    "counterKeys": 50000
+  }
+}

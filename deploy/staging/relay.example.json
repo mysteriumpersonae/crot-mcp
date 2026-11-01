@@ -1,12 +1,15 @@
 {
   "environment": "staging",
-  "relayHost": "relay-staging.crot.network",
-  "issuer": "https://prestigious-continent-62-staging.authkit.app",
-  "pairingClientId": "client_01M5FJB95CE7KH33Y1SPE5X77Q",
+  "relayHost": "staging.crot.network",
+  "issuer": "https://auth-staging.crot.network",
+  "pairingClientId": "crot-device-staging-v1",
   "host": "0.0.0.0",
   "port": 8443,
   "registryFile": "/state/devices.json",
   "accountFile": "/state/accounts.json",
   "metricsTokenFile": "/config/metrics.token",
-  "tls": { "certFile": "/config/tls.crt", "keyFile": "/config/tls.key" }
+  "tls": {
+    "certFile": "/config/tls.crt",
+    "keyFile": "/config/tls.key"
+  }
 }
