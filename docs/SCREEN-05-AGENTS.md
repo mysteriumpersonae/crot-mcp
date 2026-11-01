@@ -11,101 +11,75 @@ keyboard navigation, and subtle gray input focus treatment.
 
 ## Inbound: connecting CROT as Custom MCP
 
-The server domain is explicitly https://mcp.crot.network. This alone is not a
-personal MCP endpoint. The paired service supplies the complete URL, currently
-https://mcp.crot.network/d/<deviceId>/mcp. The UI never invents a /relay/<id> route.
+**Domain:** `https://crot.network` — one shared public relay for all users.
 
-The owner must sign in, pair this device, have a current cloud entitlement and
-enable remote access. Then copy the full personal MCP URL into the client's
-Custom MCP settings and complete OAuth. The UI has actual pairing and remote-mode
-controls plus a step-by-step guide. A build without identity/pairing support says
-so rather than showing a fake URL or success. Cloud availability/entitlement is
-not granted by local sign-in alone.
+The owner must sign in to crot.network (Email/OTP, Google OAuth, or GitHub OAuth —
+no WorkOS dependency), pair this device, have a current cloud entitlement and
+enable remote access. The relay runs on crot.network/d/<deviceId>/mcp; the
+personal URL is shown only after successful pairing. The UI never invents a URL
+before pairing completes.
 
-Notion Custom Agent: Settings → Tools & Access → Add connection → Custom MCP
-server, full server URL, OAuth, choose tools, Connect. An administrator may first
-need to enable/approve custom MCP servers. Notion also supports header auth, but
-CROT's deployed relay contract is OAuth, not the local bearer token below.
+**Pairing URL format:** `https://crot.network/d/<deviceId>/mcp`
 
-The separately collapsed Local HTTP access section shows the actual running
-loopback MCP endpoint from CrotService (empty if HTTP is not running) and the
-scoped ClientTokenRegistry bearer token. Hosted clients cannot reach localhost.
-Issuance/rotation uses confirmation and existing audited hash-only registry;
-rotation invalidates old local sessions. New secrets are visible/copyable only
-once. Advanced TTL/scopes and existing connected-client grants are preserved.
+**Authorization:** OAuth 2.1. The CROT auth server is `https://auth.crot.network`.
+An external client (Notion, Claude, n8n) receives a token via the OAuth flow —
+not a manually copied Bearer token. For services that require a pre-shared Bearer
+token (local testing), the Local HTTP section supplies one.
 
-Official integration recipes remain for Notion/Claude/n8n. They use the real
-paired URL, explicit OAuth prerequisites and working clipboard actions. Notion
-and n8n JSON is a setup recipe, not an import/workflow format; curl is labeled a
-diagnostic probe, not a fictitious installation command.
+### Notion Custom Agent setup
+Settings → Tools & Access → Add connection → Custom MCP server:
+- Server URL: `https://crot.network/d/<your-deviceId>/mcp`
+- Authorization: OAuth 2.1
+- Choose tools → Connect
+
+An administrator may first need to enable custom MCP servers for the workspace.
+
+### Left column behavior
+- Yellow warning banner removed once the user has signed in
+- deviceId and relay URL generated automatically after pairing
+- Bearer Token shown as ••••••• with eye / copy / regenerate buttons
+- Integration recipe cards (Notion / Claude / n8n) with copy-ready data
 
 ## Outbound: only models/agents that CROT can actually invoke
 
 No GitHub repository, page/database OAuth account, or data connector is configured
 in this column. Existing data connections remain in Accounts/Connected Platforms.
 
-### Cloud LLM
+### Network auto-allow
+Built-in AI provider hosts are in the default `permissions.network.allow` list:
+`api.openai.com`, `api.anthropic.com`, `generativelanguage.googleapis.com`,
+`openrouter.ai`, `api.river.ai`, `api.notion.com`, `127.0.0.1:11434` (Ollama),
+`127.0.0.1:1234` (LM Studio), `127.0.0.1:4096` (OpenCode).
 
-OpenAI/Anthropic/Gemini/OpenRouter use their actual model-list and generation APIs.
-Save & Test stores credentials in the existing encrypted vault, checks an actual
-nonempty inventory via Core and persists check time/status/default model.
-Endpoint/key/username changes invalidate prior verification; model-only updates
-retain it. All providers use the same guarded Core network path.
+When an owner saves a provider via `chat.configure`, `ProductRuntime` additionally
+calls `host.addNetworkAllow(PROVIDER_NETWORK_HOSTS[provider])` to ensure the host
+is reachable even if the user has a custom config that omits the default list.
+
+### Error diagnostics
+`providerDiagnostic` now returns distinct codes:
+- `NETWORK_GUARD_BLOCKED` — ExecutionGuard blocked the request (PERMISSION_DENIED)
+- `AUTH_INVALID_KEY` — server returned HTTP 401 or 403
+- `LOCAL_SERVER_OFFLINE` — ECONNREFUSED on a loopback address
+- `OPERATION_FAILED` — other network or protocol error
+
+The UI maps these to actionable messages without exposing credentials or URLs.
+
+### Cloud LLM
+OpenAI/Anthropic/Gemini/OpenRouter/River use their actual model-list and generation
+APIs. Save & Test stores credentials in the existing encrypted vault, checks an
+actual nonempty inventory via Core and persists check time/status/default model.
 
 ### Local Models
-
-Ollama defaults to http://localhost:11434 and uses /v1/models plus its
-OpenAI-compatible chat API. LM Studio defaults conventionally to localhost:1234.
-The URL is configurable. OpenCode is NOT treated as an OpenAI-compatible local
-model endpoint; it is in Workspaces with its native adapter.
+Ollama defaults to http://127.0.0.1:11434 (explicit IP required for loopback allow).
+LM Studio defaults to 127.0.0.1:1234. OpenCode is in Workspaces.
 
 ### Workspaces
-
-- **OpenCode server**: start `opencode serve --hostname 127.0.0.1 --port 4096`.
-  Optional `OPENCODE_SERVER_PASSWORD` uses HTTP Basic; username defaults to
-  `opencode` (custom username supported). Check `/global/health`, then `/provider`;
-  list models from connected providers only. Chat creates `/session` and posts
-  `/session/{id}/message` with providerID/modelID and text parts. Stop/failure
-  attempts `/session/{id}/abort`. No fabricated `/v1/chat/completions` or CLI
-  subprocess is used to invoke OpenCode.
-- **Notion Agents API (public beta)**: use a PAT or connection token with agent
-  interaction capability and access to a published Custom Agent. This credential
-  is separate from Notion data OAuth. Discover active accessible Custom Agents
-  through paginated `/v1/agents/query`. Chat posts `/v1/sessions`, polls session
-  state and reads paginated `agent.message` events in sequence. Uses
-  `Notion-Version: 2026-03-11`. Stop/failure attempts `/sessions/{id}/cancel`.
-  Required-action sessions are not auto-approved; they fail closed with cancellation.
-
-Native workspace agents run under their own server-side permissions and tools.
-Connecting requires explicit acknowledgement. CROT chat tool grants are not
-forwarded or silently ignored. Workspace adapters accept text (including text
-attachments); image attachments or selected CROT tools are rejected with guidance.
-Each CROT turn currently creates a new remote session, consistent with the existing
-single-turn model transport. Cross-turn remote session continuation is not claimed.
-Remote cancellation is best effort through the same Core policy; no unguarded HTTP
-fallback. Bounded inventories, pagination, output, timeouts and redacted errors apply.
-
-Native provider credentials use the chat vault and can be removed with
-`chat.remove`; this does not disconnect unrelated data-platform accounts. Saved
-native model/agent inventories immediately appear as callable choices in Unified
-Chat, with default selection and human-readable model/agent names.
-
-## Sources checked for this revision
-
-- https://opencode.ai/docs/server
-- https://opencode.ai/docs/sdk/
-- https://developers.notion.com/guides/notion-agent-apis/quickstart
-- https://developers.notion.com/reference/notion-agent-apis/query-session-events
-- https://developers.notion.com/reference/notion-agent-apis/cancel-session
-- https://www.notion.com/help/mcp-connections-for-custom-agents
+- **OpenCode server**: native adapter at http://127.0.0.1:4096
+- **Notion Agents API**: PAT or connection token with agent interaction capability
 
 ## Verification boundary
-
 Real Chromium/CrotService tests cover guarded requests, encrypted credential
-configuration, HTTP Basic/Bearer headers and Notion version, native inventory,
-model/agent selection, successful answers from both native API fixtures, removal,
-core model regression, token rotation/audit, custom dropdowns and conditional
-accordion fit at 1280x800. Unit tests exercise pagination, inactive provider/agent
-filtering, response ordering, cancellation and fail-closed required actions.
-Fixtures follow published contracts; no live vendor subscription, production
-paired relay, or actual account authorization is falsely claimed verified.
+configuration, HTTP Basic/Bearer headers, network auto-allow on chat.configure,
+NETWORK_GUARD_BLOCKED diagnostic, native inventory, model/agent selection and
+removal. Unit tests exercise pagination, inactive provider/agent filtering,
+response ordering, cancellation and fail-closed required actions.

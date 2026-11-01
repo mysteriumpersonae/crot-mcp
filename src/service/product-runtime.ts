@@ -150,6 +150,8 @@ export interface ProductHost {
   holdActivity?(work: () => Promise<unknown>): Promise<unknown>;
   tokens?: import("./client-tokens.js").ClientTokenRegistry;
   emergencyStop?(): Promise<Record<string, unknown>>;
+  /** Auto-allow a network host for AI provider requests (owner action). */
+  addNetworkAllow?(hosts: readonly string[]): Promise<void>;
   recordControlEvent?: (event: import("../core/audit/audit.js").ControlAuditRecord) => Promise<void>;
 }
 const fail = (message: string): never => {
@@ -734,6 +736,12 @@ export class ProductRuntime {
         };
         if (p.credential !== undefined) this.vault.credentials[`chat:${provider}`] = String(p.credential);
         await this.persist();
+        // Auto-allow the provider's network hosts so ExecutionGuard does not block the request.
+        const { PROVIDER_NETWORK_HOSTS } = await import("./chat-runtime.js");
+        const hostsToAllow = PROVIDER_NETWORK_HOSTS[provider];
+        if (hostsToAllow?.length && this.host.addNetworkAllow) {
+          await this.host.addNetworkAllow(hostsToAllow).catch(() => undefined);
+        }
         return { ok: true, providers: this.chat.providers(), current: this.chat.current };
       }
       case "chat.models":
