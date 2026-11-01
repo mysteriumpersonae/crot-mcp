@@ -42,7 +42,7 @@ export function providerDiagnostic(error: unknown): ProviderDiagnostic {
   if (Number.isInteger(status) && (status === 401 || status === 403)) {
     return {
       code: "AUTH_INVALID_KEY",
-      stage: [\"models\", \"workspace\", \"inventory\"].includes(String(d?.stage)) ? String(d?.stage) : "network",
+      stage: ["models", "workspace", "inventory"].includes(String(d?.stage)) ? String(d?.stage) : "network",
       httpStatus: status,
     };
   }
