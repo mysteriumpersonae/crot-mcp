@@ -109,13 +109,26 @@ it(
       id: "custom-check",
       workingDirectory: "build/preview",
     });
-    for (const provider of ["OpenAI", "Anthropic", "Local HTTP"]) {
+    for (const provider of ["OpenAI", "Anthropic", "Google Gemini", "OpenRouter", "Local HTTP"]) {
       await rpc("chat.configure", {
         provider,
         endpoint: `http://127.0.0.1:${port}`,
         credential: "stage-b-provider-secret",
       });
       expect((await rpc("chat.testConnection", { provider })).models).toEqual(["fixture-model"]);
+      const configured = (await rpc("chat.providers")).providers.find(
+        (p: { provider: string }) => p.provider === provider,
+      );
+      expect(configured).toMatchObject({
+        connectionStatus: "connected",
+        defaultModel: "fixture-model",
+        checkedAt: expect.any(String),
+      });
+      await rpc("chat.configure", { provider, endpoint: `http://127.0.0.1:${port}`, defaultModel: "fixture-model" });
+      expect(
+        (await rpc("chat.providers")).providers.find((p: { provider: string }) => p.provider === provider)
+          .connectionStatus,
+      ).toBe("connected");
     }
     const policy = {
       mode: "targeted",

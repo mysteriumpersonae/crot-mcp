@@ -12,7 +12,8 @@ describe("scoped Unified Chat workspace", () => {
     expect(chat).not.toContain("chat.configure");
     expect(chat).not.toContain("pageHead(");
     expect(CONTROL_CENTER_RENDERER).toContain("active!=='Home'&&active!=='Chat'");
-    expect(CONTROL_CENTER_RENDERER).toContain("function agents(root){chatProviderSettings(root)");
+    expect(CONTROL_CENTER_RENDERER).toContain("function agents(root){");
+    expect(CONTROL_CENTER_RENDERER).toContain("agents-center");
   });
   it("reads real inventories and keeps tool access opt-in and stop service-backed", () => {
     for (const method of [

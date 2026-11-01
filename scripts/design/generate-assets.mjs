@@ -163,6 +163,12 @@ const map = {
   arrow: "ArrowRight",
   star: "Star",
   menu: "Menu",
+  server: "Server",
+  brain: "Brain",
+  monitor: "Monitor",
+  trash: "Trash2",
+  skill: "Wrench",
+  chevronDown: "ChevronDown",
 };
 const icons = {};
 for (const [key, name] of Object.entries(map)) {
@@ -173,7 +179,7 @@ await write(
   "src/ui/lucide-icons.ts",
   `/** Generated from the pinned Lucide dependency; ISC license. */\nexport const UI_ICONS = ${JSON.stringify(icons)} as const;\n`,
 );
-const brands = {};
+const brands = { openai: "data:image/svg+xml," + encodeURIComponent(await read("assets/brand/openai.svg")) };
 for (const [id, key] of Object.entries({
   github: "siGithub",
   gitlab: "siGitlab",

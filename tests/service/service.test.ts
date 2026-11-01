@@ -501,7 +501,7 @@ describe("Stage A scoped loopback tokens", () => {
 });
 
 describe("Stage A real chat provider adapters", () => {
-  it("uses live model endpoints and SSE for all three adapters, executes a guarded tool after approval, stops streaming and protects keys", async () => {
+  it("uses live model endpoints and SSE for all five providers, executes a guarded tool after approval, stops streaming and protects keys", async () => {
     const seen: { url: string; body: Record<string, unknown>; authorization?: string; key?: string }[] = [];
     let slowClosed = false;
     const provider = createServer((req, res) => {
@@ -600,6 +600,8 @@ describe("Stage A real chat provider adapters", () => {
       for (const [name, segment] of [
         ["OpenAI", "openai"],
         ["Anthropic", "anthropic"],
+        ["Google Gemini", "gemini"],
+        ["OpenRouter", "openrouter"],
         ["Local HTTP", "local"],
       ]) {
         await control.request("chat.configure", {
@@ -665,6 +667,8 @@ describe("Stage A real chat provider adapters", () => {
       expect(journal).toContain('"status":"approved"');
       expect(seen.some((r) => r.authorization === "Bearer fixture-openai-key")).toBe(true);
       expect(seen.some((r) => r.key === "fixture-anthropic-key")).toBe(true);
+      expect(seen.some((r) => r.authorization === "Bearer fixture-gemini-key")).toBe(true);
+      expect(seen.some((r) => r.authorization === "Bearer fixture-openrouter-key")).toBe(true);
       expect(seen.some((r) => JSON.stringify(r.body).includes("attached fixture text"))).toBe(true);
     } finally {
       control.close();

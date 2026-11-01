@@ -33,8 +33,8 @@ language rerenders and are removed only after refreshed inventory confirms remov
 Selections add non-secret prompt context; they do not create new model-callable
 connector RPCs. Canonical chat tools are separately opt-in and Core-authorized.
 
-OpenAI, Anthropic (Claude) and Local HTTP remain the supported direct chat
-transports. Registered Notion/OpenCode/other CROT clients are visible with honest
+OpenAI, Anthropic (Claude), Google Gemini, OpenRouter and Local HTTP are supported
+direct chat transports. Registered Notion/OpenCode/other CROT clients are visible with honest
 connection details, not falsely routable LLM transports. Clicking those clients
 opens details/configuration rather than dispatching a fake chat request. The Other
 menu lists returned models and connected clients. Conversation blocks remain

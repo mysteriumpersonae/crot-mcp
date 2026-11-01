@@ -570,8 +570,31 @@ export class ProductRuntime {
         this.appliedTabPolicy = next;
         return { ok: true, policy: next };
       }
-      case "chat.testConnection":
-        return this.chat.models(p.provider as ChatProvider);
+      case "chat.testConnection": {
+        const provider = p.provider as ChatProvider;
+        const config = this.state.chatProviders?.[provider];
+        if (!config) return fail("Configure the chat provider first");
+        try {
+          const result = await this.chat.models(provider);
+          const models = result.models as string[];
+          if (!models.length) return fail("Provider returned no usable models");
+          if (this.state.chatProviders?.[provider] !== config)
+            return fail("Provider configuration changed; test again");
+          config.checkedAt = now();
+          config.connectionStatus = "connected";
+          if (!config.defaultModel || !models.includes(config.defaultModel)) config.defaultModel = models[0];
+          await this.persist();
+          await this.event(method, undefined, provider);
+          return { ...result, checkedAt: config.checkedAt, defaultModel: config.defaultModel };
+        } catch {
+          if (this.state.chatProviders?.[provider] === config) {
+            config.checkedAt = now();
+            config.connectionStatus = "failed";
+            await this.persist();
+          }
+          return fail("Provider check failed. Check credentials, endpoint and Core network permission.");
+        }
+      }
       case "skills.list":
         return { ok: true, skills: this.state.skills ?? [] };
       case "skills.create": {
@@ -672,7 +695,12 @@ export class ProductRuntime {
           value: provider,
         });
         this.state.chatProviders ??= {};
-        this.state.chatProviders[provider] = { endpoint };
+        const previous = this.state.chatProviders[provider];
+        this.state.chatProviders[provider] = {
+          ...(previous?.endpoint === endpoint && p.credential === undefined ? previous : {}),
+          endpoint,
+          ...(p.defaultModel !== undefined ? { defaultModel: String(p.defaultModel) } : {}),
+        };
         if (p.credential !== undefined) this.vault.credentials[`chat:${provider}`] = String(p.credential);
         await this.persist();
         return { ok: true, providers: this.chat.providers(), current: this.chat.current };

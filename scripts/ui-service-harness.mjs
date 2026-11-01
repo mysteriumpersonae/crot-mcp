@@ -143,6 +143,14 @@ export async function serviceHarness() {
         for await (const chunk of req) raw += chunk;
         const body = JSON.parse(raw);
         res.writeHead(200, { "content-type": "text/event-stream" });
+        if (!body.tools?.length) {
+          res.end(
+            "data: " +
+              JSON.stringify({ choices: [{ delta: { content: "Real provider fixture response" } }] }) +
+              "\n\ndata: [DONE]\n\n",
+          );
+          return true;
+        }
         if (body.messages.length === 1) {
           res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: "Waiting for approved write" } }] })}\n\n`);
           res.write(
