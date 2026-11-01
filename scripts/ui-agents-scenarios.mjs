@@ -153,6 +153,9 @@ export async function runAgentsScenarios({
     await until("document.querySelectorAll('.chat-agent-pill').length>=3");
     await evaluate("document.querySelector('.chat-agents .chat-selector').click()");
     await until("document.querySelector('.chat-popover:popover-open')");
+    await until(
+      `[...document.querySelectorAll('.chat-popover:popover-open button')].some(b=>b.textContent.includes(${JSON.stringify(saved.defaultModel)}))`,
+    );
     await evaluate(
       `[...document.querySelectorAll('.chat-popover:popover-open button')].find(b=>b.textContent.includes(${JSON.stringify(saved.defaultModel)})).click()`,
     );
@@ -249,7 +252,7 @@ export async function runAgentsScenarios({
     await evaluate("document.getElementById('action-dialog').close()");
   }
   await evaluate("document.getElementById('nav-chat').click()");
-  await until("document.querySelectorAll('.chat-agent-pill').length>=2");
+  await until("[...document.querySelectorAll('.chat-agent-pill')].some(b=>b.textContent==='OpenAI')");
   await evaluate("[...document.querySelectorAll('.chat-agent-pill')].find(b=>b.textContent==='OpenAI').click()");
   await evaluate(
     "(()=>{const m=document.querySelector('.chat-compose textarea');m.value='Real saved provider check';m.dispatchEvent(new Event('input'));document.querySelector('.chat-send').click();})()",
