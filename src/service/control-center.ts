@@ -1059,6 +1059,7 @@ export class ControlCenter implements RemoteAdmission {
     const browser = this.host.browserState();
     const blockedBy = this.host.holder.busyReason();
     return {
+      ...(status.http.enabled ? { localMcpUrl: status.http.url } : {}),
       ...(this.host.mcpArgs ? { mcpArgs: this.host.mcpArgs } : {}),
       commercial: this.host.identity.commercialStatus(),
       accountSignedIn: this.host.identity.signedInHere(),

@@ -224,6 +224,7 @@ export interface CommercialStatus {
   readonly expiresAt?: number;
 }
 export interface ControlOverview {
+  readonly localMcpUrl?: string;
   /** Owner UI presentation only: verified account sign-in, not device/remote entitlement. */
   readonly accountSignedIn?: boolean;
   readonly mcpArgs?: readonly string[];

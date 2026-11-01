@@ -1,4 +1,5 @@
 /** Owner-configured providers; all HTTP and tool calls use the existing Core guard. */
+import { workspaceInventory, workspaceReply } from "./workspace-chat.js";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { newSession, type AuthContext } from "../core/auth/principal.js";
@@ -12,6 +13,7 @@ import { ChatStartSchema, type ChatProvider, type ChatStart } from "./chat-proto
 export interface ChatProviderConfig {
   endpoint: string;
   defaultModel?: string;
+  username?: string;
   checkedAt?: string;
   connectionStatus?: "connected" | "failed";
 }
@@ -21,6 +23,8 @@ export const CHAT_ENDPOINTS: Record<ChatProvider, string> = {
   "Google Gemini": "https://generativelanguage.googleapis.com/v1beta/openai",
   OpenRouter: "https://openrouter.ai/api/v1",
   "Local HTTP": "http://127.0.0.1:1234/v1",
+  OpenCode: "http://127.0.0.1:4096",
+  "Notion Agents": "https://api.notion.com/v1",
 };
 interface Host {
   core(): CrotCore;
@@ -78,6 +82,9 @@ export class ChatRuntime {
       provider,
       endpoint: this.host.configuration(provider)?.endpoint ?? CHAT_ENDPOINTS[provider],
       defaultModel: this.host.configuration(provider)?.defaultModel,
+      username: this.host.configuration(provider)?.username,
+      credentialRequired: provider !== "Local HTTP" && provider !== "OpenCode",
+      kind: provider === "OpenCode" || provider === "Notion Agents" ? "workspace" : "model",
       checkedAt: this.host.configuration(provider)?.checkedAt,
       connectionStatus: this.host.configuration(provider)?.connectionStatus,
       configured: !!this.host.configuration(provider),
@@ -88,22 +95,33 @@ export class ChatRuntime {
     const config = this.host.configuration(provider);
     if (!config) return bad("Configure the chat provider first");
     const key = this.host.credential(provider);
-    if (provider !== "Local HTTP" && !key) return bad("Provider credential is not configured");
+    if (provider !== "Local HTTP" && provider !== "OpenCode" && !key)
+      return bad("Provider credential is not configured");
     return {
       endpoint: chatEndpoint(config.endpoint),
       headers: {
         "content-type": "application/json",
-        ...(provider === "Anthropic"
-          ? { "anthropic-version": "2023-06-01", ...(key ? { "x-api-key": key } : {}) }
-          : key
-            ? { authorization: `Bearer ${key}` }
-            : {}),
+        ...(provider === "OpenCode"
+          ? key
+            ? { authorization: `Basic ${Buffer.from(`${config.username || "opencode"}:${key}`).toString("base64")}` }
+            : {}
+          : provider === "Notion Agents"
+            ? { "Notion-Version": "2026-03-11", authorization: `Bearer ${key}` }
+            : provider === "Anthropic"
+              ? { "anthropic-version": "2023-06-01", ...(key ? { "x-api-key": key } : {}) }
+              : key
+                ? { authorization: `Bearer ${key}` }
+                : {}),
       },
     };
   }
   async models(provider: ChatProvider): Promise<Record<string, unknown>> {
     const { endpoint, headers } = this.settings(provider),
       models = new Set<string>();
+    if (provider === "OpenCode" || provider === "Notion Agents")
+      return workspaceInventory(provider, (route, method, body) =>
+        this.workspaceRequest(provider, this.host.context(), route, method, body),
+      );
     let cursor = "";
     for (let page = 0; page < 10; page++) {
       const response = await this.host.core().network.request(this.host.context(), {
@@ -131,6 +149,31 @@ export class ChatRuntime {
     }
     return bad("Provider model pagination exceeds its limit");
   }
+  private async workspaceRequest(
+    provider: ChatProvider,
+    context: AuthContext,
+    route: string,
+    method: "GET" | "POST" = "GET",
+    body?: unknown,
+  ): Promise<Record<string, unknown>> {
+    const { endpoint, headers } = this.settings(provider);
+    const response = await this.host.core().network.request(context, {
+      url: endpoint + route,
+      timeoutMs: route.endsWith("/message") ? 120000 : 30000,
+      method,
+      headers,
+      followRedirects: false,
+      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+      maxResponseBytes: 256000,
+    });
+    if (response.status < 200 || response.status >= 300 || response.truncated)
+      return bad("Workspace agent request failed");
+    try {
+      return record(JSON.parse(response.body));
+    } catch {
+      return bad("Invalid workspace agent response");
+    }
+  }
   start(input: unknown): Record<string, unknown> {
     if (this.closed || this.host.core().permissions.runtime.halted) return bad("Chat is stopped");
     const p = ChatStartSchema.parse(input);
@@ -145,6 +188,13 @@ export class ChatRuntime {
       )
         throw new CrotError("INVALID_INPUT", "Attachment content does not match its image type");
     }
+    if (
+      (p.provider === "OpenCode" || p.provider === "Notion Agents") &&
+      (p.tools.length || p.attachments.some((a) => a.mime !== "text/plain"))
+    )
+      return bad(
+        "Workspace agents accept text only; CROT tool grants are not forwarded. Use the workspace agent permissions.",
+      );
     this.settings(p.provider);
     if (new Set(p.tools).size !== p.tools.length || p.tools.some((name) => !TOOLS.some((t) => t.name === name)))
       return bad("Unknown or duplicate tool selection");
@@ -224,6 +274,30 @@ export class ChatRuntime {
     }
   }
   private async generate(c: Conversation, p: ChatStart, context: AuthContext): Promise<void> {
+    if (p.provider === "OpenCode" || p.provider === "Notion Agents") {
+      const provider = p.provider;
+      const message =
+        p.message +
+        p.attachments.map((a) => `\n[${a.name}]\n${Buffer.from(a.data, "base64").toString("utf8")}`).join("");
+      const reply = await workspaceReply(
+        provider,
+        p.model,
+        message,
+        context.signal,
+        (route, method, body) => this.workspaceRequest(provider, context, route, method, body),
+        (route) =>
+          this.workspaceRequest(
+            provider,
+            { ...this.host.context(), signal: AbortSignal.timeout(3000) },
+            route,
+            "POST",
+            {},
+          ),
+      );
+      c.blocks.push({ type: "assistant", text: reply });
+      this.bounded(c);
+      return;
+    }
     const anthropic = p.provider === "Anthropic",
       { endpoint, headers } = this.settings(p.provider);
     const content: unknown[] = [{ type: "text", text: p.message }];

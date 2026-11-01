@@ -37,7 +37,9 @@ export async function runAgentsScenarios({
     origin: new URL(await evaluate("location.href")).origin,
     permissions: ["clipboardReadWrite", "clipboardSanitizedWrite"],
   });
-  await evaluate("document.querySelector('[data-generate-token]').click()");
+  await evaluate(
+    "document.querySelector('.agents-local-access').open=true;document.querySelector('[data-generate-token]').click()",
+  );
   await until("document.getElementById('action-dialog').open");
   await evaluate("[...document.querySelectorAll('#action-dialog button')].find(b=>b.textContent==='Cancel').click()");
   assert(
@@ -96,13 +98,79 @@ export async function runAgentsScenarios({
       !JSON.stringify(c).includes("fixture-ui-agents-key"),
     "Cloud Save & Test did not persist verified status/default safely",
   );
+  await evaluate("document.querySelectorAll('.agents-accordion')[1].open=true");
   await evaluate(
     `(()=>{const l=[...document.querySelectorAll('label')].find(l=>l.querySelector('span')?.textContent==='Server URL / Port');l.querySelector('input').value=${JSON.stringify(endpoint.replace("/v1", ""))};document.querySelector('[data-local-test]').click();})()`,
   );
   await until("document.querySelectorAll('.agents-connection-state.connected').length===2");
+  // Native workspace agent transports, not accounts.list or workspace data connectors.
+  for (const [provider, prefix, secret, answer] of [
+    ["OpenCode", "/native-opencode", "fixture-opencode-password", "OpenCode native fixture answer"],
+    ["Notion Agents", "/native-notion/v1", "fixture-notion-agents-key", "Notion native fixture answer"],
+  ]) {
+    await evaluate("document.getElementById('nav-agents').click()");
+    await until("document.querySelector('[data-workspace-test]')&&!document.querySelector('[data-provider-loading]')");
+    await size(1280, 800);
+    await evaluate("document.querySelectorAll('.agents-accordion')[2].open=true");
+    await until("document.querySelectorAll('.agents-accordion[open]').length===1");
+    assert(
+      await evaluate(
+        "document.querySelector('.agents-column:last-child').scrollWidth<=document.querySelector('.agents-column:last-child').clientWidth",
+      ),
+      "Workspace accordion overflows horizontally",
+    );
+    await evaluate("document.querySelector('[aria-label=\"Workspace agent provider\"].agents-choice-trigger').click()");
+    await until("document.querySelector('.chat-popover:popover-open')");
+    await evaluate(
+      `[...document.querySelectorAll('.chat-popover:popover-open button')].find(b=>b.textContent.replace('✓','').trim()===${JSON.stringify(provider)}).click()`,
+    );
+    const origin = new URL(state.endpoint).origin;
+    await evaluate(
+      `document.querySelector('[data-workspace-endpoint]').value=${JSON.stringify(origin)}+${JSON.stringify(prefix)};document.querySelector('[data-workspace-key]').value=${JSON.stringify(secret)};document.querySelector('[data-workspace-test]').click()`,
+    );
+    await until("document.getElementById('action-dialog').open");
+    await evaluate(
+      "[...document.querySelectorAll('#action-dialog button')].find(b=>b.textContent==='Confirm').click()",
+    );
+    await until(
+      "document.querySelectorAll('.agents-accordion')[2].querySelector('.agents-connection-state.connected')",
+    );
+    const saved = await evaluate(
+      `(async()=>(await window.crot.product('chat.providers')).providers.find(p=>p.provider===${JSON.stringify(provider)}))()`,
+    );
+    assert(
+      saved.connectionStatus === "connected" && saved.defaultModel && saved.kind === "workspace",
+      "Native workspace agent was not saved/verified",
+    );
+    assert(
+      await evaluate(
+        "(()=>{const column=document.querySelector('.agents-column:last-child'),d=column.querySelector('.agents-accordion[open]');return d.getBoundingClientRect().bottom<=column.getBoundingClientRect().bottom+1})()",
+      ),
+      "Active workspace content is clipped at desktop height",
+    );
+    await screenshot("agents-workspace-" + provider.toLowerCase().replaceAll(" ", "-"));
+    await evaluate("document.getElementById('nav-chat').click()");
+    await until("document.querySelectorAll('.chat-agent-pill').length>=3");
+    await evaluate("document.querySelector('.chat-agents .chat-selector').click()");
+    await until("document.querySelector('.chat-popover:popover-open')");
+    await until(
+      `[...document.querySelectorAll('.chat-popover:popover-open button')].some(b=>b.textContent.includes(${JSON.stringify(saved.defaultModel)}))`,
+    );
+    await evaluate(
+      `[...document.querySelectorAll('.chat-popover:popover-open button')].find(b=>b.textContent.includes(${JSON.stringify(saved.defaultModel)})).click()`,
+    );
+    await evaluate(
+      "(()=>{const m=document.querySelector('.chat-compose textarea');m.value='Native workspace transport test';m.dispatchEvent(new Event('input'));document.querySelector('.chat-send').click();})()",
+    );
+    await until(
+      `[...document.querySelectorAll('.chat-message-text')].some(n=>n.textContent.includes(${JSON.stringify(answer)}))`,
+    );
+  }
+  await evaluate("document.getElementById('nav-agents').click()");
+  await until("!document.querySelector('[data-provider-loading]')");
   await evaluate("window.CrotI18n.setLanguage('ru')");
   await until(
-    "document.querySelectorAll('.agents-connection-state.connected').length===2&&!document.querySelector('[data-provider-loading]')",
+    "document.querySelectorAll('.agents-connection-state.connected').length>=2&&!document.querySelector('[data-provider-loading]')",
   );
   assert(
     (await evaluate("document.querySelector('.sidebar').getBoundingClientRect().width")) === sidebar,
@@ -121,20 +189,31 @@ export async function runAgentsScenarios({
   );
   assert(
     await evaluate(
-      "[...document.querySelectorAll('.agents-column')].every(n=>n.getBoundingClientRect().bottom<=innerHeight)",
+      "[...document.querySelectorAll('.agents-column')].every(n=>n.getBoundingClientRect().bottom<=innerHeight+1)",
     ),
     "Desktop cards do not fit the reference viewport",
   );
   await screenshot("agents-center-ru-real-service");
   await writeFile(
     path.join(artifacts, "agents-center-preview.html"),
-    (await evaluate("document.documentElement.outerHTML")).replace(
+    (
+      await evaluate(
+        "(()=>{const copy=document.documentElement.cloneNode(true),fields=document.querySelectorAll('input'),clones=copy.querySelectorAll('input');fields.forEach((input,i)=>{if(input.type!=='password')clones[i].setAttribute('value',input.value);});return copy.outerHTML;})()",
+      )
+    ).replace(
       /<head>[\s\S]*?<\/head>/,
       '<head><meta charset="utf-8"><style>' + TRAY_ASSETS["/app.css"].body + "</style></head>",
     ),
   );
+  await size(1280, 800);
+  await evaluate("document.querySelectorAll('.agents-accordion')[2].open=true");
+  await until("document.querySelectorAll('.agents-accordion[open]').length===1");
+  await screenshot("agents-workspace-ru-1280");
   await size(390, 844);
   await screenshot("agents-center-mobile-ru");
+  await evaluate("const main=document.querySelector('main.content'); main.scrollTop=main.scrollHeight");
+  await screenshot("agents-workspace-mobile-ru");
+  await evaluate("document.querySelector('main.content').scrollTop=0");
   await size(1584, 960);
   await evaluate("window.CrotI18n.setLanguage('en')");
   await until("document.querySelector('[data-integration=Notion]')");
@@ -150,7 +229,7 @@ export async function runAgentsScenarios({
   // Presentation-only paired URL: exercise recipes/copy without claiming a live paired relay.
   const recipeUrl = "https://mcp.crot.network/d/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/mcp";
   await evaluate(
-    `(async()=>{const v=await window.crot.request('view');window.crot.render({...v,resourceUri:${JSON.stringify(recipeUrl)}});document.getElementById('nav-agents').click();})()`,
+    `(async()=>{const v=await window.crot.request('view');window.originalViewRender=window.crot.render;window.crot.render=next=>window.originalViewRender({...next,resourceUri:${JSON.stringify(recipeUrl)}});window.crot.render(v);document.getElementById('nav-agents').click();})()`,
   );
   await until("document.querySelector('[data-relay-url]').value.includes('mcp.crot.network')");
   await evaluate("document.querySelector('[aria-label=\"Copy relay URL\"]').click()");
@@ -173,13 +252,15 @@ export async function runAgentsScenarios({
     await evaluate("document.getElementById('action-dialog').close()");
   }
   await evaluate("document.getElementById('nav-chat').click()");
-  await until("document.querySelectorAll('.chat-agent-pill').length>=2");
+  await until("[...document.querySelectorAll('.chat-agent-pill')].some(b=>b.textContent==='OpenAI')");
+  await evaluate("[...document.querySelectorAll('.chat-agent-pill')].find(b=>b.textContent==='OpenAI').click()");
   await evaluate(
     "(()=>{const m=document.querySelector('.chat-compose textarea');m.value='Real saved provider check';m.dispatchEvent(new Event('input'));document.querySelector('.chat-send').click();})()",
   );
   await until(
-    "document.querySelector('.chat-message-text')?.parentNode.parentNode.textContent.includes('Real provider fixture response')",
+    "[...document.querySelectorAll('.chat-message-text')].some(n=>n.textContent.includes('Real provider fixture response'))",
   );
+  await evaluate("window.crot.render=window.originalViewRender");
   // Genuine provider failure must never keep a green state.
   await evaluate("document.getElementById('nav-agents').click()");
   await until("!document.querySelector('[data-provider-loading]')&&document.querySelector('[data-cloud-test]')");
@@ -193,6 +274,20 @@ export async function runAgentsScenarios({
     ),
     "Failed test kept connected service status",
   );
+  // Disconnect removes provider configuration and its vault secret, with no secret in audit.
+  for (const provider of ["OpenCode", "Notion Agents"]) {
+    assert(
+      await evaluate(
+        `(async()=>{await window.crot.product('chat.remove',{provider:${JSON.stringify(provider)}});const p=(await window.crot.product('chat.providers')).providers.find(p=>p.provider===${JSON.stringify(provider)});return !p.configured&&!p.credentialStored;})()`,
+      ),
+      "Workspace disconnect retained credentials",
+    );
+  }
+  const agentAudit = await readFile(path.join(real.base, "audit.jsonl"), "utf8");
+  assert(
+    !["fixture-opencode-password", "fixture-notion-agents-key"].some((key) => agentAudit.includes(key)),
+    "Workspace secret leaked into audit",
+  );
   await writeFile(
     path.join(artifacts, "verification.json"),
     JSON.stringify(
@@ -205,6 +300,9 @@ export async function runAgentsScenarios({
         localModels: true,
         chatUsingSavedProvider: true,
         sidebarUnchanged: true,
+        nativeOpenCodeAndNotionAgentChats: true,
+        conditionalAccordionFit: true,
+        workspaceDisconnectRemovesSecret: true,
       },
       null,
       2,

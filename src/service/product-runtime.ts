@@ -680,6 +680,15 @@ export class ProductRuntime {
       }
       case "chat.providers":
         return { ok: true, providers: this.chat.providers(), current: this.chat.current };
+      case "chat.remove": {
+        if (this.chat.running) return fail("Stop generation before removing a provider");
+        const provider = p.provider as ChatProvider;
+        await this.event(method, undefined, provider);
+        delete this.state.chatProviders?.[provider];
+        delete this.vault.credentials[`chat:${provider}`];
+        await this.persist();
+        return { ok: true };
+      }
       case "chat.configure": {
         if (this.chat.running) return fail("Stop generation before changing provider configuration");
         if (!this.host.recordControlEvent) return fail("Provider configuration audit unavailable");
@@ -697,8 +706,13 @@ export class ProductRuntime {
         this.state.chatProviders ??= {};
         const previous = this.state.chatProviders[provider];
         this.state.chatProviders[provider] = {
-          ...(previous?.endpoint === endpoint && p.credential === undefined ? previous : {}),
+          ...(previous?.endpoint === endpoint &&
+          p.credential === undefined &&
+          (p.username === undefined || previous.username === p.username)
+            ? previous
+            : {}),
           endpoint,
+          ...(p.username !== undefined ? { username: String(p.username) } : {}),
           ...(p.defaultModel !== undefined ? { defaultModel: String(p.defaultModel) } : {}),
         };
         if (p.credential !== undefined) this.vault.credentials[`chat:${provider}`] = String(p.credential);
