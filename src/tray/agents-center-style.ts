@@ -35,4 +35,5 @@ export const AGENTS_CENTER_CSS = String.raw`
 @media(min-width:1200px) and (max-height:860px){.agents-outbound .agents-accordion{padding:12px}.agents-accordion-body>p:first-child{margin-bottom:8px}}
 @media(prefers-reduced-motion:reduce){.agents-accordion::details-content{transition:none}}
 @media(max-width:1199px){.agents-outbound{overflow:visible}.agents-outbound .agents-accordion-body{overflow:visible;max-height:none!important}}
+.agents-integrations-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:12px}.agents-integration-tile{display:flex;flex-direction:column;align-items:center;gap:8px;padding:16px 8px;border:1px solid #e7edfa;border-radius:12px;text-decoration:none;color:inherit;transition:background .15s,border-color .15s}.agents-integration-tile:hover{background:#f5f8ff;border-color:#c8d7f8}.agents-integration-logo{width:40px;height:40px;border-radius:10px;background:#172047;color:#fff;display:grid;place-items:center;font-size:18px;font-weight:700}.agents-integration-name{font-size:13px;font-weight:500;color:#172047}
 `;
