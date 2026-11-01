@@ -4,7 +4,7 @@ import type { IdentityEnvironment } from "./environment.js";
 /**
  * Production identity environment for crot.network.
  *
- * issuer:          Our own auth server at https://auth.crot.network
+ * issuer:          https://crot.network — our own auth server at /auth/...
  *                  (Email/OTP + Google OAuth + GitHub OAuth).
  * relayHost:       crot.network — the public Cloud Relay domain.
  * pairingClientId: crot-device-v1 — the public OAuth client for device pairing (PKCE).
@@ -22,7 +22,7 @@ export const RELEASE_IDENTITY_ENVIRONMENT: IdentityEnvironment | undefined = und
 // {
 //   id: "production",
 //   kind: "release",
-//   issuer: "https://auth.crot.network",
+//   issuer: "https://crot.network",
 //   relayHost: "crot.network",
 //   pairing: {
 //     clientId: "crot-device-v1",
