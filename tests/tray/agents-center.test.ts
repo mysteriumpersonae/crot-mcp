@@ -1,3 +1,4 @@
+import { AGENTS_CENTER_RENDERER } from "../../src/tray/agents-center-renderer.js";
 import { Script } from "node:vm";
 import { describe, it, expect } from "vitest";
 import { CONTROL_CENTER_RENDERER } from "../../src/tray/control-center-renderer.js";
@@ -29,6 +30,17 @@ describe("scoped Agents center", () => {
     expect(CONTROL_CENTER_RENDERER).toContain("view.resourceUri");
     expect(CONTROL_CENTER_RENDERER).not.toContain("mcp.crot.ai");
     expect(CONTROL_CENTER_RENDERER).toContain("navigator.clipboard.writeText(value)");
+  });
+  it("contains only callable workspace agent providers, not data-account OAuth", () => {
+    expect(AGENTS_CENTER_RENDERER).not.toContain("accounts.list");
+    expect(AGENTS_CENTER_RENDERER).not.toContain("accounts.connect");
+    expect(AGENTS_CENTER_RENDERER).not.toContain("GitHub");
+    expect(AGENTS_CENTER_RENDERER).toContain("['OpenCode','Notion Agents']");
+    expect(AGENTS_CENTER_RENDERER).toContain("chat.remove");
+    expect(AGENTS_CENTER_RENDERER).toContain("fitAccordions");
+    expect(AGENTS_CENTER_RENDERER).toContain("pop.setAttribute('popover','auto')");
+    expect(AGENTS_CENTER_CSS).toContain("overflow-y:auto");
+    expect(CONTROL_CENTER_RENDERER).toContain("next.resourceUri,next.localMcpUrl,next.pairing");
   });
   it("supports real Gemini/OpenRouter OpenAI-compatible transports", () => {
     expect(CHAT_ENDPOINTS["Google Gemini"]).toBe("https://generativelanguage.googleapis.com/v1beta/openai");

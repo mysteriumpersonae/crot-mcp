@@ -80,6 +80,7 @@ export const PRODUCT_SCHEMAS = {
   "system.check": z.object({}).strict(),
   "chat.providers": z.object({}).strict(),
   "chat.configure": ChatConfigureSchema,
+  "chat.remove": z.object({ provider: ChatProviderSchema }).strict(),
   "chat.models": z.object({ provider: ChatProviderSchema }).strict(),
   "chat.start": ChatStartSchema,
   "chat.poll": z.object({ id }).strict(),

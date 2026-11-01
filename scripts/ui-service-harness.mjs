@@ -1,3 +1,4 @@
+import { Buffer } from "node:buffer";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
@@ -130,6 +131,62 @@ export async function serviceHarness() {
         });
         await server.connect(transport);
         await transport.handleRequest(req, res);
+        return true;
+      }
+      if (pathname.startsWith("/native-opencode") || pathname.startsWith("/native-notion")) {
+        const opencode = pathname.startsWith("/native-opencode"),
+          base = opencode ? "/native-opencode" : "/native-notion/v1",
+          route = pathname.slice(base.length);
+        let raw = "";
+        for await (const chunk of req) raw += chunk;
+        const body = raw ? JSON.parse(raw) : {};
+        const expected = opencode
+          ? "Basic " + Buffer.from("opencode:fixture-opencode-password").toString("base64")
+          : "Bearer fixture-notion-agents-key";
+        if (req.headers.authorization !== expected || (!opencode && req.headers["notion-version"] !== "2026-03-11")) {
+          res.writeHead(401).end("{}");
+          return true;
+        }
+        let value;
+        if (opencode && route === "/global/health") value = { healthy: true, version: "fixture" };
+        else if (opencode && route === "/provider")
+          value = {
+            connected: ["fixture"],
+            all: [
+              { id: "fixture", models: { "native-model": { name: "OpenCode native model" } } },
+              { id: "disconnected", models: { "do-not-list": {} } },
+            ],
+          };
+        else if (opencode && route === "/session" && req.method === "POST") value = { id: "session-fixture" };
+        else if (
+          opencode &&
+          route === "/session/session-fixture/message" &&
+          body.parts?.[0]?.text &&
+          body.model?.modelID === "native-model"
+        )
+          value = { info: {}, parts: [{ type: "text", text: "OpenCode native fixture answer" }] };
+        else if (!opencode && route === "/agents/query")
+          value = {
+            results: [
+              { id: "agent-fixture", agent_type: "custom_agent", status: "active", name: "Notion native agent" },
+              { id: "inactive", agent_type: "custom_agent", status: "paused", name: "Do not list" },
+            ],
+            has_more: false,
+          };
+        else if (!opencode && route === "/sessions" && body.agent_id === "agent-fixture" && body.message)
+          value = { id: "notion-session", status: "queued" };
+        else if (!opencode && route === "/sessions/notion-session")
+          value = { id: "notion-session", status: "completed" };
+        else if (!opencode && route === "/sessions/notion-session/events/query")
+          value = {
+            results: [{ sequence: 2, content: [{ type: "text", text: "Notion native fixture answer" }] }],
+            has_more: false,
+          };
+        else {
+          res.writeHead(400).end("{}");
+          return true;
+        }
+        res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(value));
         return true;
       }
       if (pathname.startsWith("/chat-provider/")) {

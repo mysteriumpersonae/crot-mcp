@@ -1,5 +1,13 @@
 import { z } from "zod";
-export const ChatProviderSchema = z.enum(["OpenAI", "Anthropic", "Google Gemini", "OpenRouter", "Local HTTP"]);
+export const ChatProviderSchema = z.enum([
+  "OpenAI",
+  "Anthropic",
+  "Google Gemini",
+  "OpenRouter",
+  "Local HTTP",
+  "OpenCode",
+  "Notion Agents",
+]);
 export type ChatProvider = z.infer<typeof ChatProviderSchema>;
 export const ChatConfigureSchema = z
   .object({
@@ -10,6 +18,12 @@ export const ChatConfigureSchema = z
       .min(1)
       .max(256)
       .regex(/^[^\r\n\0]*$/)
+      .optional(),
+    username: z
+      .string()
+      .min(1)
+      .max(128)
+      .regex(/^[^:\r\n\0]*$/)
       .optional(),
     credential: z
       .string()
