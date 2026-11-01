@@ -11,10 +11,15 @@ import { ChatStartSchema, type ChatProvider, type ChatStart } from "./chat-proto
 
 export interface ChatProviderConfig {
   endpoint: string;
+  defaultModel?: string;
+  checkedAt?: string;
+  connectionStatus?: "connected" | "failed";
 }
 export const CHAT_ENDPOINTS: Record<ChatProvider, string> = {
   OpenAI: "https://api.openai.com/v1",
   Anthropic: "https://api.anthropic.com/v1",
+  "Google Gemini": "https://generativelanguage.googleapis.com/v1beta/openai",
+  OpenRouter: "https://openrouter.ai/api/v1",
   "Local HTTP": "http://127.0.0.1:1234/v1",
 };
 interface Host {
@@ -72,6 +77,9 @@ export class ChatRuntime {
     return (Object.keys(CHAT_ENDPOINTS) as ChatProvider[]).map((provider) => ({
       provider,
       endpoint: this.host.configuration(provider)?.endpoint ?? CHAT_ENDPOINTS[provider],
+      defaultModel: this.host.configuration(provider)?.defaultModel,
+      checkedAt: this.host.configuration(provider)?.checkedAt,
+      connectionStatus: this.host.configuration(provider)?.connectionStatus,
       configured: !!this.host.configuration(provider),
       credentialStored: !!this.host.credential(provider),
     }));

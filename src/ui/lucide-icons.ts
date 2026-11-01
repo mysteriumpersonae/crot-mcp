@@ -195,6 +195,24 @@ export const UI_ICONS = {
       },
     ],
   ],
+  server: [
+    ["rect", { x: "3", y: "3", width: "18", height: "7", rx: "2" }],
+    ["rect", { x: "3", y: "14", width: "18", height: "7", rx: "2" }],
+    ["path", { d: "M7 6h.01M7 17h.01" }],
+  ],
+  brain: [
+    [
+      "path",
+      {
+        d: "M12 18V5a3 3 0 0 0-5.8-1A4 4 0 0 0 3 10a4 4 0 0 0 1 7 4 4 0 0 0 8 1ZM12 5a3 3 0 0 1 5.8-1A4 4 0 0 1 21 10a4 4 0 0 1-1 7 4 4 0 0 1-8 1M8 8H6M16 8h2M7 14h2M15 14h2",
+      },
+    ],
+  ],
+  monitor: [
+    ["rect", { x: "2", y: "3", width: "20", height: "14", rx: "2" }],
+    ["path", { d: "M8 21h8M12 17v4" }],
+  ],
+  trash: [["path", { d: "M3 6h18M9 6V4h6v2M5 6l1 14h12l1-14M10 10v6M14 10v6" }]],
   copy: [
     ["rect", { width: "14", height: "14", x: "8", y: "8", rx: "2", ry: "2" }],
     ["path", { d: "M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" }],

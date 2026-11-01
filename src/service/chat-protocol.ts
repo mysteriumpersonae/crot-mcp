@@ -1,10 +1,16 @@
 import { z } from "zod";
-export const ChatProviderSchema = z.enum(["OpenAI", "Anthropic", "Local HTTP"]);
+export const ChatProviderSchema = z.enum(["OpenAI", "Anthropic", "Google Gemini", "OpenRouter", "Local HTTP"]);
 export type ChatProvider = z.infer<typeof ChatProviderSchema>;
 export const ChatConfigureSchema = z
   .object({
     provider: ChatProviderSchema,
     endpoint: z.string().url().max(2048).optional(),
+    defaultModel: z
+      .string()
+      .min(1)
+      .max(256)
+      .regex(/^[^\r\n\0]*$/)
+      .optional(),
     credential: z
       .string()
       .max(8192)

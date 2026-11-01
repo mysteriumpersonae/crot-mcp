@@ -18,12 +18,13 @@ import { TRAY_ASSETS } from "../dist/tray/assets.js";
 import { PORTAL_HTML, PORTAL_CSS, PORTAL_SCRIPT, LANDING_HTML } from "../dist/account-service/portal.js";
 
 const authentication = await authTestHarness();
-const serviceMode = process.argv.includes("--service");
+const agentsMode = process.argv.includes("--agents");
+const serviceMode = process.argv.includes("--service") || agentsMode;
 const real = serviceMode ? await (await import("./ui-service-harness.mjs")).serviceHarness() : undefined;
 const repo = fileURLToPath(new URL("../", import.meta.url));
 const artifacts = path.join(
   process.env.CROT_E2E_ARTIFACTS ?? path.join(repo, "artifacts"),
-  serviceMode ? "service-ui" : "flagship-ui",
+  agentsMode ? "agents-ui" : serviceMode ? "service-ui" : "flagship-ui",
 );
 await mkdir(artifacts, { recursive: true });
 const fixture = {
@@ -161,7 +162,8 @@ try {
   socket.addEventListener("message", (event) => {
     const m = JSON.parse(String(event.data)),
       p = pending.get(m.id);
-    if (m.method === "Runtime.exceptionThrown") runtimeErrors.push(m.params.exceptionDetails.text);
+    if (m.method === "Runtime.exceptionThrown")
+      runtimeErrors.push(m.params.exceptionDetails.exception?.description ?? m.params.exceptionDetails.text);
     if (p) {
       pending.delete(m.id);
       if (m.error) p.reject(new Error(m.error.message));
@@ -225,10 +227,15 @@ try {
     await until("document.readyState === 'complete'");
     await delay(100);
   };
-  if (real) {
+  if (real && !agentsMode) {
     await (
       await import("./ui-service-scenarios.mjs")
     ).runServiceScenarios({ real, call, evaluate, until, size, screenshot, navigate, artifacts });
+  } else if (agentsMode) {
+    await (
+      await import("./ui-agents-scenarios.mjs")
+    ).runAgentsScenarios({ real, evaluate, until, size, screenshot, navigate, call, artifacts, assert });
+    if (runtimeErrors.length) throw Error(runtimeErrors.join("\n"));
   } else if (process.argv.includes("--chat-groups")) {
     await (
       await import("./ui-chat-groups-scenarios.mjs")
@@ -469,9 +476,11 @@ try {
     await evaluate("fixture.connection='connected';render(fixture);window.CrotI18n.setLanguage('en')");
     await size(1280, 820);
     await click("nav-agents");
+    await evaluate("document.querySelector('[data-integration=Claude]').click()");
     await evaluate(
-      "[...document.querySelectorAll('#page button')].find(b=>b.textContent==='Copy configuration').click()",
+      "[...document.querySelectorAll('#action-dialog button')].find(b=>b.textContent==='Copy local Claude Desktop configuration').click()",
     );
+    await evaluate("document.getElementById('action-dialog').close()");
     assert(await evaluate("actions.some(a=>a[0]==='ui.copyConfig')"), "config copy not delegated");
     await click("nav-home");
     await evaluate(
