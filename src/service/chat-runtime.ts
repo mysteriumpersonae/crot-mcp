@@ -16,31 +16,57 @@ export interface ProviderDiagnostic {
   httpStatus?: number;
   networkCode?: string;
 }
+
+/**
+ * Diagnostic codes for UI display:
+ * NETWORK_GUARD_BLOCKED – CROT network policy blocked the request (add host to permissions.network.allow)
+ * AUTH_INVALID_KEY      – server rejected the credential (HTTP 401/403)
+ * LOCAL_SERVER_OFFLINE  – local service not running (ECONNREFUSED on loopback)
+ * OPERATION_FAILED      – other network or protocol error
+ */
 /** Never expose provider bodies, arbitrary thrown messages, URLs or credentials as diagnostics. */
 export function providerDiagnostic(error: unknown): ProviderDiagnostic {
   if (!(error instanceof CrotError)) return { code: "OPERATION_FAILED", stage: "network" };
   const d = error.details,
     status = Number(d?.httpStatus),
     errno = String(d?.errno ?? "");
+  // PERMISSION_DENIED from the ExecutionGuard means the network policy blocked it.
+  if (error.code === "PERMISSION_DENIED") {
+    return { code: "NETWORK_GUARD_BLOCKED", stage: "network" };
+  }
+  // ECONNREFUSED on a loopback address → local server not running.
+  if (errno === "ECONNREFUSED") {
+    return { code: "LOCAL_SERVER_OFFLINE", stage: "network", networkCode: errno };
+  }
+  // HTTP 401 or 403 → invalid key/credential.
+  if (Number.isInteger(status) && (status === 401 || status === 403)) {
+    return {
+      code: "AUTH_INVALID_KEY",
+      stage: [\"models\", \"workspace\", \"inventory\"].includes(String(d?.stage)) ? String(d?.stage) : "network",
+      httpStatus: status,
+    };
+  }
   return {
     code: error.code,
     stage: ["models", "workspace", "inventory"].includes(String(d?.stage)) ? String(d?.stage) : "network",
     ...(Number.isInteger(status) && status >= 100 && status <= 599 ? { httpStatus: status } : {}),
-    ...([
-      "ENOTFOUND",
-      "EAI_AGAIN",
-      "ECONNREFUSED",
-      "ECONNRESET",
-      "ETIMEDOUT",
-      "CERT_HAS_EXPIRED",
-      "DEPTH_ZERO_SELF_SIGNED_CERT",
-      "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
-      "ERR_TLS_CERT_ALTNAME_INVALID",
-    ].includes(errno)
-      ? { networkCode: errno }
-      : {}),
+    ...(
+      [
+        "ENOTFOUND",
+        "EAI_AGAIN",
+        "ECONNRESET",
+        "ETIMEDOUT",
+        "CERT_HAS_EXPIRED",
+        "DEPTH_ZERO_SELF_SIGNED_CERT",
+        "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+        "ERR_TLS_CERT_ALTNAME_INVALID",
+      ].includes(errno)
+        ? { networkCode: errno }
+        : {}
+    ),
   };
 }
+
 export interface ChatProviderConfig {
   endpoint: string;
   defaultModel?: string;
@@ -49,6 +75,7 @@ export interface ChatProviderConfig {
   checkedAt?: string;
   connectionStatus?: "connected" | "failed";
 }
+
 export const CHAT_ENDPOINTS: Record<ChatProvider, string> = {
   OpenAI: "https://api.openai.com/v1",
   Anthropic: "https://api.anthropic.com/v1",
@@ -60,6 +87,23 @@ export const CHAT_ENDPOINTS: Record<ChatProvider, string> = {
   OpenCode: "http://127.0.0.1:4096",
   "Notion Agents": "https://api.notion.com/v1",
 };
+
+/**
+ * Hosts that CROT auto-adds to network.allow when an owner saves a provider.
+ * Loopback addresses are listed explicitly because a name rule alone would not
+ * allow them (NetworkPolicy requires an explicit IP/CIDR rule for non-public addresses).
+ */
+export const PROVIDER_NETWORK_HOSTS: Partial<Record<ChatProvider, readonly string[]>> = {
+  OpenAI: ["api.openai.com"],
+  Anthropic: ["api.anthropic.com"],
+  "Google Gemini": ["generativelanguage.googleapis.com"],
+  OpenRouter: ["openrouter.ai"],
+  River: ["api.river.ai"],
+  "Notion Agents": ["api.notion.com"],
+  "Local HTTP": ["127.0.0.1:1234", "localhost:1234"],
+  OpenCode: ["127.0.0.1:4096", "localhost:4096"],
+};
+
 interface Host {
   core(): CrotCore;
   configuration(provider: ChatProvider): ChatProviderConfig | undefined;
