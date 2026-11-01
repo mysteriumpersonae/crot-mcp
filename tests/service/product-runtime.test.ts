@@ -25,7 +25,9 @@ it(
   async () => {
     dirs = await makeTempDirs();
     host = await makeServiceHost(dirs.outside);
-    let seenAuth = "";
+    let seenAuth = "",
+      modelStatus = 200,
+      emptyModels = false;
     server = createServer((req, res) => {
       if (req.url === "/mcp") {
         const mcp = new McpServer({ name: "http-fixture", version: "1" });
@@ -51,8 +53,14 @@ it(
       }
       if (req.url?.split("?")[0]?.endsWith("/models")) {
         res
-          .writeHead(200, { "content-type": "application/json" })
-          .end(JSON.stringify({ data: [{ id: "fixture-model" }], has_more: false }));
+          .writeHead(modelStatus, { "content-type": "application/json" })
+          .end(
+            JSON.stringify(
+              modelStatus === 200
+                ? { data: emptyModels ? [] : [{ id: "fixture-model" }], has_more: false }
+                : { error: "secret-provider-body-do-not-expose" },
+            ),
+          );
         return;
       }
       seenAuth = req.headers.authorization ?? "";
@@ -109,7 +117,15 @@ it(
       id: "custom-check",
       workingDirectory: "build/preview",
     });
-    for (const provider of ["OpenAI", "Anthropic", "Google Gemini", "OpenRouter", "Local HTTP"]) {
+    for (const provider of [
+      "OpenAI",
+      "Anthropic",
+      "Google Gemini",
+      "OpenRouter",
+      "River",
+      "OpenAI-compatible",
+      "Local HTTP",
+    ]) {
       await rpc("chat.configure", {
         provider,
         endpoint: `http://127.0.0.1:${port}`,
@@ -130,6 +146,29 @@ it(
           .connectionStatus,
       ).toBe("connected");
     }
+    for (const status of [401, 403, 404, 429, 500]) {
+      modelStatus = status;
+      const result = await rpc("chat.testConnection", { provider: "River" });
+      expect(result).toMatchObject({
+        ok: false,
+        diagnostic: { code: "OPERATION_FAILED", stage: "models", httpStatus: status },
+      });
+      expect(JSON.stringify(result)).not.toContain("secret-provider-body");
+      expect(
+        (await rpc("chat.providers")).providers.find((p: { provider: string }) => p.provider === "River"),
+      ).toMatchObject({ connectionStatus: "failed", connectionError: { httpStatus: status } });
+    }
+    modelStatus = 200;
+    emptyModels = true;
+    expect(await rpc("chat.testConnection", { provider: "River" })).toMatchObject({
+      ok: false,
+      diagnostic: { stage: "inventory" },
+    });
+    emptyModels = false;
+    expect(await rpc("chat.testConnection", { provider: "River" })).toMatchObject({ ok: true });
+    expect(
+      (await rpc("chat.providers")).providers.find((p: { provider: string }) => p.provider === "River").connectionError,
+    ).toBeUndefined();
     const policy = {
       mode: "targeted",
       domains: ["example.com"],

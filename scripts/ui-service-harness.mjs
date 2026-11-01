@@ -189,6 +189,12 @@ export async function serviceHarness() {
         res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(value));
         return true;
       }
+      if (pathname.startsWith("/chat-denied/")) {
+        res
+          .writeHead(401, { "content-type": "application/json" })
+          .end(JSON.stringify({ error: "provider-body-secret-must-not-reach-ui" }));
+        return true;
+      }
       if (pathname.startsWith("/chat-provider/")) {
         if (pathname.endsWith("/models")) {
           res

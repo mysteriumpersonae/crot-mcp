@@ -8,7 +8,13 @@ import { checkLoopbackPort } from "./system-check.js";
 import { parseTabPolicy, type BrowserTabPolicy } from "../core/capabilities/browser/tab-policy.js";
 import { CONNECTOR_MANIFESTS, SkillSchema, type CustomSkill } from "./connector-manifests.js";
 /** AD-40: service-owned product state. Metadata and encrypted request/credential vault are separate. */
-import { ChatRuntime, CHAT_ENDPOINTS, chatEndpoint, type ChatProviderConfig } from "./chat-runtime.js";
+import {
+  ChatRuntime,
+  CHAT_ENDPOINTS,
+  chatEndpoint,
+  providerDiagnostic,
+  type ChatProviderConfig,
+} from "./chat-runtime.js";
 import type { ChatProvider } from "./chat-protocol.js";
 import { newAuditEventId } from "../core/audit/audit.js";
 import { RuntimePolicySchema, type RuntimePolicy } from "../core/permissions/runtime.js";
@@ -48,6 +54,7 @@ interface Agent {
   id: string;
   name: string;
   kind: string;
+  transport?: string;
   connected: boolean;
   projects: string[];
   browser: boolean;
@@ -232,7 +239,13 @@ export class ProductRuntime {
       credential: (provider) => this.vault.credentials[`chat:${provider}`],
       context: () => this.context(),
       run: (context, work) => {
-        const run = () => this.execute("$chat", "generate", [context], (args) => work(args[0] as AuthContext));
+        const run = async () => {
+          try {
+            return await this.execute("$chat", "generate", [context], (args) => work(args[0] as AuthContext));
+          } finally {
+            this.detachAgent(this.agentId(context));
+          }
+        };
         return this.host.holdActivity ? this.host.holdActivity(run) : run();
       },
     });
@@ -577,22 +590,26 @@ export class ProductRuntime {
         try {
           const result = await this.chat.models(provider);
           const models = result.models as string[];
-          if (!models.length) return fail("Provider returned no usable models");
+          if (!models.length)
+            throw new CrotError("OPERATION_FAILED", "Provider returned no usable models", { stage: "inventory" });
           if (this.state.chatProviders?.[provider] !== config)
             return fail("Provider configuration changed; test again");
           config.checkedAt = now();
           config.connectionStatus = "connected";
+          delete config.connectionError;
           if (!config.defaultModel || !models.includes(config.defaultModel)) config.defaultModel = models[0];
           await this.persist();
           await this.event(method, undefined, provider);
           return { ...result, checkedAt: config.checkedAt, defaultModel: config.defaultModel };
-        } catch {
+        } catch (error) {
+          const diagnostic = providerDiagnostic(error);
           if (this.state.chatProviders?.[provider] === config) {
+            config.connectionError = diagnostic;
             config.checkedAt = now();
             config.connectionStatus = "failed";
             await this.persist();
           }
-          return fail("Provider check failed. Check credentials, endpoint and Core network permission.");
+          return { ok: false, message: "Provider check failed", diagnostic };
         }
       }
       case "skills.list":
@@ -1313,6 +1330,7 @@ export class ProductRuntime {
         id,
         name: context.principal.client?.name ?? context.principal.transport,
         kind: context.principal.kind,
+        transport: context.principal.transport,
         connected: true,
         projects: [],
         browser: true,

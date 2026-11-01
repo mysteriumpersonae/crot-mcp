@@ -21,7 +21,6 @@ describe("scoped Unified Chat workspace", () => {
       "connectors.list",
       "skills.list",
       "mcpServers.list",
-      "agents.list",
       "chat.providers",
       "chat.models",
       "chat.start",
@@ -45,8 +44,9 @@ describe("scoped Unified Chat workspace", () => {
     expect(chat).toContain("document.querySelector('[data-create-skill]')?.click()");
     expect(chat).toContain("items.slice(0,3)");
     expect(chat).not.toContain("['GitHub','Notion','YouTube']");
-    expect(chat).toContain("a.connected&&!a.revoked");
-    expect(chat).toContain("This connection does not provide a direct chat transport.");
+    expect(chat).not.toContain("data-agent-id");
+    expect(chat).not.toContain("agents.list");
+    expect(chat).toContain("Inbound MCP client sessions are not callable outbound chat providers");
     expect(chat).toContain("inventoryLoaded&&chatWeb");
     expect(chat).toContain("inventoryLoaded&&chatSkill");
   });

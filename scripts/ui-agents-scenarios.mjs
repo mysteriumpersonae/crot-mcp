@@ -8,12 +8,16 @@ export async function runAgentsScenarios({
   evaluate,
   until,
   size,
-  screenshot,
+  screenshot: capture,
   navigate,
   call,
   artifacts,
   assert,
 }) {
+  const screenshot = async (name) => {
+    await evaluate("new Promise(r=>setTimeout(r,320))");
+    return capture(name);
+  };
   await size(1584, 1040);
   await navigate("/control-center");
   await until("document.getElementById('auth-gate')&&!document.getElementById('auth-gate').hidden");
@@ -216,15 +220,22 @@ export async function runAgentsScenarios({
   await evaluate("document.querySelector('main.content').scrollTop=0");
   await size(1584, 960);
   await evaluate("window.CrotI18n.setLanguage('en')");
-  await until("document.querySelector('[data-integration=Notion]')");
-  for (const name of ["Notion", "Claude", "n8n"]) {
-    await evaluate(`document.querySelector('[data-integration="${name}"]').click()`);
-    await until("document.getElementById('action-dialog').open");
-    assert(
-      await evaluate("document.getElementById('action-dialog').textContent.includes('Pair your device')"),
-      "Unpaired integration fabricated config",
+  assert(
+    await evaluate(
+      "!document.querySelector('[data-integration]')&&!document.querySelector('.agents-center').textContent.includes('Official integrations')",
+    ),
+    "Instructions masquerade as integrations",
+  );
+  // Switch every section repeatedly, sampling actual animation frames.
+  for (const index of [1, 2, 0, 2, 1, 0]) {
+    await evaluate(`document.querySelectorAll('.agents-accordion > summary')[${index}].click()`);
+    const frames = await evaluate(
+      `(async()=>{const frames=[];for(let i=0;i<18;i++){await new Promise(requestAnimationFrame);const column=document.querySelector('.agents-outbound');frames.push({open:column.querySelectorAll('.agents-accordion[open]').length,width:column.clientWidth,scroll:column.scrollWidth>column.clientWidth});}return frames;})()`,
     );
-    await evaluate("document.getElementById('action-dialog').close()");
+    assert(
+      frames.every((f) => f.open === 1 && !f.scroll) && new Set(frames.map((f) => f.width)).size === 1,
+      "Section switch flickered or overflowed",
+    );
   }
   // Presentation-only paired URL: exercise recipes/copy without claiming a live paired relay.
   const recipeUrl = "https://mcp.crot.network/d/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/mcp";
@@ -234,23 +245,10 @@ export async function runAgentsScenarios({
   await until("document.querySelector('[data-relay-url]').value.includes('mcp.crot.network')");
   await evaluate("document.querySelector('[aria-label=\"Copy relay URL\"]').click()");
   await until(`(async()=>await navigator.clipboard.readText()===${JSON.stringify(recipeUrl)})()`);
-  for (const name of ["Notion", "Claude", "n8n"]) {
-    await evaluate(`document.querySelector('[data-integration="${name}"]').click()`);
-    await until("document.getElementById('action-dialog').open");
-    assert(
-      await evaluate(
-        `document.querySelector('#action-dialog pre')?.textContent.includes(${JSON.stringify(recipeUrl)})`,
-      ),
-      "Paired recipe missing canonical URL",
-    );
-    await evaluate(
-      "[...document.querySelectorAll('#action-dialog button')].find(b=>b.textContent==='Copy configuration').click()",
-    );
-    await until("document.querySelector('#action-dialog [data-copy-status]')?.textContent==='Copied'");
-    assert((await evaluate("navigator.clipboard.readText()")).includes(recipeUrl), "Configuration clipboard failed");
-    await screenshot("agents-setup-" + name.toLowerCase());
-    await evaluate("document.getElementById('action-dialog').close()");
-  }
+  assert(
+    await evaluate("[...document.querySelectorAll('.agents-card input[readonly]')].some(n=>n.value==='OAuth 2.1')"),
+    "Relay OAuth method missing",
+  );
   await evaluate("document.getElementById('nav-chat').click()");
   await until("[...document.querySelectorAll('.chat-agent-pill')].some(b=>b.textContent==='OpenAI')");
   await evaluate("[...document.querySelectorAll('.chat-agent-pill')].find(b=>b.textContent==='OpenAI').click()");
@@ -260,7 +258,9 @@ export async function runAgentsScenarios({
   await until(
     "[...document.querySelectorAll('.chat-message-text')].some(n=>n.textContent.includes('Real provider fixture response'))",
   );
-  await evaluate("window.crot.render=window.originalViewRender");
+  await evaluate(
+    "(async()=>{window.crot.render=window.originalViewRender;window.crot.render(await window.crot.request('view'));})()",
+  );
   // Genuine provider failure must never keep a green state.
   await evaluate("document.getElementById('nav-agents').click()");
   await until("!document.querySelector('[data-provider-loading]')&&document.querySelector('[data-cloud-test]')");
@@ -274,6 +274,26 @@ export async function runAgentsScenarios({
     ),
     "Failed test kept connected service status",
   );
+  // River named provider, real local HTTP 401, safe diagnostic and selection persistence.
+  await evaluate(
+    `(()=>{const select=document.querySelector('select[aria-label="Chat provider"]');select.value='River';select.dispatchEvent(new Event('change'));const l=[...document.querySelectorAll('label')].find(l=>l.querySelector('span')?.textContent==='API base URL');l.querySelector('input').value=${JSON.stringify(endpoint.replace("/chat-provider/", "/chat-denied/"))};document.querySelector('[data-cloud-key]').value='fixture-river-secret';document.querySelector('[data-cloud-test]').click();})()`,
+  );
+  await until(
+    "document.querySelector('.agents-accordion .agents-connection-state.failed')?.textContent.includes('HTTP 401')",
+  );
+  assert(
+    await evaluate(
+      "!document.querySelector('.agents-center').textContent.includes('provider-body-secret')&&!document.querySelector('.agents-center').textContent.includes('fixture-river-secret')",
+    ),
+    "Provider response or key exposed",
+  );
+  await evaluate(
+    "(()=>{const select=document.querySelector('select[aria-label=\"Chat provider\"]');for(const value of ['OpenAI','River']){select.value=value;select.dispatchEvent(new Event('change'));}})()",
+  );
+  await until(
+    "document.querySelector('.agents-accordion .agents-connection-state.failed')?.textContent.includes('HTTP 401')",
+  );
+  await screenshot("agents-river-auth-failure");
   // Disconnect removes provider configuration and its vault secret, with no secret in audit.
   for (const provider of ["OpenCode", "Notion Agents"]) {
     assert(
@@ -302,6 +322,8 @@ export async function runAgentsScenarios({
         sidebarUnchanged: true,
         nativeOpenCodeAndNotionAgentChats: true,
         conditionalAccordionFit: true,
+        river401SafeDiagnostic: true,
+        exclusiveAccordionFrames: true,
         workspaceDisconnectRemovesSecret: true,
       },
       null,
