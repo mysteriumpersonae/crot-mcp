@@ -3,7 +3,7 @@ import path from "node:path";
 import { z } from "zod";
 import { CrotError } from "../errors.js";
 import { expandHome, stripBom } from "./paths.js";
-import { CrotConfigSchema, type CrotConfig, type CrotConfigInput } from "./schema.js";
+import { CrotConfigSchema, DEFAULT_AI_NETWORK_ALLOW, type CrotConfig, type CrotConfigInput } from "./schema.js";
 
 /** Validate a configuration object. */
 export function parseConfig(input: unknown): CrotConfig {
@@ -11,7 +11,23 @@ export function parseConfig(input: unknown): CrotConfig {
   if (!result.success) {
     throw new CrotError("CONFIG_ERROR", `Invalid CROT configuration: ${z.prettifyError(result.error)}`);
   }
-  return result.data;
+  const config = result.data;
+  // Always union DEFAULT_AI_NETWORK_ALLOW into the active network allow-list so that
+  // existing projects created before PR #51 (which have an empty or partial allow list)
+  // can reach built-in AI providers without manual config edits.
+  const existing = new Set(config.permissions.network.allow);
+  const merged = [
+    ...config.permissions.network.allow,
+    ...DEFAULT_AI_NETWORK_ALLOW.filter((h) => !existing.has(h)),
+  ];
+  if (merged.length === config.permissions.network.allow.length) return config;
+  return {
+    ...config,
+    permissions: {
+      ...config.permissions,
+      network: { ...config.permissions.network, allow: merged },
+    },
+  };
 }
 
 /**
