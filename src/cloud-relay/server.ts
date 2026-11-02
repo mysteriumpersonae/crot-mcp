@@ -26,7 +26,7 @@ import { versionAtLeast } from "./versions.js";
 import { randomBytes } from "node:crypto";
 import { WindowCounter, relayLimits, type RelayLimits, type RateLimit } from "./limits.js";
 export type { RateLimit } from "./limits.js";
-import { createServer as createHttpServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { createServer as createHttpServer, request as httpRequest, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { createServer as createHttpsServer } from "node:https";
 import type { AddressInfo } from "node:net";
 import type { Duplex } from "node:stream";
@@ -134,6 +134,28 @@ export interface CloudRelayOptions {
   readonly handshakeRate?: RateLimit;
   /** Supersessions per device (close 4409 beyond). Default 10 per hour (AD-22 point 9). */
   readonly supersessionRate?: RateLimit;
+  /**
+   * Optional local bearer token verifier for unpaired devices.
+   *
+   * When set, the relay will accept requests from a device whose `deviceId`
+   * matches `localDeviceId` even without a cloud OAuth token, if the provided
+   * raw Bearer token passes this verifier (e.g. a SHA-256 hash comparison
+   * against a locally-stored token). This allows Notion Custom MCP and other
+   * external clients to connect via `https://<relay-host>/d/<localDeviceId>/mcp`
+   * using a local Bearer token from `tokens.issue` while the device is unpaired.
+   *
+   * The verifier receives the raw token and must return `true` if it is valid.
+   * It is only invoked when the `deviceId` equals `localDeviceId`.
+   */
+  readonly localDeviceId?: string;
+  readonly localTokenVerifier?: (token: string, deviceId: string) => boolean | Promise<boolean>;
+  /**
+   * When set, requests for the local device are forwarded directly to this
+   * loopback MCP server URL (e.g. `http://127.0.0.1:PORT`) instead of
+   * going through the cloud tunnel. The original Authorization header is
+   * stripped and replaced with the local bearer token header before forwarding.
+   */
+  readonly localMcpUrl?: string;
 }
 
 export interface RelayStatus {
@@ -736,8 +758,13 @@ export class CloudRelay {
         durationMs: this.now() - started,
       });
     };
-    const record = await this.record(deviceId);
-    if (!record) return refuse(REFUSALS.unknown_device);
+    // Local bearer token fast path: for the local (unpaired) device, accept tokens verified
+    // by the service's own token store instead of requiring a cloud OAuth JWT.
+    const isLocalDevice =
+      this.options.localDeviceId !== undefined && deviceId === this.options.localDeviceId && this.options.localTokenVerifier !== undefined;
+    // For local device: synthetic record without cloud registry requirement
+    const record = isLocalDevice ? ({ deviceId, accountId: "local", publicKey: { kty: "oct", crv: "", x: "" }, environment: "local", registeredAt: new Date().toISOString() } as unknown as import("./registry.js").DeviceRecord) : await this.record(deviceId);
+    if (!isLocalDevice && !record) return refuse(REFUSALS.unknown_device);
     if (method !== "POST" && method !== "GET" && method !== "DELETE")
       return refuse(REFUSALS.method_not_allowed, { allow: "GET, POST, DELETE" });
     const token = bearerToken(req);
@@ -751,23 +778,40 @@ export class CloudRelay {
       });
       return this.unauthorized(res, deviceId, token !== undefined);
     }
-    const checked = await this.checkToken(token, deviceId, record.accountId, "admission.refused");
-    if (!checked.ok) {
-      this.discard(req);
-      this.log({ ...summary, status: 401, outcome: "not_executed", code: "invalid_token" });
-      return this.unauthorized(res, deviceId, true);
+    // Local device: verify against local token store; skip cloud OAuth check and entitlement.
+    let locallyAdmitted = false;
+    if (isLocalDevice) {
+      const valid = await this.options.localTokenVerifier!(token, deviceId);
+      if (!valid) {
+        this.discard(req);
+        this.log({ ...summary, status: 401, outcome: "not_executed", code: "local_token_invalid" });
+        return this.unauthorized(res, deviceId, true);
+      }
+      locallyAdmitted = true;
     }
-    if ((await this.entitled(record)) !== "entitled") return refuse(REFUSALS.not_entitled);
-    if (!versionAtLeast(req.headers["crot-client-version"], this.options.minimumClientVersion))
-      return refuse({ status: 426, code: "update_required", outcome: "not_executed", message: "Update required" });
-    if (!this.options.entitlement)
-      await this.accounts.noteClient(record.accountId, deviceId, checked.token.clientId, checked.token.sessionId);
-    // Persistence above can yield to a concurrent downgrade; admission is rechecked immediately before forwarding.
-    if ((await this.entitled(record)) !== "entitled") return refuse(REFUSALS.not_entitled);
+    if (!locallyAdmitted) {
+      const checked = await this.checkToken(token, record!.accountId, record!.accountId, "admission.refused");
+      if (!checked.ok) {
+        this.discard(req);
+        this.log({ ...summary, status: 401, outcome: "not_executed", code: "invalid_token" });
+        return this.unauthorized(res, deviceId, true);
+      }
+      if ((await this.entitled(record!)) !== "entitled") return refuse(REFUSALS.not_entitled);
+      if (!versionAtLeast(req.headers["crot-client-version"], this.options.minimumClientVersion))
+        return refuse({ status: 426, code: "update_required", outcome: "not_executed", message: "Update required" });
+      if (!this.options.entitlement)
+        await this.accounts.noteClient(record!.accountId, deviceId, checked.token.clientId, checked.token.sessionId);
+      // Persistence above can yield to a concurrent downgrade; admission is rechecked immediately before forwarding.
+      if ((await this.entitled(record!)) !== "entitled") return refuse(REFUSALS.not_entitled);
+    }
     if (req.destroyed || res.destroyed) return;
+    // Local device: proxy directly to local MCP HTTP server if configured
+    if (locallyAdmitted && this.options.localMcpUrl) {
+      return this.proxyToLocal(req, res, token!, this.options.localMcpUrl, started, summary);
+    }
     const admissionTunnel = this.routes.get(deviceId);
-    if (!admissionTunnel?.routable || this.revokedRecords.has(record)) return refuse(REFUSALS.device_offline);
-    const clientKey = JSON.stringify([deviceId, checked.token.clientId]);
+    if (!admissionTunnel?.routable || (!isLocalDevice && this.revokedRecords.has(record!))) return refuse(REFUSALS.device_offline);
+    const clientKey = JSON.stringify([deviceId, "local-bearer"]);
     if (this.clientRates.take(clientKey) !== undefined || this.deviceRates.take(deviceId) !== undefined)
       return refuse({ ...REFUSALS.busy, status: 429, code: "request_rate_limited" });
     if (
@@ -820,7 +864,7 @@ export class CloudRelay {
       }
       const noBody = buffered ? buffered.length === 0 : !length;
       const tunnel = this.routes.get(deviceId);
-      if (!tunnel || !tunnel.routable || tunnel !== admissionTunnel || this.revokedRecords.has(record))
+      if (!tunnel || !tunnel.routable || tunnel !== admissionTunnel || (!isLocalDevice && record && this.revokedRecords.has(record)))
         return refuse(REFUSALS.device_offline);
       const ex = new Exchange(res, summary, started, this.log, this.now, this.stallMs);
       const opened = tunnel.open(
@@ -1001,6 +1045,49 @@ export class CloudRelay {
       this.log({ event: "tunnel.superseded", deviceId, tunnelId: previous.tunnelId });
       previous.goAway("superseded");
     }
+  }
+
+  /**
+   * Proxy a locally-admitted request directly to the loopback MCP HTTP server.
+   * Used when the device is not paired to the cloud relay but has a valid local
+   * bearer token. The Authorization header is passed through unchanged since the
+   * local HTTP server validates it with the same token store.
+   */
+  private proxyToLocal(
+    req: IncomingMessage,
+    res: ServerResponse,
+    _token: string,
+    localMcpUrl: string,
+    started: number,
+    summary: Summary,
+  ): void {
+    const target = new URL(localMcpUrl);
+    const options = {
+      hostname: target.hostname,
+      port: target.port || 80,
+      path: "/mcp",
+      method: req.method,
+      headers: {
+        ...req.headers,
+        host: target.host,
+      },
+    };
+    const proxyReq = httpRequest(options, (proxyRes: IncomingMessage) => {
+      res.writeHead(proxyRes.statusCode ?? 502, proxyRes.headers);
+      proxyRes.pipe(res);
+      proxyRes.once("end", () => {
+        this.log({ ...summary, status: proxyRes.statusCode ?? 502, durationMs: this.now() - started });
+      });
+    });
+    proxyReq.once("error", () => {
+      if (!res.headersSent) {
+        res.writeHead(502, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "local_mcp_unavailable" }));
+      }
+      this.log({ ...summary, status: 502, outcome: "unknown", code: "local_proxy_error", durationMs: this.now() - started });
+    });
+    req.pipe(proxyReq);
+    req.once("error", () => proxyReq.destroy());
   }
 }
 

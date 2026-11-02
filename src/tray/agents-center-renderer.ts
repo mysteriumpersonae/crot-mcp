@@ -30,8 +30,9 @@ export const AGENTS_CENTER_RENDERER =
     // ── Inbound: single compact "MCP Server Access" card ──────────────────────
     let remoteUrl='';try{const u=new URL(view.resourceUri);if(u.protocol==='https:'&&!u.username&&!u.password&&!u.search&&!u.hash)remoteUrl=u.href;}catch{/* No pairing means no invented URL. */}
     const RELAY_HOST='crot.network';
-    function getLocalDeviceId(){let id=localStorage.getItem('crot_local_device_id');if(!id){id=crypto.randomUUID();localStorage.setItem('crot_local_device_id',id);}return id;}
-    const displayRelayUrl=remoteUrl||('https://'+RELAY_HOST+'/d/'+getLocalDeviceId()+'/mcp');
+    // Use the canonical deviceId from the service backend (persisted in state directory).
+    // view.localDeviceId is generated once per device and stable across restarts.
+    const displayRelayUrl=remoteUrl||(view.localDeviceId?'https://'+RELAY_HOST+'/d/'+view.localDeviceId+'/mcp':'');
     const accessCard=card(inbound,t('MCP Server Access'));
     // Tunnel status indicator
     const tunnelStatus=node('p',undefined,'agents-small-note');const tunnelDot=node('span','','agents-connection-state');tunnelStatus.append(tunnelDot,document.createTextNode(' '));

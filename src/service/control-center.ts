@@ -86,6 +86,8 @@ export interface ControlConnection {
 
 export interface ControlCenterHost {
   readonly mcpArgs?: readonly string[];
+  /** Persistent local device ID (base32) for local relay URL; see local-device-id.ts. */
+  readonly localDeviceId?: string;
   readonly holder: CoreHolder;
   readonly settings: DeviceSettingsStore;
   readonly clients: RemoteClientRegistry;
@@ -1060,6 +1062,7 @@ export class ControlCenter implements RemoteAdmission {
     const blockedBy = this.host.holder.busyReason();
     return {
       ...(status.http.enabled ? { localMcpUrl: status.http.url } : {}),
+      ...(this.host.localDeviceId ? { localDeviceId: this.host.localDeviceId } : {}),
       ...(this.host.mcpArgs ? { mcpArgs: this.host.mcpArgs } : {}),
       commercial: this.host.identity.commercialStatus(),
       accountSignedIn: this.host.identity.signedInHere(),

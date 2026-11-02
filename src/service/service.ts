@@ -82,6 +82,7 @@ import {
   type ServiceToShim,
 } from "./protocol.js";
 import { ResumeDetector } from "./resume-detector.js";
+import { loadOrCreateLocalDeviceId } from "./local-device-id.js";
 import {
   prepareSecretStore,
   secretStoreProtectedPaths,
@@ -520,8 +521,11 @@ export class CrotService {
       if (command.config.audit?.sink === "none") mcpArgs.push("--no-audit");
       else if (command.config.audit?.path)
         mcpArgs.push("--audit-log", initial.core.status().audit.path ?? command.config.audit.path);
+      // Persistent local device ID: stable across restarts, independent of cloud pairing.
+      const localDeviceId = await loadOrCreateLocalDeviceId(stateDir, privateFiles).catch(() => undefined);
       const control = new TunnelControlCenter({
         mcpArgs,
+        localDeviceId,
         providerRevocation: (client) => identity.revokeProvider(client),
         holder,
         settings,

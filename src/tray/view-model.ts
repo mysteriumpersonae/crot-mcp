@@ -163,6 +163,7 @@ export interface PairingRow {
 
 export interface TrayView {
   readonly localMcpUrl?: string;
+  readonly localDeviceId?: string;
   readonly accountSignedIn?: boolean;
   readonly agents?: ControlOverview["agents"];
   readonly browser?: ControlOverview["browser"];
@@ -311,6 +312,7 @@ export function trayView(state: TrayState): TrayView {
     : `CROT — ${cards.length > 0 ? headline : o.remote.mode ? "remote mode ON" : "running"}`;
   return {
     ...(o?.localMcpUrl ? { localMcpUrl: o.localMcpUrl } : {}),
+    ...(o?.localDeviceId ? { localDeviceId: o.localDeviceId } : {}),
     ...(o?.mcpArgs ? { mcpArgs: o.mcpArgs } : {}),
     ...(o?.workspace ? { workspace: o.workspace } : {}),
     ...(o?.commercial ? { commercial: o.commercial } : {}),
