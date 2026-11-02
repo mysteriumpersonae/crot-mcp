@@ -492,6 +492,27 @@ function registerIpc(): void {
     if (smokeReport || !fromTray(event)) return false;
     return runAction(name, params);
   });
+  ipcMain.handle("copy-text", (event, text: unknown) => {
+    if (smokeReport || !fromTray(event) || typeof text !== "string" || text.length > 8192) return false;
+    clipboard.writeText(text);
+    return true;
+  });
+  ipcMain.handle("pick-folder", async (event) => {
+    if (smokeReport || !fromTray(event) || !window) return null;
+    const result = await dialog.showOpenDialog(window, {
+      title: "Open project folder",
+      properties: ["openDirectory", "createDirectory"],
+    });
+    if (result.canceled || !result.filePaths[0]) return null;
+    const folderPath = result.filePaths[0];
+    // Register as a project and select it
+    try {
+      await controller.product("projects.open" as ProductMethod, { path: folderPath });
+    } catch {
+      // May already exist; ignore
+    }
+    return folderPath;
+  });
 }
 
 /** --smoke-test: wait for the service and the first render, report what the page shows, quit. */
