@@ -4,6 +4,8 @@ export const ChatProviderSchema = z.enum([
   "Anthropic",
   "Google Gemini",
   "OpenRouter",
+  "OpenCode (Free & Zen)",
+  "Custom API",
   "OpenAI-compatible",
   "Local HTTP",
   "OpenCode",
@@ -31,6 +33,8 @@ export const ChatConfigureSchema = z
       .max(8192)
       .regex(/^[^\r\n\0]*$/)
       .optional(),
+    /** Protocol format for Custom API: "openai" (default) or "anthropic" */
+    protocol: z.enum(["openai", "anthropic"]).optional(),
   })
   .strict();
 export const ChatStartSchema = z
