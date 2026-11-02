@@ -18,7 +18,7 @@ export const AGENTS_CENTER_CSS = String.raw`
 .agents-accordion:not([open])>summary p{display:none}.agents-accordion:not([open])>summary{align-items:center;min-height:40px}.agents-accordion:not([open])>summary h2{margin:0}.agents-accordion:not([open]){padding:12px 14px}
 /* Use the same control geometry and popover rows as Unified Chat, never OS-native select menus. */
 .agents-active main.content{height:100%;min-height:0;overflow:auto}.agents-active #page{height:100%;min-height:0}
-.agents-center{height:100%;min-height:0;align-items:stretch}.agents-column{height:100%;min-height:0;overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable}.agents-column>*{flex-shrink:0}
+.agents-center{min-height:0;align-items:stretch}.agents-column{min-height:0;overscroll-behavior:contain;scrollbar-gutter:stable}.agents-column>*{flex-shrink:0}
 .agents-card input,.agents-card select,.agents-choice-trigger{border:1px solid #e0e8fc;border-radius:15px;min-height:46px;background:#fff;font:14px/1.5 var(--font-ui);padding:9px 12px}
 .agents-card input:hover{border-color:#d3d7dd}.agents-card input:focus-visible{outline:none;box-shadow:none;border-color:#aeb6c2}
 .agents-card input[readonly]{background:#f8faff}.agents-card input[hidden],.agents-card select[hidden]{display:none!important}

@@ -81,7 +81,6 @@ export const CHAT_ENDPOINTS: Record<ChatProvider, string> = {
   Anthropic: "https://api.anthropic.com/v1",
   "Google Gemini": "https://generativelanguage.googleapis.com/v1beta/openai",
   OpenRouter: "https://openrouter.ai/api/v1",
-  River: "https://api.river.ai/v1",
   "OpenAI-compatible": "",
   "Local HTTP": "http://127.0.0.1:1234/v1",
   OpenCode: "http://127.0.0.1:4096",
@@ -89,20 +88,34 @@ export const CHAT_ENDPOINTS: Record<ChatProvider, string> = {
 };
 
 /**
- * Hosts that CROT auto-adds to network.allow when an owner saves a provider.
- * Loopback addresses are listed explicitly because a name rule alone would not
- * allow them (NetworkPolicy requires an explicit IP/CIDR rule for non-public addresses).
+ * Hosts that CROT adds to network.allow when an owner saves a provider.
+ * Kept for backwards compatibility and informational use; chat-runtime now
+ * uses native fetch() so the ExecutionGuard no longer blocks these requests.
  */
 export const PROVIDER_NETWORK_HOSTS: Partial<Record<ChatProvider, readonly string[]>> = {
   OpenAI: ["api.openai.com"],
   Anthropic: ["api.anthropic.com"],
   "Google Gemini": ["generativelanguage.googleapis.com"],
   OpenRouter: ["openrouter.ai"],
-  River: ["api.river.ai"],
   "Notion Agents": ["api.notion.com"],
   "Local HTTP": ["127.0.0.1:1234", "localhost:1234"],
   OpenCode: ["127.0.0.1:4096", "localhost:4096"],
 };
+
+/**
+ * Migrate a legacy provider name (e.g. "River") to a supported provider.
+ * Returns the mapped provider and the original endpoint to preserve.
+ */
+export function migrateProvider(provider: string): { provider: ChatProvider; endpoint?: string } {
+  if (provider === "River") return { provider: "OpenAI-compatible", endpoint: "https://api.river.ai/v1" };
+  const parsed = (z as unknown as { parse?: (v: unknown) => ChatProvider }).parse;
+  // If the value is already a valid ChatProvider, return as-is.
+  try {
+    const p = provider as ChatProvider;
+    if (Object.keys(CHAT_ENDPOINTS).includes(p)) return { provider: p };
+  } catch { /* fall through */ }
+  return { provider: "OpenAI-compatible" };
+}
 
 interface Host {
   core(): CrotCore;
@@ -111,6 +124,7 @@ interface Host {
   context(): AuthContext;
   run(context: AuthContext, work: (context: AuthContext) => Promise<void>): Promise<unknown>;
 }
+
 interface Block {
   type: "user" | "assistant" | "tool";
   text: string;

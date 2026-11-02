@@ -65,7 +65,6 @@ describe("scoped Agents center", () => {
   });
   it("supports real Gemini/OpenRouter OpenAI-compatible transports", () => {
     expect(CHAT_ENDPOINTS["Google Gemini"]).toBe("https://generativelanguage.googleapis.com/v1beta/openai");
-    expect(CHAT_ENDPOINTS.River).toBe("https://api.river.ai/v1");
     expect(CHAT_ENDPOINTS.OpenRouter).toBe("https://openrouter.ai/api/v1");
   });
 });
