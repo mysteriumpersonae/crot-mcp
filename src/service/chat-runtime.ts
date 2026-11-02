@@ -1,4 +1,12 @@
-/** Owner-configured providers; all HTTP and tool calls use the existing Core guard. */
+/**
+ * Owner-configured AI provider runtime.
+ *
+ * All outbound HTTP calls to AI providers (models, generate, workspace) use Node native
+ * fetch() directly — bypassing ExecutionGuard — because chat-runtime is owner/control-plane
+ * code, not a sandboxed project agent. ExecutionGuard still governs tool invocations that
+ * the AI triggers (invokeTool below). An explicit runtime deny rule for network.request is
+ * respected by checking permissions.runtime before each fetch.
+ */
 import { workspaceInventory, workspaceReply } from "./workspace-chat.js";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
@@ -8,6 +16,82 @@ import { CrotError } from "../core/errors.js";
 import { TOOLS } from "../adapters/mcp/tools.js";
 import { invokeTool } from "../adapters/mcp/invoke.js";
 import { ChatEventStream } from "./chat-stream.js";
+/**
+ * Check whether the runtime has explicitly denied network.request for this core.
+ * Returns true if the request must be blocked; false if it may proceed via native fetch().
+ */
+function isNetworkDenied(core: CrotCore): boolean {
+  if (core.permissions.runtime.halted) return true;
+  const rules = core.permissions.runtime.policy.rules;
+  return rules.some((r) => r.state === "deny" && (r.operation === "network.request" || r.capability === "network.access"));
+}
+
+/**
+ * Control-plane HTTP fetch: no ExecutionGuard, no NetworkPolicy check.
+ * Callers MUST call isNetworkDenied() first.
+ */
+async function controlFetch(
+  url: string,
+  options: {
+    method?: string;
+    headers?: Record<string, string>;
+    body?: string;
+    signal?: AbortSignal;
+    timeoutMs?: number;
+  },
+): Promise<{ status: number; body: string }> {
+  const signal =
+    options.signal && options.timeoutMs
+      ? AbortSignal.any([options.signal, AbortSignal.timeout(options.timeoutMs)])
+      : options.signal ?? (options.timeoutMs ? AbortSignal.timeout(options.timeoutMs) : undefined);
+  const res = await fetch(url, {
+    method: options.method ?? "GET",
+    headers: options.headers,
+    body: options.body,
+    signal,
+  });
+  const body = await res.text();
+  return { status: res.status, body };
+}
+
+/**
+ * Streaming fetch for SSE chat completions.
+ * onChunk receives each raw Buffer chunk from the response body.
+ */
+async function controlFetchStream(
+  url: string,
+  options: {
+    headers?: Record<string, string>;
+    body?: string;
+    signal?: AbortSignal;
+    timeoutMs?: number;
+  },
+  onChunk: (chunk: Buffer) => void,
+  onStart?: (status: number, contentType: string) => void,
+): Promise<{ status: number; contentType: string }> {
+  const signal =
+    options.signal && options.timeoutMs
+      ? AbortSignal.any([options.signal, AbortSignal.timeout(options.timeoutMs)])
+      : options.signal ?? (options.timeoutMs ? AbortSignal.timeout(options.timeoutMs) : undefined);
+  const res = await fetch(url, {
+    method: "POST",
+    headers: options.headers,
+    body: options.body,
+    signal,
+  });
+  const contentType = res.headers.get("content-type") ?? "";
+  onStart?.(res.status, contentType);
+  if (res.body) {
+    const reader = res.body.getReader();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) onChunk(Buffer.from(value));
+    }
+  }
+  return { status: res.status, contentType };
+}
+
 import { ChatStartSchema, type ChatProvider, type ChatStart } from "./chat-protocol.js";
 
 export interface ProviderDiagnostic {
@@ -76,16 +160,30 @@ export interface ChatProviderConfig {
   endpoint: string;
   defaultModel?: string;
   username?: string;
+  /** "anthropic" for Anthropic-protocol servers; defaults to "openai" */
+  protocol?: "openai" | "anthropic";
   connectionError?: ProviderDiagnostic;
   checkedAt?: string;
   connectionStatus?: "connected" | "failed";
 }
+
+/** Free models available on OpenCode (Free & Zen) without an API key. */
+export const OPENCODE_FREE_MODELS: readonly string[] = [
+  "big-pickle",
+  "glm-4.7-free",
+  "minimax-m2.1-free",
+  "grok-code",
+  "deepseek-r1-free",
+  "meta-llama/llama-4-scout",
+];
 
 export const CHAT_ENDPOINTS: Record<ChatProvider, string> = {
   OpenAI: "https://api.openai.com/v1",
   Anthropic: "https://api.anthropic.com/v1",
   "Google Gemini": "https://generativelanguage.googleapis.com/v1beta/openai",
   OpenRouter: "https://openrouter.ai/api/v1",
+  "OpenCode (Free & Zen)": "https://opencode.ai/zen/v1",
+  "Custom API": "",
   "OpenAI-compatible": "",
   "Local HTTP": "http://127.0.0.1:1234/v1",
   OpenCode: "http://127.0.0.1:4096",
@@ -102,6 +200,7 @@ export const PROVIDER_NETWORK_HOSTS: Partial<Record<ChatProvider, readonly strin
   Anthropic: ["api.anthropic.com"],
   "Google Gemini": ["generativelanguage.googleapis.com"],
   OpenRouter: ["openrouter.ai"],
+  "OpenCode (Free & Zen)": ["opencode.ai"],
   "Notion Agents": ["api.notion.com"],
   "Local HTTP": ["127.0.0.1:1234", "localhost:1234"],
   OpenCode: ["127.0.0.1:4096", "localhost:4096"],
@@ -175,28 +274,41 @@ export class ChatRuntime {
     return [...this.conversations.keys()].at(-1);
   }
   providers(): Record<string, unknown>[] {
-    return (Object.keys(CHAT_ENDPOINTS) as ChatProvider[]).map((provider) => ({
-      provider,
-      endpoint: this.host.configuration(provider)?.endpoint ?? CHAT_ENDPOINTS[provider],
-      defaultModel: this.host.configuration(provider)?.defaultModel,
-      username: this.host.configuration(provider)?.username,
-      credentialRequired: provider !== "Local HTTP" && provider !== "OpenCode",
-      kind: provider === "OpenCode" || provider === "Notion Agents" ? "workspace" : "model",
-      connectionError: this.host.configuration(provider)?.connectionError,
-      checkedAt: this.host.configuration(provider)?.checkedAt,
-      connectionStatus: this.host.configuration(provider)?.connectionStatus,
-      configured: !!this.host.configuration(provider),
-      credentialStored: !!this.host.credential(provider),
-    }));
+    return (Object.keys(CHAT_ENDPOINTS) as ChatProvider[]).map((provider) => {
+      const config = this.host.configuration(provider);
+      return {
+        provider,
+        endpoint: config?.endpoint ?? CHAT_ENDPOINTS[provider],
+        defaultModel: config?.defaultModel,
+        username: config?.username,
+        protocol: config?.protocol ?? "openai",
+        credentialRequired: provider !== "Local HTTP" && provider !== "OpenCode" && provider !== "OpenCode (Free & Zen)",
+        kind: provider === "OpenCode" || provider === "Notion Agents" ? "workspace" : "model",
+        connectionError: config?.connectionError,
+        checkedAt: config?.checkedAt,
+        connectionStatus: config?.connectionStatus,
+        configured: !!config,
+        credentialStored: !!this.host.credential(provider),
+      };
+    });
   }
-  private settings(provider: ChatProvider): { endpoint: string; headers: Record<string, string> } {
+  private settings(provider: ChatProvider): { endpoint: string; headers: Record<string, string>; anthropic: boolean } {
     const config = this.host.configuration(provider);
     if (!config) return bad("Configure the chat provider first");
     const key = this.host.credential(provider);
-    if (provider !== "Local HTTP" && provider !== "OpenCode" && !key)
-      return bad("Provider credential is not configured");
+    // OpenCode Free & Zen: key is optional (free models need no key)
+    const keyRequired =
+      provider !== "Local HTTP" &&
+      provider !== "OpenCode" &&
+      provider !== "OpenCode (Free & Zen)";
+    if (keyRequired && !key) return bad("Provider credential is not configured");
+    // Determine if this provider uses Anthropic protocol
+    const anthropicProtocol =
+      provider === "Anthropic" ||
+      (provider === "Custom API" && config.protocol === "anthropic");
     return {
       endpoint: chatEndpoint(config.endpoint),
+      anthropic: anthropicProtocol,
       headers: {
         "content-type": "application/json",
         ...(provider === "OpenCode"
@@ -205,7 +317,7 @@ export class ChatRuntime {
             : {}
           : provider === "Notion Agents"
             ? { "Notion-Version": "2026-03-11", authorization: `Bearer ${key}` }
-            : provider === "Anthropic"
+            : anthropicProtocol
               ? { "anthropic-version": "2023-06-01", ...(key ? { "x-api-key": key } : {}) }
               : key
                 ? { authorization: `Bearer ${key}` }
@@ -220,19 +332,37 @@ export class ChatRuntime {
       return workspaceInventory(provider, (route, method, body) =>
         this.workspaceRequest(provider, this.host.context(), route, method, body),
       );
+    if (isNetworkDenied(this.host.core()))
+      throw new CrotError("PERMISSION_DENIED", "Runtime policy denies network.request", { operation: "network.request", missing: [] });
+    // OpenCode (Free & Zen): try /models but fall back to bundled free model list on failure
+    if (provider === "OpenCode (Free & Zen)") {
+      try {
+        const r = await controlFetch(`${endpoint}/models`, { headers, timeoutMs: 10000, signal: this.host.context().signal });
+        if (r.status === 200) {
+          let body: Record<string, unknown>;
+          try { body = record(JSON.parse(r.body)); } catch { body = {}; }
+          if (Array.isArray(body.data)) {
+            const fetched: string[] = [];
+            for (const item of array(body.data)) { const id = text(record(item).id); if (id && id.length <= 256) fetched.push(id); }
+            if (fetched.length > 0) return { ok: true, models: fetched.sort(), labels: { "big-pickle": "Big Pickle (free)", "glm-4.7-free": "GLM-4.7 (free)", "minimax-m2.1-free": "MiniMax M2.1 (free)" } };
+          }
+        }
+      } catch { /* fall through to bundled list */ }
+      return { ok: true, models: [...OPENCODE_FREE_MODELS].sort(), labels: Object.fromEntries(OPENCODE_FREE_MODELS.map(m => [m, `${m} (free)`])) };
+    }
     let cursor = "";
     for (let page = 0; page < 10; page++) {
-      const response = await this.host.core().network.request(this.host.context(), {
-        url: `${endpoint}/models${provider === "Anthropic" ? `?limit=100${cursor ? `&after_id=${encodeURIComponent(cursor)}` : ""}` : ""}`,
-        headers,
-        followRedirects: false,
-        maxResponseBytes: 256000,
-      });
-      if (response.status !== 200 || response.truncated)
+      const response = await controlFetch(
+        `${endpoint}/models${provider === "Anthropic" ? `?limit=100${cursor ? `&after_id=${encodeURIComponent(cursor)}` : ""}` : ""}`,
+        { headers, timeoutMs: 30000, signal: this.host.context().signal },
+      );
+      // 404 or non-200 on /models is common for custom servers — treat as empty (user enters model manually).
+      if (response.status === 404 || (provider === "Custom API" && response.status !== 200))
+        return { ok: true, models: [] };
+      if (response.status !== 200)
         throw new CrotError("OPERATION_FAILED", "Model inventory request failed", {
           stage: "models",
           httpStatus: response.status,
-          truncated: response.truncated,
         });
       let body: Record<string, unknown>;
       try {
@@ -260,17 +390,17 @@ export class ChatRuntime {
     method: "GET" | "POST" = "GET",
     body?: unknown,
   ): Promise<Record<string, unknown>> {
+    if (isNetworkDenied(this.host.core()))
+      throw new CrotError("PERMISSION_DENIED", "Runtime policy denies network.request", { operation: "network.request", missing: [] });
     const { endpoint, headers } = this.settings(provider);
-    const response = await this.host.core().network.request(context, {
-      url: endpoint + route,
-      timeoutMs: route.endsWith("/message") ? 120000 : 30000,
+    const response = await controlFetch(endpoint + route, {
       method,
       headers,
-      followRedirects: false,
+      timeoutMs: route.endsWith("/message") ? 120000 : 30000,
+      signal: context.signal,
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-      maxResponseBytes: 256000,
     });
-    if (response.status < 200 || response.status >= 300 || response.truncated)
+    if (response.status < 200 || response.status >= 300)
       throw new CrotError("OPERATION_FAILED", "Workspace agent request failed", {
         stage: "workspace",
         httpStatus: response.status,
@@ -405,8 +535,7 @@ export class ChatRuntime {
       this.bounded(c);
       return;
     }
-    const anthropic = p.provider === "Anthropic",
-      { endpoint, headers } = this.settings(p.provider);
+    const { endpoint, headers, anthropic } = this.settings(p.provider);
     const content: unknown[] = [{ type: "text", text: p.message }];
     for (const a of p.attachments) {
       const bytes = Buffer.from(a.data, "base64");
@@ -488,14 +617,13 @@ export class ChatRuntime {
           return bad("Provider tool arguments exceed their limit");
         this.bounded(c);
       });
-      let streaming = false;
-      const response = await this.host.core().network.request(
-        context,
+      if (isNetworkDenied(this.host.core()))
+        return bad("Runtime policy denies network.request");
+      let streamingOk = false;
+      const { status: streamStatus, contentType } = await controlFetchStream(
+        `${endpoint}/${anthropic ? "messages" : "chat/completions"}`,
         {
-          url: `${endpoint}/${anthropic ? "messages" : "chat/completions"}`,
-          method: "POST",
           headers,
-          followRedirects: false,
           body: JSON.stringify({
             model: p.model,
             messages,
@@ -503,19 +631,18 @@ export class ChatRuntime {
             ...(p.provider === "OpenAI" ? { max_completion_tokens: 4096 } : { max_tokens: 4096 }),
             ...(tools.length ? { tools } : {}),
           }),
-          maxResponseBytes: 1024 * 1024,
+          signal: context.signal,
+          timeoutMs: 120000,
         },
-        {
-          start: (status, type) => {
-            streaming = status >= 200 && status < 300 && type.includes("text/event-stream");
-          },
-          data: (chunk) => {
-            if (streaming) stream.push(chunk);
-          },
+        (chunk) => {
+          if (streamingOk) stream.push(chunk);
+        },
+        (status, ct) => {
+          streamingOk = status >= 200 && status < 300 && ct.includes("text/event-stream");
         },
       );
-      if (!streaming || response.truncated || response.status < 200 || response.status >= 300)
-        return bad(`Provider streaming failed (HTTP ${response.status})`);
+      if (!streamingOk || streamStatus < 200 || streamStatus >= 300)
+        return bad(`Provider streaming failed (HTTP ${streamStatus})`);
       stream.end();
       if (!completed) return bad("Provider stream ended without completion");
       if (!calls.size) return;

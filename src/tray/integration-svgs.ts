@@ -1,30 +1,39 @@
-/** SVG icon strings for the Official Integrations card. No backticks allowed here — they are embedded in a template literal. */
+/** SVG icon strings for the Official Integrations card. No backticks — embedded in template literal. */
 
-/** Notion: black rounded-rect document with page lines */
+/** Notion: black rounded-corner document with ruled lines */
 export const NOTION_SVG =
   "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100' aria-hidden='true'>" +
   "<rect width='100' height='100' rx='16' fill='#000'/>" +
-  "<rect x='28' y='22' width='44' height='56' rx='5' fill='#fff'/>" +
-  "<path d='M44 22v16a4 4 0 01-4 4H24' fill='none' stroke='#fff' stroke-width='2'/>" +
-  "<rect x='34' y='46' width='32' height='4' rx='2' fill='#888'/>" +
-  "<rect x='34' y='56' width='32' height='4' rx='2' fill='#888'/>" +
-  "<rect x='34' y='66' width='20' height='4' rx='2' fill='#888'/>" +
+  "<rect x='26' y='20' width='48' height='60' rx='6' fill='#fff'/>" +
+  "<path d='M26 20v14a6 6 0 006 6h-6' fill='none' stroke='#fff' stroke-width='1.5'/>" +
+  "<rect x='33' y='44' width='34' height='4' rx='2' fill='#ccc'/>" +
+  "<rect x='33' y='54' width='34' height='4' rx='2' fill='#ccc'/>" +
+  "<rect x='33' y='64' width='22' height='4' rx='2' fill='#ccc'/>" +
   "</svg>";
 
-/** Claude: Anthropic orange background with stylised spark/letter */
+/**
+ * Claude: Anthropic terracotta/orange background with an 8-ray starburst spark
+ * (the official Anthropic/Claude brand mark — radiating lines forming a spark/asterisk).
+ */
 export const CLAUDE_SVG =
   "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100' aria-hidden='true'>" +
-  "<rect width='100' height='100' rx='20' fill='#DA7756'/>" +
-  "<path fill='#fff' d='M50 20c-1.6 0-3.1 1-3.7 2.5L32 72h9l3.5-12h11L59 72h9L54.7 22.5A4 4 0 0050 20zm0 16 4 15h-8l4-15z'/>" +
+  "<rect width='100' height='100' rx='20' fill='#D97756'/>" +
+  // 8-ray spark centered at 50,50
+  "<g stroke='#fff' stroke-width='6.5' stroke-linecap='round' transform='translate(50,50)'>" +
+  "<line x1='0' y1='-26' x2='0' y2='26'/>" +
+  "<line x1='26' y1='0' x2='-26' y2='0'/>" +
+  "<line x1='18.4' y1='-18.4' x2='-18.4' y2='18.4'/>" +
+  "<line x1='18.4' y1='18.4' x2='-18.4' y2='-18.4'/>" +
+  "</g>" +
   "</svg>";
 
-/** n8n: pink background with three connected workflow nodes */
+/** n8n: pink/magenta background with three connected workflow node circles */
 export const N8N_SVG =
   "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100' aria-hidden='true'>" +
   "<rect width='100' height='100' rx='20' fill='#EA4B71'/>" +
-  "<circle cx='25' cy='55' r='13' fill='#fff'/>" +
-  "<circle cx='75' cy='55' r='13' fill='#fff'/>" +
-  "<circle cx='50' cy='28' r='10' fill='#fff'/>" +
-  "<rect x='34' y='50' width='32' height='9' rx='4.5' fill='#fff'/>" +
+  "<circle cx='22' cy='55' r='13' fill='#fff'/>" +
+  "<circle cx='78' cy='55' r='13' fill='#fff'/>" +
+  "<circle cx='50' cy='28' r='11' fill='#fff'/>" +
+  "<rect x='31' y='50' width='38' height='9' rx='4.5' fill='#fff'/>" +
   "<rect x='45' y='28' width='10' height='30' rx='5' fill='#fff'/>" +
   "</svg>";

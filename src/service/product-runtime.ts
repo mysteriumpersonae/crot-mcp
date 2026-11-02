@@ -754,6 +754,7 @@ export class ProductRuntime {
           endpoint,
           ...(p.username !== undefined ? { username: String(p.username) } : {}),
           ...(p.defaultModel !== undefined ? { defaultModel: String(p.defaultModel) } : {}),
+          ...(p.protocol !== undefined ? { protocol: p.protocol as "openai" | "anthropic" } : {}),
         };
         if (p.credential !== undefined) this.vault.credentials[`chat:${provider}`] = String(p.credential);
         await this.persist();
