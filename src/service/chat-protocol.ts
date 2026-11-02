@@ -4,7 +4,6 @@ export const ChatProviderSchema = z.enum([
   "Anthropic",
   "Google Gemini",
   "OpenRouter",
-  "River",
   "OpenAI-compatible",
   "Local HTTP",
   "OpenCode",
