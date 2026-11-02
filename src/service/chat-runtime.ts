@@ -30,9 +30,14 @@ export function providerDiagnostic(error: unknown): ProviderDiagnostic {
   const d = error.details,
     status = Number(d?.httpStatus),
     errno = String(d?.errno ?? "");
-  // PERMISSION_DENIED from the ExecutionGuard means the network policy blocked it.
+  // PERMISSION_DENIED from the ExecutionGuard (network policy block or explicit deny rule):
+  // - network policy block: details.missing is [] (empty array, explicitly set)
+  // - explicit runtime deny: details.missing is [] as well, but both map to NETWORK_GUARD_BLOCKED
+  //   because from the UI perspective the owner blocked network access.
+  // - bare PERMISSION_DENIED with no details (e.g. other service denials) → pass through as-is.
   if (error.code === "PERMISSION_DENIED") {
-    return { code: "NETWORK_GUARD_BLOCKED", stage: "network" };
+    if (Array.isArray(d?.missing)) return { code: "NETWORK_GUARD_BLOCKED", stage: "network" };
+    return { code: "PERMISSION_DENIED", stage: "network" };
   }
   // ECONNREFUSED on a loopback address → local server not running.
   if (errno === "ECONNREFUSED") {

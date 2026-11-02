@@ -581,6 +581,14 @@ export class CrotCore {
     return inspectProject(this, context);
   }
 
+  /**
+   * Add hosts to the live network allow-list (owner/control-plane action only).
+   * Changes are in-memory for this process lifetime and do not modify the config file.
+   */
+  addNetworkAllow(hosts: readonly string[]): void {
+    this.permissions.addNetworkAllow(hosts);
+  }
+
   status(): CrotStatus {
     return {
       version: CORE_VERSION,
