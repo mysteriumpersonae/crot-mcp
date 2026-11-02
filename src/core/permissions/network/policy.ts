@@ -90,6 +90,9 @@ export interface NetworkPolicySummary {
 }
 
 export class NetworkPolicy {
+  /** Owner-granted runtime additions (e.g. custom AI provider endpoints). Never persisted. */
+  private readonly extraAllow: NetworkRule[] = [];
+
   private constructor(
     private readonly allowRules: readonly NetworkRule[],
     private readonly denyRules: readonly NetworkRule[],
@@ -107,9 +110,31 @@ export class NetworkPolicy {
     return new NetworkPolicy([], []);
   }
 
+  /**
+   * Add hosts to the live allow-list at runtime (owner action only).
+   * Parsed in `full_control` mode so that any valid public hostname is accepted.
+   * Silently ignores invalid or duplicate entries.
+   */
+  addAllow(hosts: readonly string[]): void {
+    const existing = new Set([
+      ...this.allowRules.map((r) => r.source),
+      ...this.extraAllow.map((r) => r.source),
+    ]);
+    for (const h of hosts) {
+      if (existing.has(h)) continue;
+      try {
+        const rule = parseRule(h, "allow", "full_control");
+        this.extraAllow.push(rule);
+        existing.add(h);
+      } catch {
+        // ignore malformed entries
+      }
+    }
+  }
+
   summary(): NetworkPolicySummary {
     return {
-      allow: this.allowRules.map((r) => r.source),
+      allow: [...this.allowRules, ...this.extraAllow].map((r) => r.source),
       deny: this.denyRules.map((r) => r.source),
       defaultAllowedPorts: DEFAULT_ALLOWED_PORTS,
     };
@@ -137,14 +162,15 @@ export class NetworkPolicy {
         }
       }
     }
-    const allowedBy = this.allowRules.find(
+    const allAllowRules = [...this.allowRules, ...this.extraAllow];
+    const allowedBy = allAllowRules.find(
       (r) => portMatches(r.port, target.port, "allow") && hostMatches(r.host, target),
     );
     if (!allowedBy) {
       return {
         allowed: false,
         reason:
-          this.allowRules.length === 0
+          allAllowRules.length === 0
             ? `Network destination ${where} is not allowed: the network policy has no allow rules (permissions.network.allow).`
             : `Network destination ${where} is not allowed by the network policy (permissions.network.allow).`,
       };
@@ -156,7 +182,7 @@ export class NetworkPolicy {
       for (const address of addresses) {
         const cls: AddressClass = classifyAddress(address);
         if (cls === "public") continue;
-        const explicit = this.allowRules.some(
+        const explicit = allAllowRules.some(
           (r) =>
             r.host.kind === "address" &&
             portMatches(r.port, target.port, "allow") &&

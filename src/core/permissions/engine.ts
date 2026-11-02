@@ -364,6 +364,14 @@ export class PermissionEngine {
     return this.networkPolicy;
   }
 
+  /**
+   * Add hosts to the live network allow-list (owner action).
+   * These additions are in-memory only and survive only for this process lifetime.
+   */
+  addNetworkAllow(hosts: readonly string[]): void {
+    this.networkPolicy.addAllow(hosts);
+  }
+
   get protected(): readonly string[] {
     return this.protectedPaths;
   }

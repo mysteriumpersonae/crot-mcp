@@ -150,9 +150,15 @@ export interface ProductHost {
   holdActivity?(work: () => Promise<unknown>): Promise<unknown>;
   tokens?: import("./client-tokens.js").ClientTokenRegistry;
   emergencyStop?(): Promise<Record<string, unknown>>;
-  /** Auto-allow a network host for AI provider requests (owner action). */
-  addNetworkAllow?(hosts: readonly string[]): Promise<void>;
   recordControlEvent?: (event: import("../core/audit/audit.js").ControlAuditRecord) => Promise<void>;
+}
+/** Extract the hostname from a provider endpoint URL, for use in addNetworkAllow. */
+function endpointHost(url: string): string | undefined {
+  try {
+    return new URL(url).hostname || undefined;
+  } catch {
+    return undefined;
+  }
 }
 const fail = (message: string): never => {
   throw new CrotError("INVALID_INPUT", message);
@@ -309,6 +315,21 @@ export class ProductRuntime {
     if (!active) fail("Active project is missing from the registry");
     if (active && active.path !== root) await host.selectWorkspace(active.path);
     if (r.state.browserPolicy) host.core().browser.setTabPolicy(r.state.browserPolicy);
+    // Pre-allow network hosts for all saved provider configurations so that
+    // chat.models / chat.generate do not hit NETWORK_GUARD_BLOCKED on restart.
+    {
+      const { PROVIDER_NETWORK_HOSTS } = await import("./chat-runtime.js");
+      const hostsToAllow = new Set<string>();
+      for (const [provider, config] of Object.entries(r.state.chatProviders ?? {})) {
+        const p = provider as ChatProvider;
+        for (const h of PROVIDER_NETWORK_HOSTS[p] ?? []) hostsToAllow.add(h);
+        if (config?.endpoint) {
+          const h = endpointHost(config.endpoint);
+          if (h) hostsToAllow.add(h);
+        }
+      }
+      if (hostsToAllow.size) host.core().addNetworkAllow([...hostsToAllow]);
+    }
     await r.persist();
     r.poller = setInterval(() => void r.pollProcesses().catch(() => undefined), 1200);
     r.poller.unref();
@@ -737,10 +758,15 @@ export class ProductRuntime {
         if (p.credential !== undefined) this.vault.credentials[`chat:${provider}`] = String(p.credential);
         await this.persist();
         // Auto-allow the provider's network hosts so ExecutionGuard does not block the request.
-        const { PROVIDER_NETWORK_HOSTS } = await import("./chat-runtime.js");
-        const hostsToAllow = PROVIDER_NETWORK_HOSTS[provider];
-        if (hostsToAllow?.length && this.host.addNetworkAllow) {
-          await this.host.addNetworkAllow(hostsToAllow).catch(() => undefined);
+        {
+          const { PROVIDER_NETWORK_HOSTS } = await import("./chat-runtime.js");
+          const staticHosts: readonly string[] = PROVIDER_NETWORK_HOSTS[provider] ?? [];
+          // For providers with a custom endpoint (e.g. OpenAI-compatible), also allow the endpoint host.
+          const customHost = endpoint ? endpointHost(endpoint) : undefined;
+          const hostsToAllow = customHost && !staticHosts.includes(customHost)
+            ? [...staticHosts, customHost]
+            : staticHosts;
+          if (hostsToAllow.length) this.host.core().addNetworkAllow(hostsToAllow);
         }
         return { ok: true, providers: this.chat.providers(), current: this.chat.current };
       }
