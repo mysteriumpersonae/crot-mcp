@@ -174,6 +174,18 @@ export async function runAgentsScenarios({
     await until(`${pill}?.getAttribute('aria-pressed')==='true'`);
     await evaluate(`${pill}.click()`);
     await until("document.querySelector('dialog.chat-model-pop[open]')");
+    assert(
+      await evaluate(
+        `(()=>{const pop=document.querySelector('dialog.chat-model-pop[open]'),bar=document.querySelector('.chat-agents'),p=pop.getBoundingClientRect(),b=${pill}.getBoundingClientRect(),s=getComputedStyle(pop);return pop.parentElement===bar&&s.position==='absolute'&&Math.abs(parseFloat(s.bottom)-(bar.clientHeight+8))<1&&p.bottom<=b.top&&p.top>=0&&p.left>=0&&p.right<=innerWidth;})()`,
+      ),
+      "Model popover must open upward (bottom: calc(100% + 8px)) inside the window",
+    );
+    assert(
+      await evaluate(
+        `(()=>{const bar=getComputedStyle(document.querySelector('.chat-agent-pills')),b=${pill},s=getComputedStyle(b),i=b.querySelector('svg,img').getBoundingClientRect();return bar.justifyContent==='flex-start'&&b.offsetHeight>=28&&b.offsetHeight<=30&&s.fontSize==='12px'&&Math.round(i.width)===14;})()`,
+      ),
+      "Provider chips must be left-aligned, 28-30px high with 14px icons and 12px text",
+    );
     await until(
       `[...document.querySelectorAll('dialog.chat-model-pop[open] .chat-menu-item')].some(b=>b.textContent.includes(${JSON.stringify(saved.defaultModel)}))`,
     );
@@ -197,6 +209,22 @@ export async function runAgentsScenarios({
     (await evaluate("document.querySelector('.sidebar').getBoundingClientRect().width")) === sidebar,
     "Sidebar geometry changed",
   );
+  // Column headers (round icon + title) must never be clipped at the top, at any window size.
+  for (const [w, h] of [
+    [1584, 960],
+    [1280, 720],
+    [1024, 640],
+    [900, 560],
+    [390, 844],
+  ]) {
+    await size(w, h);
+    assert(
+      await evaluate(
+        "(()=>{const heads=[...document.querySelectorAll('.agents-column-head')];return heads.length>=2&&heads.every(head=>{head.scrollIntoView({block:'nearest'});const r=head.getBoundingClientRect(),col=head.closest('.agents-column').getBoundingClientRect();if(r.height<16||r.top<col.top-0.5||r.top<-0.5)return false;let p=head.parentElement;while(p&&p!==document.body){const s=getComputedStyle(p);if(s.overflowY!=='visible'&&p.getBoundingClientRect().top>r.top+0.5)return false;p=p.parentElement;}const hit=document.elementFromPoint(r.left+Math.min(12,r.width/2),r.top+Math.min(8,r.height/2));return !!hit&&head.contains(hit);});})()",
+      ),
+      `Agents column headers are clipped at ${w}x${h}`,
+    );
+  }
   await size(1584, 960);
   await writeFile(
     path.join(artifacts, "layout.json"),

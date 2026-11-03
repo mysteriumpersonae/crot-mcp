@@ -75,6 +75,12 @@ describe("MCP Server Access remote tunnel toggle", () => {
     expect(AGENTS_CENTER_RENDERER).toContain("Удалённый туннель (MCP Relay)");
     expect(AGENTS_CENTER_RENDERER).toContain("api.action('remote.setMode',{enabled})");
     expect(AGENTS_CENTER_RENDERER).toContain("remoteToggle.input.dataset.remoteMode=''");
+    // Every provider card has an explicit Disconnect button that calls chat.remove.
+    expect(AGENTS_CENTER_RENDERER).toContain("cloudRemove.dataset.cloudRemove=''");
+    expect(AGENTS_CENTER_RENDERER).toContain("localRemove.dataset.localRemove=''");
+    expect(AGENTS_CENTER_RENDERER).toContain("wsRemove.dataset.workspaceRemove=''");
+    expect(AGENTS_CENTER_RENDERER.match(/button\('Disconnect',/g)?.length).toBeGreaterThanOrEqual(3);
+    expect(AGENTS_CENTER_RENDERER).toContain("rpc('chat.remove',{provider:'Local HTTP'})");
     expect(AGENTS_CENTER_RENDERER).toContain("let remoteOn=view.remoteMode===true");
     // Copy URL, silent token generation and Generate / rotate all turn the tunnel on.
     expect(AGENTS_CENTER_RENDERER).toContain("async()=>{ensureRemote();await copy(displayRelayUrl,relayUrlCopy);}");

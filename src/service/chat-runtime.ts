@@ -191,9 +191,12 @@ export const CHAT_ENDPOINTS: Record<ChatProvider, string> = {
 };
 
 /**
- * Hosts that CROT adds to network.allow when an owner saves a provider.
- * Kept for backwards compatibility and informational use; chat-runtime now
- * uses native fetch() so the ExecutionGuard no longer blocks these requests.
+ * Hosts that CROT adds to the live network.allow list when an owner saves a
+ * provider (chat.configure) or when saved providers are restored
+ * (ProductRuntime.open). Provider HTTP calls themselves use control-plane
+ * fetch(), but the allow entries keep provider hosts reachable for any
+ * guard-checked path, so the default `permissions.network.allow: []` never
+ * yields NETWORK_GUARD_BLOCKED for an owner-configured provider.
  */
 export const PROVIDER_NETWORK_HOSTS: Partial<Record<ChatProvider, readonly string[]>> = {
   OpenAI: ["api.openai.com"],
@@ -202,9 +205,29 @@ export const PROVIDER_NETWORK_HOSTS: Partial<Record<ChatProvider, readonly strin
   OpenRouter: ["openrouter.ai"],
   "OpenCode (Free & Zen)": ["opencode.ai"],
   "Notion Agents": ["api.notion.com"],
-  "Local HTTP": ["127.0.0.1:1234", "localhost:1234"],
+  // LM Studio (1234) and Ollama (11434) defaults.
+  "Local HTTP": ["127.0.0.1:1234", "localhost:1234", "127.0.0.1:11434", "localhost:11434"],
   OpenCode: ["127.0.0.1:4096", "localhost:4096"],
 };
+
+/**
+ * Network allow entries for one configured provider: its static preset hosts
+ * plus the host of its endpoint (custom or preset). Uses URL.host so that a
+ * non-default port (e.g. 127.0.0.1:11434, api.example.com:8443) is kept —
+ * a portless allow rule covers only ports 80 and 443.
+ */
+export function providerNetworkHosts(provider: ChatProvider, endpoint?: string): string[] {
+  const hosts = new Set<string>(PROVIDER_NETWORK_HOSTS[provider] ?? []);
+  const url = endpoint || CHAT_ENDPOINTS[provider];
+  if (url)
+    try {
+      const host = new URL(url).host.toLowerCase();
+      if (host) hosts.add(host);
+    } catch {
+      // Malformed endpoints are rejected by chatEndpoint(); nothing to allow.
+    }
+  return [...hosts];
+}
 
 /**
  * Migrate a legacy provider name (e.g. "River") to a supported provider.
@@ -286,7 +309,8 @@ export class ChatRuntime {
         credentialRequired:
           provider !== "Local HTTP" && provider !== "OpenCode" && provider !== "OpenCode (Free & Zen)",
         kind: provider === "OpenCode" || provider === "Notion Agents" ? "workspace" : "model",
-        connectionError: config?.connectionError,
+        // A verified connection never carries a stale diagnostic (e.g. an old NETWORK_GUARD_BLOCKED).
+        connectionError: config?.connectionStatus === "connected" ? undefined : config?.connectionError,
         checkedAt: config?.checkedAt,
         connectionStatus: config?.connectionStatus,
         configured: !!config,

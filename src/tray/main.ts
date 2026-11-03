@@ -511,11 +511,16 @@ function registerIpc(): void {
     });
     if (result.canceled || !result.filePaths[0]) return null;
     const folderPath = result.filePaths[0];
-    // Register as a project and select it
+    // Register the folder (idempotent for known paths) and make it the active project.
     try {
-      await controller.product("projects.open" as ProductMethod, { path: folderPath });
+      const opened = (await controller.product("projects.open" as ProductMethod, { path: folderPath })) as {
+        project?: { id?: unknown };
+      };
+      const id = opened?.project?.id;
+      if (typeof id !== "string") return null;
+      await controller.product("projects.select" as ProductMethod, { id });
     } catch {
-      // May already exist; ignore
+      return null;
     }
     return folderPath;
   });
