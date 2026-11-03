@@ -225,6 +225,13 @@ export interface CommercialStatus {
 }
 export interface ControlOverview {
   readonly localMcpUrl?: string;
+  /**
+   * Persistent local device ID (base32, 26 chars) stored in service state.
+   * Used to build the canonical relay URL `https://crot.network/d/<localDeviceId>/mcp`
+   * for unpaired devices using local Bearer token authentication.
+   * Present whenever the service has generated or loaded this ID.
+   */
+  readonly localDeviceId?: string;
   /** Owner UI presentation only: verified account sign-in, not device/remote entitlement. */
   readonly accountSignedIn?: boolean;
   readonly mcpArgs?: readonly string[];

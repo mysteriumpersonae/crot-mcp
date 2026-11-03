@@ -26,7 +26,8 @@ import {
   type TunnelManagerStatus,
 } from "../tunnel/device-tunnel.js";
 import { ControlCenter, type ControlConnection, type RemoteEntry } from "./control-center.js";
-import type { TunnelCredentialResult } from "./device-binding.js";
+import type { TunnelCredential, TunnelCredentialResult } from "./device-binding.js";
+import { selfRegistrationChallenge } from "../identity/device-credential.js";
 import type { ControlOverview, ControlRequest } from "./protocol.js";
 
 /** Test seams of the tunnel (ServiceOptions.tunnel). */
@@ -37,6 +38,8 @@ export interface RemoteTunnelSeams {
   readonly backoff?: DeviceTunnelManagerOptions["backoff"];
   /** How often the service re-checks remote mode and the binding (default 2 s). */
   readonly watchIntervalMs?: number;
+  /** The relay's HTTP origin for self-registration (default `https://<relayHost>`). */
+  readonly registerOrigin?: (relayHost: string) => string;
 }
 
 export interface RemoteTunnelOptions extends RemoteTunnelSeams {
@@ -47,6 +50,12 @@ export interface RemoteTunnelOptions extends RemoteTunnelSeams {
   readonly resourceMetadataUrl: () => string | undefined;
   readonly addRemoteEntry: (entry: RemoteEntry) => () => void;
   readonly credential: () => TunnelCredentialResult;
+  /**
+   * Self-registered credential (owner-approved): used while the device is not paired.
+   * Its tunnel targets the loopback HTTP server, which validates client Bearer tokens.
+   */
+  readonly selfCredential?: () => TunnelCredential | undefined;
+  readonly selfTargetPort?: () => number | undefined;
   readonly remoteMode: () => boolean;
   readonly software: string;
   readonly log: (message: string) => void;
@@ -100,6 +109,8 @@ export class RemoteTunnel {
   private watcher: NodeJS.Timeout | undefined;
   private queue: Promise<void> = Promise.resolve();
   private closed = false;
+  private mode: "paired" | "self" | undefined;
+  private selfRegistered: string | undefined;
 
   constructor(private readonly options: RemoteTunnelOptions) {}
 
@@ -154,7 +165,27 @@ export class RemoteTunnel {
   private async syncOnce(): Promise<void> {
     if (this.closed) return;
     const credential = this.options.credential();
-    const wanted = this.options.remoteMode() && credential.ok;
+    const remote = this.options.remoteMode();
+    const selfPort = this.options.selfTargetPort?.();
+    const self = !credential.ok && remote && selfPort !== undefined ? this.options.selfCredential?.() : undefined;
+    const mode = remote && credential.ok ? "paired" : self ? "self" : undefined;
+    if (this.manager && this.mode !== mode) {
+      const manager = this.manager;
+      this.manager = undefined;
+      const code = mode === undefined && !credential.ok ? "unpaired" : "remote_disabled";
+      await manager.stop(code);
+      this.options.log(`tunnel: closed (${code})`);
+      this.options.onStatus?.();
+    }
+    if (mode === "self" && self && selfPort !== undefined && !this.manager) {
+      if (!(await this.selfRegister(self))) return;
+      this.mode = "self";
+      this.manager = this.newManager(() => this.options.selfCredential?.(), selfPort);
+      this.manager.start();
+      this.options.log("tunnel: remote mode on, self-registered device; connecting to the relay");
+      return;
+    }
+    const wanted = mode === "paired";
     if (wanted && !this.manager) {
       if (!this.server) {
         const http = this.options.http;
@@ -168,36 +199,68 @@ export class RemoteTunnel {
         });
         this.unregister = this.options.addRemoteEntry(this.server);
       }
-      const http = this.options.http;
-      const maxStreams = Math.min(
-        MAX_STREAMS_CAP,
-        (http.maxConcurrentRequests ?? DEFAULT_MAX_CONCURRENT_REQUESTS) + http.maxSessions,
-      );
-      const url = this.options.url ?? DeviceTunnel.urlFor;
-      this.manager = new DeviceTunnelManager({
-        credential: () => {
-          const c = this.options.credential();
-          return c.ok ? c.credential : undefined;
-        },
-        url: (c) => url(c.relayHost),
-        target: { host: "127.0.0.1", port: this.server.port },
-        maxStreams,
-        software: this.options.software,
-        ...(this.options.timing ? { timing: this.options.timing } : {}),
-        ...(this.options.backoff ? { backoff: this.options.backoff } : {}),
-        log: this.options.log,
-        onStatus: () => this.options.onStatus?.(),
-      });
+      this.mode = "paired";
+      this.manager = this.newManager(() => {
+        const c = this.options.credential();
+        return c.ok ? c.credential : undefined;
+      }, this.server.port);
       this.manager.start();
       this.options.log("tunnel: remote mode on and paired; connecting to the relay");
-    } else if (!wanted && this.manager) {
+    } else if (!wanted && this.manager && this.mode === "paired") {
       const manager = this.manager;
       this.manager = undefined;
       const code = credential.ok ? "remote_disabled" : "unpaired";
       await manager.stop(code);
+      this.mode = undefined;
       this.options.log(`tunnel: closed (${code})`);
       this.options.onStatus?.();
     }
+  }
+
+  private newManager(credential: () => TunnelCredential | undefined, port: number): DeviceTunnelManager {
+    const http = this.options.http;
+    const maxStreams = Math.min(
+      MAX_STREAMS_CAP,
+      (http.maxConcurrentRequests ?? DEFAULT_MAX_CONCURRENT_REQUESTS) + http.maxSessions,
+    );
+    const url = this.options.url ?? DeviceTunnel.urlFor;
+    return new DeviceTunnelManager({
+      credential,
+      url: (c) => url(c.relayHost),
+      target: { host: "127.0.0.1", port },
+      maxStreams,
+      software: this.options.software,
+      ...(this.options.timing ? { timing: this.options.timing } : {}),
+      ...(this.options.backoff ? { backoff: this.options.backoff } : {}),
+      log: this.options.log,
+      onStatus: () => this.options.onStatus?.(),
+    });
+  }
+
+  /** Register the self credential's key at the relay once (idempotent there). */
+  private async selfRegister(c: TunnelCredential): Promise<boolean> {
+    const key = `${c.relayHost}/${c.deviceId}`;
+    if (this.selfRegistered === key) return true;
+    const origin = this.options.registerOrigin?.(c.relayHost) ?? `https://${c.relayHost}`;
+    try {
+      const res = await fetch(`${origin}/d/${c.deviceId}/self-register`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          publicKey: c.publicKey,
+          proof: c.prove(selfRegistrationChallenge(c.deviceId)).toString("base64url"),
+        }),
+      });
+      await res.text().catch(() => "");
+      if (res.status === 200 || res.status === 201) {
+        this.selfRegistered = key;
+        return true;
+      }
+      this.options.log(`tunnel: self-registration refused (${res.status})`);
+    } catch (error) {
+      this.options.log(`tunnel: self-registration failed (${error instanceof Error ? error.message : String(error)})`);
+    }
+    return false;
   }
 
   /** Shutdown: GOAWAY shutting_down, then the relay entry point closes. */

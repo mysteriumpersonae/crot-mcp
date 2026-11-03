@@ -36,6 +36,8 @@ export interface RelayConfig {
   readonly metricsTokenFile?: string;
   readonly tls?: { readonly certFile: string; readonly keyFile: string };
   readonly exchangeDeadlineMs: number;
+  /** Owner-approved: devices may self-register a key-derived device id; the device validates client Bearer tokens. */
+  readonly selfRegistration?: boolean;
 }
 
 const FIELDS = [
@@ -58,6 +60,7 @@ const FIELDS = [
   "registryFile",
   "tls",
   "exchangeDeadlineMs",
+  "selfRegistration",
 ];
 
 /** Validate a configuration object; throws with the first problem. */
@@ -146,9 +149,12 @@ export function parseRelayConfig(value: unknown): RelayConfig {
       throw new Error("invalid billing configuration");
     billing = b;
   }
+  if (v.selfRegistration !== undefined && typeof v.selfRegistration !== "boolean")
+    throw new Error("selfRegistration must be a boolean");
   if (v.artifactDirectory !== undefined && (typeof v.artifactDirectory !== "string" || !v.artifactDirectory))
     throw new Error("invalid artifactDirectory");
   return {
+    ...(v.selfRegistration === true ? { selfRegistration: true } : {}),
     artifactDirectory: v.artifactDirectory as string | undefined,
     accountFile,
     portalClientIds,
