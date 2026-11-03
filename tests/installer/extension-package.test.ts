@@ -23,7 +23,7 @@ describe("WP-35 extension store package", () => {
     expect(createHash("sha256").update(first).digest("hex")).toBe(one.digest);
     expect(one.files).toContain("manifest.json");
     expect(one.files.some((f: string) => f.startsWith("dist/"))).toBe(true);
-    expect(one.files).toHaveLength(35);
+    expect(one.files).toHaveLength(36);
     expect(one.files.some((f: string) => /(?:test|fixture|node_modules|\.map$|\.ts$|source\.json)/.test(f))).toBe(
       false,
     );

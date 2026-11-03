@@ -397,7 +397,19 @@ footer a {
 
 @media (max-width: 600px) {
   header {
-    padding: 0 20px;
+    padding: 0 16px;
+    gap: 8px;
+  }
+  .header-right {
+    gap: 6px;
+    min-width: 0;
+  }
+  .header-right .btn {
+    padding: 6px 12px;
+  }
+  /* The brand already links to the site; keep the narrow header within the viewport. */
+  .header-right .btn-ghost {
+    display: none;
   }
   .hero,
   .section {
