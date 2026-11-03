@@ -229,6 +229,7 @@ export async function packageExtension({
         "popup.html",
         "popup.js",
         "welcome.html",
+        "welcome.css",
         "ui.css",
         "popup.css",
       ].map(async (name) => ({

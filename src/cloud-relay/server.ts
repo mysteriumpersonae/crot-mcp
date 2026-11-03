@@ -88,6 +88,9 @@ export const SUPPORTED_MAJORS: readonly string[] = [TUNNEL_V1];
 const MCP_PATH = /^\/d\/([a-z2-7]{26})\/mcp$/;
 const REGISTER_PATH = /^\/d\/([a-z2-7]{26})\/register$/;
 const SELF_REGISTER_PATH = /^\/d\/([a-z2-7]{26})\/self-register$/;
+const DEREGISTER_PATH = /^\/d\/([a-z2-7]{26})\/deregister$/;
+/** Any device-scoped path; handled by the relay router, never by downloads or public pages. */
+const DEVICE_PREFIX = /^\/d\//;
 /** Account marker of self-registered devices (no cloud account). */
 export const SELF_REGISTERED_ACCOUNT = "self-registered";
 
@@ -480,17 +483,27 @@ export class CloudRelay {
     const target = req.url ?? "";
     const q = target.indexOf("?");
     const pathname = q === -1 ? target : target.slice(0, q);
-    // Resolve public HTML before every asynchronous API/download/MCP dispatcher.
+    // Device routes (`/d/<deviceId>/...` and their PRM) are dispatched first: MCP POSTs and
+    // self-registration must never fall through to public pages or release downloads (which answer
+    // non-GET requests with 405 `allow: GET, HEAD`).
+    let m: RegExpExecArray | null;
+    if ((m = MCP_PATH.exec(pathname))) return this.exchange(req, res, m[1]!);
+    if ((m = PRM_PATH.exec(pathname))) return this.metadata(req, res, m[1]!);
+    if ((m = DEREGISTER_PATH.exec(pathname))) return this.deregister(req, res, m[1]!);
+    if ((m = REGISTER_PATH.exec(pathname))) return this.register(req, res, m[1]!);
+    if ((m = SELF_REGISTER_PATH.exec(pathname))) return this.selfRegister(req, res, m[1]!);
+    if (DEVICE_PREFIX.test(pathname)) {
+      // Device-scoped account routes (`/d/<id>/account`, `/d/<id>/clients/<client>/revoke`) belong to the
+      // account service; anything else under `/d/` is a plain 404, never a download/page response.
+      if (this.accountHttp.matches(pathname) && (await this.accountHttp.handle(req, res, pathname))) return;
+      this.discard(req);
+      return writeRefusal(res, REFUSALS.not_found);
+    }
+    // Resolve public HTML before every asynchronous API/download dispatcher.
     if (this.options.notionOAuthBroker && (await this.options.notionOAuthBroker.handle(req, res, pathname))) return;
     if (this.accountHttp.handlePage(req, res, pathname)) return;
     if (await this.downloads.handle(req, res, pathname)) return;
     if (this.accountHttp.matches(pathname) && (await this.accountHttp.handle(req, res, pathname))) return;
-    let m: RegExpExecArray | null;
-    if ((m = MCP_PATH.exec(pathname))) return this.exchange(req, res, m[1]!);
-    if ((m = PRM_PATH.exec(pathname))) return this.metadata(req, res, m[1]!);
-    if ((m = /^\/d\/([a-z2-7]{26})\/deregister$/.exec(pathname))) return this.deregister(req, res, m[1]!);
-    if ((m = REGISTER_PATH.exec(pathname))) return this.register(req, res, m[1]!);
-    if ((m = SELF_REGISTER_PATH.exec(pathname))) return this.selfRegister(req, res, m[1]!);
     this.discard(req);
     if (pathname === HEALTH_PATH && req.method === "GET") {
       res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });

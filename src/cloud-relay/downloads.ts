@@ -36,7 +36,8 @@ export class ReleaseDownloads {
       throw new Error("Downloads require an HTTPS origin");
   }
   async handle(req: IncomingMessage, res: ServerResponse, pathname: string): Promise<boolean> {
-    if (!pathname.startsWith("/download/")) return false;
+    // Device routes (`/d/<id>/mcp`, `/d/<id>/self-register`, ...) belong to the relay router.
+    if (pathname.startsWith("/d/") || !pathname.startsWith("/download/")) return false;
     const match = /^\/download\/(linux|macos|windows|extension)$/.exec(pathname);
     const bundle = /^\/download\/bundle\/(linux|macos|windows)(\.sha256)?$/.exec(pathname);
     if (!match && !bundle) {

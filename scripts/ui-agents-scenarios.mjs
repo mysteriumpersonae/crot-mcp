@@ -1,3 +1,4 @@
+import { setTimeout as delay } from "node:timers/promises";
 import { URL } from "node:url";
 /** Real CrotService actions with local HTTP provider fixtures; no live vendor claims. */
 import { readFile, writeFile } from "node:fs/promises";
@@ -35,14 +36,20 @@ export async function runAgentsScenarios({
     ),
     "Agents still has extra workspace tabs",
   );
-  assert(await evaluate("!document.querySelector('[data-relay-url]').value"), "Unpaired device invented a relay URL");
+  // Unpaired: either no URL, or only the canonical key-derived self-registration URL (#59), never an invented host.
+  assert(
+    await evaluate(
+      "(v=>!v||/^https:\\/\\/crot\\.network\\/d\\/[a-z2-7]{26}\\/mcp$/.test(v))(document.querySelector('[data-relay-url]').value)",
+    ),
+    "Unpaired device invented a relay URL",
+  );
   const sidebar = await evaluate("document.querySelector('.sidebar').getBoundingClientRect().width");
   await call("Browser.grantPermissions", {
     origin: new URL(await evaluate("location.href")).origin,
     permissions: ["clipboardReadWrite", "clipboardSanitizedWrite"],
   });
   await evaluate(
-    "document.querySelector('.agents-local-access').open=true;document.querySelector('[data-generate-token]').click()",
+    "(()=>{const d=document.querySelector('.agents-local-access');if(d)d.open=true;document.querySelector('[data-generate-token]').click();})()",
   );
   await until("document.getElementById('action-dialog').open");
   await evaluate("[...document.querySelectorAll('#action-dialog button')].find(b=>b.textContent==='Cancel').click()");
@@ -62,7 +69,7 @@ export async function runAgentsScenarios({
   await generate();
   const before = await evaluate("document.querySelector('[data-bearer-token]').value");
   await evaluate("document.querySelector('[aria-label=\"Copy token\"]').click()");
-  await until("document.querySelector('.agents-copy-status').textContent==='Copied'");
+  await until("document.querySelector('.agents-copy-status').textContent==='Copied to clipboard'");
   assert((await evaluate("navigator.clipboard.readText()")) === before, "Token clipboard copy failed");
   await evaluate("document.querySelector('[aria-label=\"Show token\"]').click()");
   assert(await evaluate("document.querySelector('[data-bearer-token]').type==='text'"), "Eye did not reveal token");
@@ -74,7 +81,12 @@ export async function runAgentsScenarios({
   const after = await evaluate("document.querySelector('[data-bearer-token]').value"),
     tokens = JSON.parse(await readFile(path.join(real.stateDir, "client-tokens.json"), "utf8"));
   assert(tokens.tokens.length === 1 && tokens.tokens[0].active, "Rotation did not replace same registry token");
-  const journal = await readFile(path.join(real.base, "audit.jsonl"), "utf8");
+  // The audit journal is appended asynchronously after the RPC reply.
+  let journal = "";
+  for (let i = 0; i < 50 && !journal.includes("token_rotate"); i++) {
+    journal = await readFile(path.join(real.base, "audit.jsonl"), "utf8");
+    if (!journal.includes("token_rotate")) await delay(100);
+  }
   assert(
     journal.includes("token_issue") &&
       journal.includes("token_rotate") &&
@@ -155,13 +167,30 @@ export async function runAgentsScenarios({
     await screenshot("agents-workspace-" + provider.toLowerCase().replaceAll(" ", "-"));
     await evaluate("document.getElementById('nav-chat').click()");
     await until("document.querySelectorAll('.chat-agent-pill').length>=3");
-    await evaluate("document.querySelector('.chat-agents .chat-selector').click()");
-    await until("document.querySelector('.chat-popover:popover-open')");
+    // Provider pills (#56/#57): first click activates the provider, a click on the active pill opens its model popover.
+    const pill = `[...document.querySelectorAll('.chat-agent-pill')].find(b=>b.querySelector('span')?.textContent===${JSON.stringify(provider)})`;
+    await until(pill);
+    await evaluate(`(()=>{const b=${pill};if(b.getAttribute('aria-pressed')!=='true')b.click();})()`);
+    await until(`${pill}?.getAttribute('aria-pressed')==='true'`);
+    await evaluate(`${pill}.click()`);
+    await until("document.querySelector('dialog.chat-model-pop[open]')");
+    assert(
+      await evaluate(
+        `(()=>{const pop=document.querySelector('dialog.chat-model-pop[open]'),bar=document.querySelector('.chat-agents'),p=pop.getBoundingClientRect(),b=${pill}.getBoundingClientRect(),s=getComputedStyle(pop);return pop.parentElement===bar&&s.position==='absolute'&&Math.abs(parseFloat(s.bottom)-(bar.clientHeight+8))<1&&p.bottom<=b.top&&p.top>=0&&p.left>=0&&p.right<=innerWidth;})()`,
+      ),
+      "Model popover must open upward (bottom: calc(100% + 8px)) inside the window",
+    );
+    assert(
+      await evaluate(
+        `(()=>{const bar=getComputedStyle(document.querySelector('.chat-agent-pills')),b=${pill},s=getComputedStyle(b),i=b.querySelector('svg,img').getBoundingClientRect();return bar.justifyContent==='flex-start'&&b.offsetHeight>=28&&b.offsetHeight<=30&&s.fontSize==='12px'&&Math.round(i.width)===14;})()`,
+      ),
+      "Provider chips must be left-aligned, 28-30px high with 14px icons and 12px text",
+    );
     await until(
-      `[...document.querySelectorAll('.chat-popover:popover-open button')].some(b=>b.textContent.includes(${JSON.stringify(saved.defaultModel)}))`,
+      `[...document.querySelectorAll('dialog.chat-model-pop[open] .chat-menu-item')].some(b=>b.textContent.includes(${JSON.stringify(saved.defaultModel)}))`,
     );
     await evaluate(
-      `[...document.querySelectorAll('.chat-popover:popover-open button')].find(b=>b.textContent.includes(${JSON.stringify(saved.defaultModel)})).click()`,
+      `[...document.querySelectorAll('dialog.chat-model-pop[open] .chat-menu-item')].find(b=>b.textContent.includes(${JSON.stringify(saved.defaultModel)})).click()`,
     );
     await evaluate(
       "(()=>{const m=document.querySelector('.chat-compose textarea');m.value='Native workspace transport test';m.dispatchEvent(new Event('input'));document.querySelector('.chat-send').click();})()",
@@ -180,6 +209,22 @@ export async function runAgentsScenarios({
     (await evaluate("document.querySelector('.sidebar').getBoundingClientRect().width")) === sidebar,
     "Sidebar geometry changed",
   );
+  // Column headers (round icon + title) must never be clipped at the top, at any window size.
+  for (const [w, h] of [
+    [1584, 960],
+    [1280, 720],
+    [1024, 640],
+    [900, 560],
+    [390, 844],
+  ]) {
+    await size(w, h);
+    assert(
+      await evaluate(
+        "(()=>{const heads=[...document.querySelectorAll('.agents-column-head')];return heads.length>=2&&heads.every(head=>{head.scrollIntoView({block:'nearest'});const r=head.getBoundingClientRect(),col=head.closest('.agents-column').getBoundingClientRect();if(r.height<16||r.top<col.top-0.5||r.top<-0.5)return false;let p=head.parentElement;while(p&&p!==document.body){const s=getComputedStyle(p);if(s.overflowY!=='visible'&&p.getBoundingClientRect().top>r.top+0.5)return false;p=p.parentElement;}const hit=document.elementFromPoint(r.left+Math.min(12,r.width/2),r.top+Math.min(8,r.height/2));return !!hit&&head.contains(hit);});})()",
+      ),
+      `Agents column headers are clipped at ${w}x${h}`,
+    );
+  }
   await size(1584, 960);
   await writeFile(
     path.join(artifacts, "layout.json"),
@@ -243,15 +288,19 @@ export async function runAgentsScenarios({
     `(async()=>{const v=await window.crot.request('view');window.originalViewRender=window.crot.render;window.crot.render=next=>window.originalViewRender({...next,resourceUri:${JSON.stringify(recipeUrl)}});window.crot.render(v);document.getElementById('nav-agents').click();})()`,
   );
   await until("document.querySelector('[data-relay-url]').value.includes('mcp.crot.network')");
-  await evaluate("document.querySelector('[aria-label=\"Copy relay URL\"]').click()");
+  await evaluate("document.querySelector('[aria-label=\"Copy URL\"]').click()");
   await until(`(async()=>await navigator.clipboard.readText()===${JSON.stringify(recipeUrl)})()`);
   assert(
-    await evaluate("[...document.querySelectorAll('.agents-card input[readonly]')].some(n=>n.value==='OAuth 2.1')"),
+    await evaluate("document.querySelector('.agents-center').textContent.includes('OAuth 2.1')"),
     "Relay OAuth method missing",
   );
   await evaluate("document.getElementById('nav-chat').click()");
-  await until("[...document.querySelectorAll('.chat-agent-pill')].some(b=>b.textContent==='OpenAI')");
-  await evaluate("[...document.querySelectorAll('.chat-agent-pill')].find(b=>b.textContent==='OpenAI').click()");
+  await until(
+    "[...document.querySelectorAll('.chat-agent-pill')].some(b=>b.querySelector('span')?.textContent==='OpenAI')",
+  );
+  await evaluate(
+    "(()=>{const b=[...document.querySelectorAll('.chat-agent-pill')].find(b=>b.querySelector('span')?.textContent==='OpenAI');if(b.getAttribute('aria-pressed')!=='true')b.click();})()",
+  );
   await evaluate(
     "(()=>{const m=document.querySelector('.chat-compose textarea');m.value='Real saved provider check';m.dispatchEvent(new Event('input'));document.querySelector('.chat-send').click();})()",
   );
@@ -274,9 +323,9 @@ export async function runAgentsScenarios({
     ),
     "Failed test kept connected service status",
   );
-  // River named provider, real local HTTP 401, safe diagnostic and selection persistence.
+  // Named provider (legacy River removed; OpenRouter), real local HTTP 401, safe diagnostic and selection persistence.
   await evaluate(
-    `(()=>{const select=document.querySelector('select[aria-label="Chat provider"]');select.value='River';select.dispatchEvent(new Event('change'));const l=[...document.querySelectorAll('label')].find(l=>l.querySelector('span')?.textContent==='API base URL');l.querySelector('input').value=${JSON.stringify(endpoint.replace("/chat-provider/", "/chat-denied/"))};document.querySelector('[data-cloud-key]').value='fixture-river-secret';document.querySelector('[data-cloud-test]').click();})()`,
+    `(()=>{const select=document.querySelector('select[aria-label="Chat provider"]');select.value='OpenRouter';select.dispatchEvent(new Event('change'));const l=[...document.querySelectorAll('label')].find(l=>l.querySelector('span')?.textContent==='API base URL');l.querySelector('input').value=${JSON.stringify(endpoint.replace("/chat-provider/", "/chat-denied/"))};document.querySelector('[data-cloud-key]').value='fixture-river-secret';document.querySelector('[data-cloud-test]').click();})()`,
   );
   await until(
     "document.querySelector('.agents-accordion .agents-connection-state.failed')?.textContent.includes('HTTP 401')",
@@ -288,12 +337,12 @@ export async function runAgentsScenarios({
     "Provider response or key exposed",
   );
   await evaluate(
-    "(()=>{const select=document.querySelector('select[aria-label=\"Chat provider\"]');for(const value of ['OpenAI','River']){select.value=value;select.dispatchEvent(new Event('change'));}})()",
+    "(()=>{const select=document.querySelector('select[aria-label=\"Chat provider\"]');for(const value of ['OpenAI','OpenRouter']){select.value=value;select.dispatchEvent(new Event('change'));}})()",
   );
   await until(
     "document.querySelector('.agents-accordion .agents-connection-state.failed')?.textContent.includes('HTTP 401')",
   );
-  await screenshot("agents-river-auth-failure");
+  await screenshot("agents-openrouter-auth-failure");
   // Disconnect removes provider configuration and its vault secret, with no secret in audit.
   for (const provider of ["OpenCode", "Notion Agents"]) {
     assert(

@@ -116,10 +116,7 @@ export class NetworkPolicy {
    * Silently ignores invalid or duplicate entries.
    */
   addAllow(hosts: readonly string[]): void {
-    const existing = new Set([
-      ...this.allowRules.map((r) => r.source),
-      ...this.extraAllow.map((r) => r.source),
-    ]);
+    const existing = new Set([...this.allowRules.map((r) => r.source), ...this.extraAllow.map((r) => r.source)]);
     for (const h of hosts) {
       if (existing.has(h)) continue;
       try {

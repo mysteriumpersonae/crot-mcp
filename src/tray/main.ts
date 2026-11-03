@@ -43,6 +43,7 @@ import { PRESET_VALUES, type PresetValue } from "../service/protocol.js";
 import { TRAY_CSP, TRAY_ORIGIN, trayAsset } from "./assets.js";
 import { TrayToolClient } from "./tool-client.js";
 import { repairL1 } from "./l1-repair.js";
+import { checkRelayEndpoint, relayCheckUrl } from "./relay-check.js";
 import { TrayController } from "./controller.js";
 import { ProjectFolderPicker } from "./project-picker.js";
 import { trayView, type TrayView } from "./view-model.js";
@@ -497,6 +498,11 @@ function registerIpc(): void {
     clipboard.writeText(text);
     return true;
   });
+  ipcMain.handle("check-relay", async (event, ...args: unknown[]) => {
+    // No renderer-supplied URL: the main process probes only the current view's relay endpoint.
+    if (smokeReport || !fromTray(event) || args.length) return { state: "unavailable" };
+    return checkRelayEndpoint(relayCheckUrl(view));
+  });
   ipcMain.handle("pick-folder", async (event) => {
     if (smokeReport || !fromTray(event) || !window) return null;
     const result = await dialog.showOpenDialog(window, {
@@ -505,11 +511,16 @@ function registerIpc(): void {
     });
     if (result.canceled || !result.filePaths[0]) return null;
     const folderPath = result.filePaths[0];
-    // Register as a project and select it
+    // Register the folder (idempotent for known paths) and make it the active project.
     try {
-      await controller.product("projects.open" as ProductMethod, { path: folderPath });
+      const opened = (await controller.product("projects.open" as ProductMethod, { path: folderPath })) as {
+        project?: { id?: unknown };
+      };
+      const id = opened?.project?.id;
+      if (typeof id !== "string") return null;
+      await controller.product("projects.select" as ProductMethod, { id });
     } catch {
-      // May already exist; ignore
+      return null;
     }
     return folderPath;
   });

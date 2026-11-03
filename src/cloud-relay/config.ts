@@ -63,8 +63,14 @@ const FIELDS = [
   "selfRegistration",
 ];
 
+/** Environment override: `CROT_RELAY_SELF_REGISTRATION=1` (or `true`) enables self-registration without editing the config file. */
+export function selfRegistrationFromEnv(env: NodeJS.ProcessEnv = process.env): boolean {
+  const value = env.CROT_RELAY_SELF_REGISTRATION?.trim().toLowerCase();
+  return value === "1" || value === "true";
+}
+
 /** Validate a configuration object; throws with the first problem. */
-export function parseRelayConfig(value: unknown): RelayConfig {
+export function parseRelayConfig(value: unknown, env: NodeJS.ProcessEnv = process.env): RelayConfig {
   if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("not a JSON object");
   const v = value as Record<string, unknown>;
   const unknown = Object.keys(v).filter((k) => !FIELDS.includes(k));
@@ -154,7 +160,7 @@ export function parseRelayConfig(value: unknown): RelayConfig {
   if (v.artifactDirectory !== undefined && (typeof v.artifactDirectory !== "string" || !v.artifactDirectory))
     throw new Error("invalid artifactDirectory");
   return {
-    ...(v.selfRegistration === true ? { selfRegistration: true } : {}),
+    ...(v.selfRegistration === true || selfRegistrationFromEnv(env) ? { selfRegistration: true } : {}),
     artifactDirectory: v.artifactDirectory as string | undefined,
     accountFile,
     portalClientIds,

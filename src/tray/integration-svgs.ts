@@ -37,3 +37,46 @@ export const N8N_SVG =
   "<rect x='31' y='50' width='38' height='9' rx='4.5' fill='#fff'/>" +
   "<rect x='45' y='28' width='10' height='30' rx='5' fill='#fff'/>" +
   "</svg>";
+
+/** Structured SVG node: [tag, attributes, children]. Built into DOM with createElementNS, never as markup. */
+export type SvgTree = readonly [string, Readonly<Record<string, string>>, readonly SvgTree[]];
+const SVG_TAGS = new Set(["svg", "g", "rect", "path", "circle", "line", "ellipse", "polygon", "polyline"]);
+const SVG_ATTR =
+  /^(?:xmlns|viewBox|aria-hidden|x|y|x1|y1|x2|y2|cx|cy|r|rx|ry|width|height|d|fill|stroke|stroke-width|stroke-linecap|stroke-linejoin|transform|opacity|points)$/;
+
+/** Parse one of the static, first-party SVG strings above into a tree; throws on anything unexpected. */
+export function svgTree(markup: string): SvgTree {
+  const root: [string, Record<string, string>, SvgTree[]] = ["#root", {}, []];
+  const stack: [string, Record<string, string>, SvgTree[]][] = [root];
+  const token = /<(\/?)([a-zA-Z]+)((?:\s+[a-zA-Z][a-zA-Z0-9:-]*='[^']*')*)\s*(\/?)>/gy;
+  let index = 0;
+  while (index < markup.length) {
+    token.lastIndex = index;
+    const m = token.exec(markup);
+    if (!m) throw new Error("Unsupported SVG markup");
+    index = token.lastIndex;
+    const [, closing, tag, rawAttrs, selfClosing] = m;
+    if (!SVG_TAGS.has(tag!)) throw new Error("Unsupported SVG element " + tag);
+    if (closing) {
+      const open = stack.pop();
+      if (!open || open[0] !== tag) throw new Error("Unbalanced SVG markup");
+      continue;
+    }
+    const attrs: Record<string, string> = {};
+    for (const a of rawAttrs!.matchAll(/([a-zA-Z:-]+)='([^']*)'/g)) {
+      if (!SVG_ATTR.test(a[1]!)) throw new Error("Unsupported SVG attribute " + a[1]);
+      attrs[a[1]!] = a[2]!;
+    }
+    const node: [string, Record<string, string>, SvgTree[]] = [tag!, attrs, []];
+    stack.at(-1)![2].push(node);
+    if (!selfClosing) stack.push(node);
+  }
+  if (stack.length !== 1 || root[2].length !== 1) throw new Error("Unbalanced SVG markup");
+  return root[2][0]!;
+}
+
+export const INTEGRATION_SVG_TREES: Readonly<Record<string, SvgTree>> = {
+  Notion: svgTree(NOTION_SVG),
+  Claude: svgTree(CLAUDE_SVG),
+  n8n: svgTree(N8N_SVG),
+};

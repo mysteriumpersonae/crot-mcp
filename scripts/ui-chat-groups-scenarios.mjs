@@ -24,7 +24,7 @@ export async function runChatGroupScenarios({ evaluate, until, size, screenshot,
       if(name==='skills.list')return {ok:true,skills:[{id:'custom-edit',name:'Video editing skill'},{id:'custom-named-platform',name:'Notion export skill'}]};
       if(name==='mcpServers.list')return {ok:true,servers:[{id:'notion-mcp',name:'Notion Workspace MCP',status:'Connected'},{id:'speech-mcp',name:'ElevenLabs MCP',status:'Connected'},{id:'generic-mcp',name:'Verified tool provider',status:'Connected'}]};
       if(name==='agents.list')return {ok:true,agents:groupAgents,calls:[]};
-      if(name==='chat.providers')return {ok:true,providers:[{provider:'Local HTTP',configured:true}]};
+      if(name==='chat.providers')return {ok:true,providers:[{provider:'Local HTTP',configured:true,connectionStatus:'connected'}]};
       if(name==='chat.models')return {ok:true,models:['fixture-model']};
       if(name==='chat.start'){window.groupMessage=input.message;return {ok:true,id:'group-message'};}
       if(name==='chat.poll')return {ok:true,blocks:[{type:'user',text:window.groupMessage},{type:'assistant',text:'Fixture response'}],state:'completed'};

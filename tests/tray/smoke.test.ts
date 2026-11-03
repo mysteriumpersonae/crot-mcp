@@ -157,7 +157,19 @@ describe.skipIf(launch.problem !== undefined && !onCi)("WP-22: Electron tray smo
     const page = parsed.page as Record<string, unknown>;
     expect(page.cards).toBe(0);
     expect(page.nodeVisible).toBe(false);
-    expect(page.api).toEqual(["action", "auth", "decide", "onView", "product", "ready", "repairL1", "tool"]);
+    expect(page.api).toEqual([
+      "action",
+      "auth",
+      "checkRelay",
+      "copyText",
+      "decide",
+      "onView",
+      "pickFolder",
+      "product",
+      "ready",
+      "repairL1",
+      "tool",
+    ]);
     expect(page.links).toBe(0);
     // The new UI uses bundled images, never arbitrary remote or approval-provided markup.
     const allowedImages = new Set([

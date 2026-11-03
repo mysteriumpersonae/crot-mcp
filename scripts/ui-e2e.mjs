@@ -99,6 +99,7 @@ const server = createServer((req, res) => {
         "/extension/popup.html",
         "/extension/popup.js",
         "/extension/welcome.html",
+        "/extension/welcome.css",
         "/extension/ui.css",
         "/extension/popup.css",
       ].includes(pathname)
@@ -478,12 +479,12 @@ try {
     await click("nav-agents");
     assert(
       await evaluate(
-        "!document.querySelector('[data-integration]')&&!document.querySelector('[data-relay-url]').value&&document.querySelector('[aria-label=\"Copy relay URL\"]').disabled",
+        "!document.querySelector('[data-integration]')&&(v=>!v||/^https:\\/\\/crot\\.network\\/d\\/[a-z2-7]{26}\\/mcp$/.test(v))(document.querySelector('[data-relay-url]').value)",
       ),
       "Unpaired MCP view fabricated an integration or URL",
     );
     assert(
-      await evaluate("[...document.querySelectorAll('.agents-card input')].some(input=>input.value==='OAuth 2.1')"),
+      await evaluate("document.querySelector('.agents-center').textContent.includes('OAuth 2.1')"),
       "Remote MCP authentication method missing",
     );
     await click("nav-home");
@@ -537,10 +538,18 @@ try {
     ]) {
       await size(1280, 960);
       await navigate(pathname);
-      assert(
-        await evaluate("getComputedStyle(document.documentElement).backgroundColor === 'rgb(9, 9, 11)'"),
-        name + " must render the shipped Zinc theme under CSP",
-      );
+      if (name === "extension-welcome")
+        assert(
+          await evaluate(
+            "['rgb(255, 255, 255)','rgb(20, 20, 18)'].includes(getComputedStyle(document.body).backgroundColor)&&!document.getElementById('status-dot').classList.contains('checking')",
+          ),
+          name + " must load its external stylesheet and script under CSP",
+        );
+      else
+        assert(
+          await evaluate("getComputedStyle(document.documentElement).backgroundColor === 'rgb(9, 9, 11)'"),
+          name + " must render the shipped Zinc theme under CSP",
+        );
       await screenshot(name);
       for (const language of ["ru", "es", "de", "zh", "en"]) {
         await evaluate(`window.CrotI18n.setLanguage(${JSON.stringify(language)})`);
@@ -551,15 +560,15 @@ try {
       }
       if (name === "extension-welcome") {
         await click("open-app");
-        await click("refresh");
+        await click("refresh-status");
         assert(
           await evaluate("actions.some(a=>a[0]==='extension'&&a[1]==='crot.ui.openApp')"),
           "welcome did not open native app",
         );
-        await evaluate("document.querySelector('a[href*=portal]').click()");
+        await evaluate("document.querySelector('a[href=\\'https://crot.network/account\\']').click()");
         assert(
-          await evaluate("actions.some(a=>a[0]==='tab'&&a[1]==='https://relay-staging.crot.network/portal')"),
-          "welcome portal target is not absolute",
+          await evaluate("actions.some(a=>a[0]==='tab'&&a[1]==='https://crot.network/account')"),
+          "welcome account link must open in a browser tab",
         );
       }
       await size(390, 844);
