@@ -43,6 +43,7 @@ import { PRESET_VALUES, type PresetValue } from "../service/protocol.js";
 import { TRAY_CSP, TRAY_ORIGIN, trayAsset } from "./assets.js";
 import { TrayToolClient } from "./tool-client.js";
 import { repairL1 } from "./l1-repair.js";
+import { checkRelayEndpoint, relayCheckUrl } from "./relay-check.js";
 import { TrayController } from "./controller.js";
 import { ProjectFolderPicker } from "./project-picker.js";
 import { trayView, type TrayView } from "./view-model.js";
@@ -496,6 +497,11 @@ function registerIpc(): void {
     if (smokeReport || !fromTray(event) || typeof text !== "string" || text.length > 8192) return false;
     clipboard.writeText(text);
     return true;
+  });
+  ipcMain.handle("check-relay", async (event, ...args: unknown[]) => {
+    // No renderer-supplied URL: the main process probes only the current view's relay endpoint.
+    if (smokeReport || !fromTray(event) || args.length) return { state: "unavailable" };
+    return checkRelayEndpoint(relayCheckUrl(view));
   });
   ipcMain.handle("pick-folder", async (event) => {
     if (smokeReport || !fromTray(event) || !window) return null;

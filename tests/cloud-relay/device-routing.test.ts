@@ -33,6 +33,16 @@ describe("device routes are dispatched before downloads and public pages", () =>
       expect(response.headers.get("allow")).toBeNull();
     }
   });
+
+  it("still routes device-scoped account endpoints to the account service", async () => {
+    h = await new RelayHarness().start();
+    const device = h.newDevice();
+    for (const action of ["account", "clients/client_A/revoke"]) {
+      const response = await fetch(`${h.origin}/d/${device.deviceId}/${action}`);
+      await response.text();
+      expect(response.headers.get("allow")).not.toBe("GET, HEAD");
+    }
+  });
 });
 
 describe("CROT_RELAY_SELF_REGISTRATION", () => {

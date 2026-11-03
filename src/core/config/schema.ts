@@ -175,28 +175,6 @@ export const ApprovalsConfigSchema = z
   })
   .strict();
 
-/**
- * Default network allow-list for built-in AI chat providers and local model servers.
- * These hosts are whitelisted by default so that owners can use Cloud LLM, Local Models
- * and Workspaces sections without editing permissions.network.allow manually.
- * All loopback entries require explicit IP rules because name rules never allow
- * non-public addresses (NetworkPolicy contract).
- */
-export const DEFAULT_AI_NETWORK_ALLOW: readonly string[] = [
-  // Cloud AI providers (HTTPS port 443 only)
-  "api.openai.com",
-  "api.anthropic.com",
-  "generativelanguage.googleapis.com",
-  "openrouter.ai",
-  "api.river.ai",
-  "api.notion.com",
-  // Local model servers — loopback must be IP/CIDR rules
-  "127.0.0.1:11434", // Ollama default
-  "127.0.0.1:1234", // LM Studio default
-  "127.0.0.1:4096", // OpenCode default
-  "127.0.0.1:8080", // common local model port
-];
-
 export const CrotConfigSchema = z
   .object({
     version: z.literal(1).default(1),
@@ -210,14 +188,14 @@ export const CrotConfigSchema = z
       .object({
         mode: z.enum(PERMISSION_MODES).default("sandbox"),
         capabilities: z.array(CapabilitySchema).optional(),
-        network: NetworkPolicyConfigSchema.default({ allow: [...DEFAULT_AI_NETWORK_ALLOW], deny: [] }),
+        network: NetworkPolicyConfigSchema.default({ allow: [], deny: [] }),
         projectSecrets: ProjectSecretAccessSchema.default({ allow: [] }),
         approvals: ApprovalsConfigSchema.default(ApprovalsConfigSchema.parse({})),
       })
       .strict()
       .default({
         mode: "sandbox",
-        network: { allow: [...DEFAULT_AI_NETWORK_ALLOW], deny: [] },
+        network: { allow: [], deny: [] },
         approvals: ApprovalsConfigSchema.parse({}),
         projectSecrets: { allow: [] },
       }),

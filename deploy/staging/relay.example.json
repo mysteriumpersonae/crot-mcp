@@ -1,6 +1,6 @@
 {
   "environment": "staging",
-  "relayHost": "staging.crot.network",
+  "relayHost": "relay-staging.crot.network",
   "issuer": "https://auth-staging.crot.network",
   "pairingClientId": "crot-device-staging-v1",
   "host": "0.0.0.0",

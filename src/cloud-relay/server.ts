@@ -493,7 +493,9 @@ export class CloudRelay {
     if ((m = REGISTER_PATH.exec(pathname))) return this.register(req, res, m[1]!);
     if ((m = SELF_REGISTER_PATH.exec(pathname))) return this.selfRegister(req, res, m[1]!);
     if (DEVICE_PREFIX.test(pathname)) {
-      // Malformed device id or unknown device action: a plain 404, never a download/page response.
+      // Device-scoped account routes (`/d/<id>/account`, `/d/<id>/clients/<client>/revoke`) belong to the
+      // account service; anything else under `/d/` is a plain 404, never a download/page response.
+      if (this.accountHttp.matches(pathname) && (await this.accountHttp.handle(req, res, pathname))) return;
       this.discard(req);
       return writeRefusal(res, REFUSALS.not_found);
     }

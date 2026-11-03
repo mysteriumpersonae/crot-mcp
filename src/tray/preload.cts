@@ -21,4 +21,5 @@ electron.contextBridge.exposeInMainWorld("crot", {
   action: (name: string, params: unknown): Promise<unknown> => electron.ipcRenderer.invoke("action", name, params),
   copyText: (text: string): Promise<boolean> => electron.ipcRenderer.invoke("copy-text", text),
   pickFolder: (): Promise<string | null> => electron.ipcRenderer.invoke("pick-folder"),
+  checkRelay: (): Promise<unknown> => electron.ipcRenderer.invoke("check-relay"),
 });

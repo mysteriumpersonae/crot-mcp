@@ -1,49 +1,100 @@
-/* global chrome, document, navigator, window */
+/* global chrome, document, localStorage, navigator, setTimeout, window */
 "use strict";
+const html = document.documentElement;
 const byId = (id) => document.getElementById(id);
-const feedback = (text) => {
-  byId("feedback").textContent = text;
-  window.CrotI18n?.apply();
+const feedback = (text, clearAfterMs) => {
+  const node = byId("feedback");
+  node.textContent = text;
+  if (clearAfterMs)
+    setTimeout(() => {
+      if (node.textContent === text) node.textContent = "";
+    }, clearAfterMs);
 };
-const os = /Win/i.test(navigator.platform) ? "windows" : /Mac/i.test(navigator.platform) ? "macos" : "linux";
-for (const link of document.querySelectorAll("a[href*='/download/']"))
-  link.href = "https://relay-staging.crot.network/download/" + os;
+
+// Theme
+const themeToggle = byId("theme-toggle");
+const applyTheme = (theme) => {
+  html.dataset.theme = theme;
+  themeToggle.textContent = theme === "dark" ? "☀️" : "🌙";
+};
+let storedTheme = null;
+try {
+  storedTheme = localStorage.getItem("crot-theme");
+} catch {
+  storedTheme = null;
+}
+applyTheme(
+  storedTheme === "dark" || storedTheme === "light"
+    ? storedTheme
+    : window.matchMedia?.("(prefers-color-scheme: dark)").matches
+      ? "dark"
+      : "light",
+);
+themeToggle.addEventListener("click", () => {
+  const next = html.dataset.theme === "dark" ? "light" : "dark";
+  applyTheme(next);
+  try {
+    localStorage.setItem("crot-theme", next);
+  } catch {
+    // Storage may be unavailable; the theme still applies for this page.
+  }
+});
+
 // All external navigation happens in a browser tab, never under chrome-extension://.
 for (const link of document.querySelectorAll("a[href^='https://']"))
   link.addEventListener("click", (event) => {
     event.preventDefault();
     void chrome.tabs
       .create({ url: link.href, active: true })
-      .catch(() => feedback("Action failed. Check the desktop service and try again."));
+      .catch(() => feedback("Не удалось открыть ссылку. Попробуйте ещё раз."));
   });
-async function refresh() {
-  byId("refresh").disabled = true;
+
+// Desktop connection status
+const dot = byId("status-dot");
+const label = byId("status-label");
+const refreshButton = byId("refresh-status");
+const setStatus = (state, text) => {
+  dot.className = "status-dot " + state;
+  label.textContent = text;
+};
+const withTimeout = (promise, ms) =>
+  Promise.race([promise, new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), ms))]);
+async function checkConnection() {
+  refreshButton.disabled = true;
+  setStatus("checking", "Проверка подключения к десктопу…");
   try {
-    const state = await chrome.runtime.sendMessage({ type: "crot.ui.status" });
-    byId("connection").textContent = state?.connection === "connected" ? "Connected" : "Desktop App Not Detected";
-    byId("connection").className = "badge " + (state?.connection === "connected" ? "ready" : "warning");
+    const state = await withTimeout(chrome.runtime.sendMessage({ type: "crot.ui.status" }), 3000);
+    if (state?.connection === "connected") setStatus("connected", "✓ Десктоп подключён — CROT готов к работе");
+    else setStatus("disconnected", "✗ Десктоп не подключён — запустите CROT App");
   } catch {
-    byId("connection").textContent = "Desktop App Not Detected";
+    setStatus("disconnected", "✗ Десктоп не подключён — запустите CROT App");
   } finally {
-    byId("refresh").disabled = false;
-    window.CrotI18n?.apply();
+    refreshButton.disabled = false;
   }
 }
-byId("refresh").onclick = () => void refresh();
-byId("open-app").onclick = async () => {
+refreshButton.addEventListener("click", () => void checkConnection());
+
+// Open the desktop app
+async function openApp() {
   try {
     const result = await chrome.runtime.sendMessage({ type: "crot.ui.openApp" });
-    if (!result?.ok) feedback("Start the desktop service with npm start, then refresh the connection.");
+    feedback(result?.ok ? "CROT App открывается…" : "Не удалось открыть — убедитесь, что CROT запущен.");
   } catch {
-    feedback("Start the desktop service with npm start, then refresh the connection.");
+    feedback("Не удалось открыть — установите и запустите CROT App.");
   }
-};
-byId("copy-launch").onclick = async () => {
+}
+byId("open-app").addEventListener("click", () => void openApp());
+byId("open-app-2").addEventListener("click", () => void openApp());
+
+// Copy launch command
+byId("copy-cmd").addEventListener("click", async () => {
+  const cmd = "npx crot-mcp";
   try {
-    await navigator.clipboard.writeText("npm start");
-    feedback("Copied to clipboard.");
+    await navigator.clipboard.writeText(cmd);
+    feedback("✓ Команда скопирована: " + cmd, 3000);
   } catch {
-    feedback("Copy unavailable. Try again.");
+    feedback("Копирование недоступно. Скопируйте команду вручную: " + cmd, 3000);
   }
-};
-void refresh();
+});
+
+void checkConnection();
