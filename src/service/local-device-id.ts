@@ -1,51 +1,74 @@
 /**
- * Persistent local device identity for unpaired/local-only devices.
+ * Self-registered device identity (owner-approved, relay `selfRegistration`).
  *
- * Generates and stores a stable base32 device ID in the service state
- * directory. This ID is used to build the canonical local relay URL
- * `https://crot.network/d/<localDeviceId>/mcp` for Bearer-token-authenticated
- * connections from Notion Custom MCP and other external clients.
- *
- * Unlike the paired `deviceId` (from `DeviceBinding`, AD-22), this ID
- * is not registered at the cloud relay; it is used only by the local
- * relay bridge (which validates local bearer tokens) and for UI display.
+ * One Ed25519 key per installation, kept in the owner-only state file
+ * `local-device-id.json`. The device id is derived from the public key
+ * (`deviceIdForPublicKey`), so the relay can verify that only the key holder
+ * claims it. The id builds `https://<relayHost>/d/<localDeviceId>/mcp`.
  */
 import path from "node:path";
-import { generateDeviceId } from "../identity/device-id.js";
-import { readStateFile, writeStateFile, type ReadStateResult } from "./private-state.js";
+import { randomBytes, type KeyObject } from "node:crypto";
+import {
+  deviceKeyFromSeed,
+  devicePublicKey,
+  signTunnelProof,
+  type DevicePublicKey,
+} from "../identity/device-credential.js";
+import { deviceIdForPublicKey } from "../identity/device-id.js";
+import { readStateFile, writeStateFile } from "./private-state.js";
 import type { PrivateFileProtection } from "../core/platform/types.js";
+import type { TunnelCredential } from "./device-binding.js";
 
 const STATE_FILE = "local-device-id.json";
 
-interface LocalDeviceState {
+export interface LocalDeviceIdentity {
   readonly localDeviceId: string;
+  readonly publicKey: DevicePublicKey;
+  /** The tunnel credential for a relay host. */
+  credential(relayHost: string): TunnelCredential;
 }
 
-function parse(result: ReadStateResult): string | undefined {
-  if (result.kind === "missing") return undefined;
-  try {
-    const v = JSON.parse(result.text) as unknown;
-    if (typeof v === "object" && v !== null && "localDeviceId" in v && typeof (v as LocalDeviceState).localDeviceId === "string") {
-      const id = (v as LocalDeviceState).localDeviceId;
-      // Validate: 26 chars, base32 [a-z2-7]
-      if (/^[a-z2-7]{26}$/.test(id)) return id;
+function identityFromSeed(seed: string): LocalDeviceIdentity {
+  const key: KeyObject = deviceKeyFromSeed(seed);
+  const publicKey = devicePublicKey(key);
+  const localDeviceId = deviceIdForPublicKey(publicKey.x);
+  return {
+    localDeviceId,
+    publicKey,
+    credential: (relayHost) => ({
+      deviceId: localDeviceId,
+      relayHost,
+      publicKey,
+      prove: (challenge) => signTunnelProof(key, localDeviceId, relayHost, challenge),
+    }),
+  };
+}
+
+/** Load or create the self-registration identity (key + key-derived id). */
+export async function loadOrCreateLocalDeviceIdentity(
+  stateDir: string,
+  privateFiles: PrivateFileProtection,
+): Promise<LocalDeviceIdentity> {
+  const file = path.join(stateDir, STATE_FILE);
+  const result = await readStateFile(file);
+  if (result.kind !== "missing") {
+    try {
+      const v = JSON.parse(result.text) as { seed?: unknown };
+      if (typeof v.seed === "string") return identityFromSeed(v.seed);
+    } catch {
+      // Unreadable or legacy (id without key): create a new key-bound identity.
     }
-  } catch {
-    // Ignore parse errors; will regenerate
   }
-  return undefined;
+  const seed = randomBytes(32).toString("base64url");
+  const identity = identityFromSeed(seed);
+  await writeStateFile(file, JSON.stringify({ version: 2, seed, localDeviceId: identity.localDeviceId }), privateFiles);
+  return identity;
 }
 
-/** Load or generate the persistent local device ID. */
+/** The persistent local device id (key-derived). */
 export async function loadOrCreateLocalDeviceId(
   stateDir: string,
   privateFiles: PrivateFileProtection,
 ): Promise<string> {
-  const file = path.join(stateDir, STATE_FILE);
-  const result = await readStateFile(file);
-  const existing = parse(result);
-  if (existing) return existing;
-  const localDeviceId = generateDeviceId();
-  await writeStateFile(file, JSON.stringify({ localDeviceId }), privateFiles);
-  return localDeviceId;
+  return (await loadOrCreateLocalDeviceIdentity(stateDir, privateFiles)).localDeviceId;
 }

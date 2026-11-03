@@ -23,15 +23,26 @@ import { AccountService, type CommercialService } from "../account-service/servi
 import { AccountHttp } from "../account-service/http.js";
 import type { BillingProvider } from "../account-service/billing.js";
 import { versionAtLeast } from "./versions.js";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { WindowCounter, relayLimits, type RelayLimits, type RateLimit } from "./limits.js";
 export type { RateLimit } from "./limits.js";
-import { createServer as createHttpServer, request as httpRequest, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { createServer as createHttpServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { createServer as createHttpsServer } from "node:https";
 import type { AddressInfo } from "node:net";
 import type { Duplex } from "node:stream";
-import { verifyDeregistrationProof, verifyTunnelProof } from "../identity/device-credential.js";
-import { canonicalDeviceUri, isDeviceId, isRelayHost, protectedResourceMetadataUrl } from "../identity/device-id.js";
+import {
+  selfRegistrationChallenge,
+  verifyDeregistrationProof,
+  verifyTunnelProof,
+} from "../identity/device-credential.js";
+export { selfRegistrationChallenge };
+import {
+  canonicalDeviceUri,
+  deviceIdForPublicKey,
+  isDeviceId,
+  isRelayHost,
+  protectedResourceMetadataUrl,
+} from "../identity/device-id.js";
 import { isClientId } from "../identity/environment.js";
 import type { SigningKeySource } from "../identity/jwks.js";
 import { checkAccessToken } from "../identity/verifier.js";
@@ -76,6 +87,10 @@ import {
 export const SUPPORTED_MAJORS: readonly string[] = [TUNNEL_V1];
 const MCP_PATH = /^\/d\/([a-z2-7]{26})\/mcp$/;
 const REGISTER_PATH = /^\/d\/([a-z2-7]{26})\/register$/;
+const SELF_REGISTER_PATH = /^\/d\/([a-z2-7]{26})\/self-register$/;
+/** Account marker of self-registered devices (no cloud account). */
+export const SELF_REGISTERED_ACCOUNT = "self-registered";
+
 const PRM_PATH = /^\/\.well-known\/oauth-protected-resource\/d\/([a-z2-7]{26})\/mcp$/;
 const HEALTH_PATH = "/.crot/health";
 const METRICS_PATH = "/.crot/metrics";
@@ -135,27 +150,12 @@ export interface CloudRelayOptions {
   /** Supersessions per device (close 4409 beyond). Default 10 per hour (AD-22 point 9). */
   readonly supersessionRate?: RateLimit;
   /**
-   * Optional local bearer token verifier for unpaired devices.
-   *
-   * When set, the relay will accept requests from a device whose `deviceId`
-   * matches `localDeviceId` even without a cloud OAuth token, if the provided
-   * raw Bearer token passes this verifier (e.g. a SHA-256 hash comparison
-   * against a locally-stored token). This allows Notion Custom MCP and other
-   * external clients to connect via `https://<relay-host>/d/<localDeviceId>/mcp`
-   * using a local Bearer token from `tokens.issue` while the device is unpaired.
-   *
-   * The verifier receives the raw token and must return `true` if it is valid.
-   * It is only invoked when the `deviceId` equals `localDeviceId`.
+   * Owner-approved self-registration: a device registers an Ed25519 key whose
+   * SHA-256 derives its device id (no cloud account). Clients of such a device are
+   * admitted only through its live tunnel; the device itself validates their Bearer
+   * token. Off by default.
    */
-  readonly localDeviceId?: string;
-  readonly localTokenVerifier?: (token: string, deviceId: string) => boolean | Promise<boolean>;
-  /**
-   * When set, requests for the local device are forwarded directly to this
-   * loopback MCP server URL (e.g. `http://127.0.0.1:PORT`) instead of
-   * going through the cloud tunnel. The original Authorization header is
-   * stripped and replaced with the local bearer token header before forwarding.
-   */
-  readonly localMcpUrl?: string;
+  readonly selfRegistration?: boolean;
 }
 
 export interface RelayStatus {
@@ -490,6 +490,7 @@ export class CloudRelay {
     if ((m = PRM_PATH.exec(pathname))) return this.metadata(req, res, m[1]!);
     if ((m = /^\/d\/([a-z2-7]{26})\/deregister$/.exec(pathname))) return this.deregister(req, res, m[1]!);
     if ((m = REGISTER_PATH.exec(pathname))) return this.register(req, res, m[1]!);
+    if ((m = SELF_REGISTER_PATH.exec(pathname))) return this.selfRegister(req, res, m[1]!);
     this.discard(req);
     if (pathname === HEALTH_PATH && req.method === "GET") {
       res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
@@ -572,12 +573,84 @@ export class CloudRelay {
     return checked;
   }
 
+  private isSelf(record: DeviceRecord | undefined): boolean {
+    return this.options.selfRegistration === true && record?.accountId === SELF_REGISTERED_ACCOUNT;
+  }
+
   private async entitled(record: DeviceRecord): Promise<Entitlement> {
+    if (this.isSelf(record)) return "entitled";
     return this.options.entitlement
       ? this.options.entitlement(record)
       : this.accounts.deviceState(record.accountId, record.deviceId) === "entitled"
         ? "entitled"
         : "not_entitled";
+  }
+
+  /**
+   * Self-registration (owner-approved): body `{ publicKey, proof }`. The device id must be
+   * derived from the key and the proof must be the key's tunnel signature over
+   * `selfRegistrationChallenge(deviceId)`. The first key binds the id for good.
+   */
+  private async selfRegister(req: IncomingMessage, res: ServerResponse, deviceId: string): Promise<void> {
+    const respond = (status: number, code: string, payload: object) => {
+      this.log({ event: "device.self_register", deviceId, status, code });
+      const text = JSON.stringify(payload);
+      res.writeHead(status, { "content-type": "application/json", "cache-control": "no-store" });
+      res.end(text);
+    };
+    if (!this.options.selfRegistration) {
+      this.discard(req);
+      return writeRefusal(res, REFUSALS.not_found);
+    }
+    if (req.method !== "POST") {
+      this.discard(req);
+      return writeRefusal(res, REFUSALS.method_not_allowed, { allow: "POST" });
+    }
+    const source = req.socket.remoteAddress ?? "unknown";
+    if (this.registrationRates.take(`self:${source}`) !== undefined) {
+      this.discard(req);
+      return writeRefusal(res, { ...REFUSALS.busy, status: 429, code: "registration_rate_limited" });
+    }
+    const body = await readBody(req, MAX_REGISTER_BODY, this.discardBodyMs);
+    if (body === "too_large") return respond(413, "too_large", { error: "request_too_large" });
+    if (body === "timeout") return respond(408, "timeout", { error: "request_timeout" });
+    if (body === "aborted") return;
+    let value: { publicKey?: unknown; proof?: unknown };
+    try {
+      value = JSON.parse(body.toString("utf8")) as typeof value;
+    } catch {
+      return respond(400, "invalid_body", { error: "invalid_request" });
+    }
+    const publicKey = value?.publicKey;
+    if (!isDevicePublicKey(publicKey) || typeof value.proof !== "string")
+      return respond(400, "invalid_key", { error: "invalid_public_key" });
+    if (!isDeviceId(deviceId) || deviceIdForPublicKey(publicKey.x) !== deviceId)
+      return respond(403, "id_not_bound", { error: "device_id_not_bound_to_key" });
+    const proof = Buffer.from(value.proof, "base64url");
+    if (
+      proof.length !== 64 ||
+      !verifyTunnelProof(publicKey, deviceId, this.options.relayHost, selfRegistrationChallenge(deviceId), proof)
+    )
+      return respond(403, "invalid_proof", { error: "invalid_proof" });
+    const existing = await this.options.registry.get(deviceId);
+    if (existing) {
+      // Key-bound: only the same key may re-register (idempotent).
+      if (existing.accountId === SELF_REGISTERED_ACCOUNT && existing.publicKey.x === publicKey.x)
+        return respond(200, "exists", { deviceId, registeredAt: existing.registeredAt });
+      return respond(409, "conflict", { error: "already_registered" });
+    }
+    const record: DeviceRecord = {
+      deviceId,
+      accountId: SELF_REGISTERED_ACCOUNT,
+      publicKey: { kty: publicKey.kty, crv: publicKey.crv, x: publicKey.x },
+      environment: this.options.environment,
+      registeredAt: new Date(this.now()).toISOString(),
+    };
+    const result = await this.options.registry.register(record);
+    if (result === "conflict") return respond(409, "conflict", { error: "already_registered" });
+    if (result !== "created" && result !== "unchanged") return respond(403, result, { error: result });
+    const stored = (await this.options.registry.get(deviceId))!;
+    return respond(result === "created" ? 201 : 200, result, { deviceId, registeredAt: stored.registeredAt });
   }
 
   /** Device registration at pairing (AD-22 point 4). */
@@ -758,13 +831,8 @@ export class CloudRelay {
         durationMs: this.now() - started,
       });
     };
-    // Local bearer token fast path: for the local (unpaired) device, accept tokens verified
-    // by the service's own token store instead of requiring a cloud OAuth JWT.
-    const isLocalDevice =
-      this.options.localDeviceId !== undefined && deviceId === this.options.localDeviceId && this.options.localTokenVerifier !== undefined;
-    // For local device: synthetic record without cloud registry requirement
-    const record = isLocalDevice ? ({ deviceId, accountId: "local", publicKey: { kty: "oct", crv: "", x: "" }, environment: "local", registeredAt: new Date().toISOString() } as unknown as import("./registry.js").DeviceRecord) : await this.record(deviceId);
-    if (!isLocalDevice && !record) return refuse(REFUSALS.unknown_device);
+    const record = await this.record(deviceId);
+    if (!record) return refuse(REFUSALS.unknown_device);
     if (method !== "POST" && method !== "GET" && method !== "DELETE")
       return refuse(REFUSALS.method_not_allowed, { allow: "GET, POST, DELETE" });
     const token = bearerToken(req);
@@ -778,40 +846,32 @@ export class CloudRelay {
       });
       return this.unauthorized(res, deviceId, token !== undefined);
     }
-    // Local device: verify against local token store; skip cloud OAuth check and entitlement.
-    let locallyAdmitted = false;
-    if (isLocalDevice) {
-      const valid = await this.options.localTokenVerifier!(token, deviceId);
-      if (!valid) {
-        this.discard(req);
-        this.log({ ...summary, status: 401, outcome: "not_executed", code: "local_token_invalid" });
-        return this.unauthorized(res, deviceId, true);
-      }
-      locallyAdmitted = true;
-    }
-    if (!locallyAdmitted) {
-      const checked = await this.checkToken(token, record!.accountId, record!.accountId, "admission.refused");
+    // Self-registered device: the Bearer token is the device's own (tokens.issue); the relay forwards it
+    // unchanged through the device's authenticated tunnel and the device validates it (owner-approved).
+    const self = this.isSelf(record);
+    let clientId: string;
+    if (self) {
+      clientId = "bearer:" + createHash("sha256").update(token).digest("hex").slice(0, 16);
+    } else {
+      const checked = await this.checkToken(token, deviceId, record.accountId, "admission.refused");
       if (!checked.ok) {
         this.discard(req);
         this.log({ ...summary, status: 401, outcome: "not_executed", code: "invalid_token" });
         return this.unauthorized(res, deviceId, true);
       }
-      if ((await this.entitled(record!)) !== "entitled") return refuse(REFUSALS.not_entitled);
+      clientId = checked.token.clientId;
+      if ((await this.entitled(record)) !== "entitled") return refuse(REFUSALS.not_entitled);
       if (!versionAtLeast(req.headers["crot-client-version"], this.options.minimumClientVersion))
         return refuse({ status: 426, code: "update_required", outcome: "not_executed", message: "Update required" });
       if (!this.options.entitlement)
-        await this.accounts.noteClient(record!.accountId, deviceId, checked.token.clientId, checked.token.sessionId);
-      // Persistence above can yield to a concurrent downgrade; admission is rechecked immediately before forwarding.
-      if ((await this.entitled(record!)) !== "entitled") return refuse(REFUSALS.not_entitled);
+        await this.accounts.noteClient(record.accountId, deviceId, checked.token.clientId, checked.token.sessionId);
     }
+    // Persistence above can yield to a concurrent downgrade; admission is rechecked immediately before forwarding.
+    if ((await this.entitled(record)) !== "entitled") return refuse(REFUSALS.not_entitled);
     if (req.destroyed || res.destroyed) return;
-    // Local device: proxy directly to local MCP HTTP server if configured
-    if (locallyAdmitted && this.options.localMcpUrl) {
-      return this.proxyToLocal(req, res, token!, this.options.localMcpUrl, started, summary);
-    }
     const admissionTunnel = this.routes.get(deviceId);
-    if (!admissionTunnel?.routable || (!isLocalDevice && this.revokedRecords.has(record!))) return refuse(REFUSALS.device_offline);
-    const clientKey = JSON.stringify([deviceId, "local-bearer"]);
+    if (!admissionTunnel?.routable || this.revokedRecords.has(record)) return refuse(REFUSALS.device_offline);
+    const clientKey = JSON.stringify([deviceId, clientId]);
     if (this.clientRates.take(clientKey) !== undefined || this.deviceRates.take(deviceId) !== undefined)
       return refuse({ ...REFUSALS.busy, status: 429, code: "request_rate_limited" });
     if (
@@ -864,7 +924,7 @@ export class CloudRelay {
       }
       const noBody = buffered ? buffered.length === 0 : !length;
       const tunnel = this.routes.get(deviceId);
-      if (!tunnel || !tunnel.routable || tunnel !== admissionTunnel || (!isLocalDevice && record && this.revokedRecords.has(record)))
+      if (!tunnel || !tunnel.routable || tunnel !== admissionTunnel || this.revokedRecords.has(record))
         return refuse(REFUSALS.device_offline);
       const ex = new Exchange(res, summary, started, this.log, this.now, this.stallMs);
       const opened = tunnel.open(
@@ -1007,7 +1067,7 @@ export class CloudRelay {
     if (this.options.entitlement) return;
     for (const tunnel of this.tunnels) {
       const record = this.authenticatedRecords.get(tunnel);
-      if (!record) continue;
+      if (!record || this.isSelf(record)) continue;
       const state = this.accounts.deviceState(record.accountId, record.deviceId);
       if (state !== "entitled") {
         this.routes.delete(record.deviceId);
@@ -1033,6 +1093,7 @@ export class CloudRelay {
     const record = this.authenticatedRecords.get(tunnel);
     if (
       !this.options.entitlement &&
+      !this.isSelf(record) &&
       (!record || this.accounts.deviceState(record.accountId, deviceId) !== "entitled")
     ) {
       tunnel.terminate(CloseCode.FORBIDDEN, "not_entitled");
@@ -1045,49 +1106,6 @@ export class CloudRelay {
       this.log({ event: "tunnel.superseded", deviceId, tunnelId: previous.tunnelId });
       previous.goAway("superseded");
     }
-  }
-
-  /**
-   * Proxy a locally-admitted request directly to the loopback MCP HTTP server.
-   * Used when the device is not paired to the cloud relay but has a valid local
-   * bearer token. The Authorization header is passed through unchanged since the
-   * local HTTP server validates it with the same token store.
-   */
-  private proxyToLocal(
-    req: IncomingMessage,
-    res: ServerResponse,
-    _token: string,
-    localMcpUrl: string,
-    started: number,
-    summary: Summary,
-  ): void {
-    const target = new URL(localMcpUrl);
-    const options = {
-      hostname: target.hostname,
-      port: target.port || 80,
-      path: "/mcp",
-      method: req.method,
-      headers: {
-        ...req.headers,
-        host: target.host,
-      },
-    };
-    const proxyReq = httpRequest(options, (proxyRes: IncomingMessage) => {
-      res.writeHead(proxyRes.statusCode ?? 502, proxyRes.headers);
-      proxyRes.pipe(res);
-      proxyRes.once("end", () => {
-        this.log({ ...summary, status: proxyRes.statusCode ?? 502, durationMs: this.now() - started });
-      });
-    });
-    proxyReq.once("error", () => {
-      if (!res.headersSent) {
-        res.writeHead(502, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: "local_mcp_unavailable" }));
-      }
-      this.log({ ...summary, status: 502, outcome: "unknown", code: "local_proxy_error", durationMs: this.now() - started });
-    });
-    req.pipe(proxyReq);
-    req.once("error", () => proxyReq.destroy());
   }
 }
 

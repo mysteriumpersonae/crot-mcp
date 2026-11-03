@@ -161,3 +161,8 @@ export function verifyManagementProof(
     return false;
   }
 }
+
+/** The fixed challenge a device signs (tunnel proof) to self-register its key-derived id. */
+export function selfRegistrationChallenge(deviceId: string): Buffer {
+  return Buffer.from(`crot-self-register-v1:${deviceId}`, "utf8");
+}

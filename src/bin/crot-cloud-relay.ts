@@ -59,6 +59,7 @@ async function main(): Promise<void> {
     relayHost: config.relayHost,
     issuer: config.issuer,
     pairingClientId: config.pairingClientId,
+    ...(config.selfRegistration ? { selfRegistration: true } : {}),
     environment: config.environment,
     keys,
     registry: await FileDeviceRegistry.open(config.registryFile),

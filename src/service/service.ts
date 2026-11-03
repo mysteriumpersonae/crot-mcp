@@ -82,7 +82,7 @@ import {
   type ServiceToShim,
 } from "./protocol.js";
 import { ResumeDetector } from "./resume-detector.js";
-import { loadOrCreateLocalDeviceId } from "./local-device-id.js";
+import { loadOrCreateLocalDeviceIdentity } from "./local-device-id.js";
 import {
   prepareSecretStore,
   secretStoreProtectedPaths,
@@ -522,7 +522,8 @@ export class CrotService {
       else if (command.config.audit?.path)
         mcpArgs.push("--audit-log", initial.core.status().audit.path ?? command.config.audit.path);
       // Persistent local device ID: stable across restarts, independent of cloud pairing.
-      const localDeviceId = await loadOrCreateLocalDeviceId(stateDir, privateFiles).catch(() => undefined);
+      const localIdentity = await loadOrCreateLocalDeviceIdentity(stateDir, privateFiles).catch(() => undefined);
+      const localDeviceId = localIdentity?.localDeviceId;
       const control = new TunnelControlCenter({
         mcpArgs,
         localDeviceId,
@@ -659,7 +660,8 @@ export class CrotService {
       holder.operation = (member, method, args, run) => this.product!.execute(member, method, args, run);
       this.banner();
       if (http.enabled) await this.startHttp(http, legacyTokenFile);
-      if (identity.environment) {
+      if (identity.environment || localIdentity) {
+        const selfRelayHost = identity.environment?.relayHost ?? "crot.network";
         // The device tunnel (WP-30): open while remote mode is on and the device is paired here.
         const tunnel = new RemoteTunnel({
           core: holder.core,
@@ -669,6 +671,13 @@ export class CrotService {
           resourceMetadataUrl: () => this.resourceMetadataUrl(),
           addRemoteEntry: (entry) => control.addRemoteEntry(entry),
           credential: () => this.tunnelCredential(),
+          // Self-registered tunnel (owner-approved): Bearer tokens are validated by the loopback server.
+          ...(localIdentity
+            ? {
+                selfCredential: () => localIdentity.credential(selfRelayHost),
+                selfTargetPort: () => this.http?.port,
+              }
+            : {}),
           remoteMode: () => control.statusSummary().remoteMode === true,
           software: `crot/${CORE_VERSION}`,
           log,

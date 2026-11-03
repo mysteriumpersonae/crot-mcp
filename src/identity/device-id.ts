@@ -15,7 +15,7 @@
  * This module is adapter-level: Core never sees device identity except as the
  * verified `deviceId` of a remote principal.
  */
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 
 const ALPHABET = "abcdefghijklmnopqrstuvwxyz234567";
 /** Length of a device id: ceil(128 / 5). */
@@ -43,6 +43,15 @@ export function base32Lower(bytes: Uint8Array): string {
 /** A new random device id (AD-21 point 5). Assigned once per pairing. */
 export function generateDeviceId(): string {
   return base32Lower(randomBytes(16));
+}
+
+/**
+ * The device id bound to an Ed25519 public key (self-registration): the first
+ * 128 bits of SHA-256 over the key's raw bytes. Nobody can claim a key-derived
+ * id without holding the matching private key.
+ */
+export function deviceIdForPublicKey(x: string): string {
+  return base32Lower(createHash("sha256").update(Buffer.from(x, "base64url")).digest().subarray(0, 16));
 }
 
 /**
