@@ -30,6 +30,9 @@ import type { TunnelCredential, TunnelCredentialResult } from "./device-binding.
 import { selfRegistrationChallenge } from "../identity/device-credential.js";
 import type { ControlOverview, ControlRequest } from "./protocol.js";
 
+/** Upper bound of one self-registration request at the relay. */
+const SELF_REGISTER_TIMEOUT_MS = 10_000;
+
 /** Test seams of the tunnel (ServiceOptions.tunnel). */
 export interface RemoteTunnelSeams {
   /** The tunnel URL for a relay host (default `wss://<relayHost>/.crot/tunnel`). */
@@ -245,6 +248,8 @@ export class RemoteTunnel {
     try {
       const res = await fetch(`${origin}/d/${c.deviceId}/self-register`, {
         method: "POST",
+        // Remote mode is on by default, so this runs at every start: never hold the service start up for long.
+        signal: AbortSignal.timeout(SELF_REGISTER_TIMEOUT_MS),
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           publicKey: c.publicKey,

@@ -36,7 +36,7 @@ export interface FullControlGrant {
 export interface DeviceSettings {
   /** The preset chosen by the user; absent: the configuration's value applies. */
   readonly preset?: UntrustedContentSetting;
-  /** Remote mode (§22): off by default. */
+  /** Remote mode (§22): on for a new install (no stored settings), so the device tunnel starts with the app. */
   readonly remoteMode: boolean;
   /** Remote full-control opt-in (AD-13 point 5): off by default. */
   readonly remoteFullControl: boolean;
@@ -44,7 +44,22 @@ export interface DeviceSettings {
   readonly remoteFullControlGrant?: FullControlGrant;
 }
 
-const DEFAULTS: DeviceSettings = Object.freeze({ remoteMode: false, remoteFullControl: false });
+/**
+ * Opt-out for managed installs and test suites: `CROT_REMOTE_MODE_DEFAULT=off` keeps remote mode off on a new
+ * install. It can only narrow: stored settings are never changed by it, and nothing turns remote mode on by it.
+ */
+export const REMOTE_MODE_DEFAULT_VARIABLE = "CROT_REMOTE_MODE_DEFAULT";
+
+/** Remote mode of a new install (no stored settings yet): on unless the environment opts out. */
+export function newInstallRemoteMode(env: NodeJS.ProcessEnv = process.env): boolean {
+  const value = env[REMOTE_MODE_DEFAULT_VARIABLE]?.trim().toLowerCase();
+  return !(value === "off" || value === "0" || value === "false" || value === "no");
+}
+
+function defaults(remoteMode: boolean): DeviceSettings {
+  return Object.freeze({ remoteMode, remoteFullControl: false });
+}
+
 /** Effective settings while the stored state cannot be read. */
 const FAIL_CLOSED: DeviceSettings = Object.freeze({
   preset: "require-approval",
@@ -108,16 +123,27 @@ export class DeviceSettingsStore {
     private failure: string | undefined,
   ) {}
 
-  static async open(file: string, privateFiles: PrivateFileProtection): Promise<DeviceSettingsStore> {
+  /**
+   * Open the stored settings. A missing file is a new install: `remoteModeDefault` applies (default:
+   * {@link newInstallRemoteMode}). An unreadable or malformed file fails closed (remote mode off).
+   */
+  static async open(
+    file: string,
+    privateFiles: PrivateFileProtection,
+    options: { readonly remoteModeDefault?: boolean } = {},
+  ): Promise<DeviceSettingsStore> {
     let read;
     try {
       read = await readStateFile(file);
     } catch (error) {
-      return new DeviceSettingsStore(file, privateFiles, DEFAULTS, `cannot read ${file}: ${message(error)}`);
+      return new DeviceSettingsStore(file, privateFiles, FAIL_CLOSED, `cannot read ${file}: ${message(error)}`);
     }
-    if (read.kind === "missing") return new DeviceSettingsStore(file, privateFiles, DEFAULTS, undefined);
+    if (read.kind === "missing") {
+      const remoteMode = options.remoteModeDefault ?? newInstallRemoteMode();
+      return new DeviceSettingsStore(file, privateFiles, defaults(remoteMode), undefined);
+    }
     const parsed = parse(read.text);
-    if (!parsed) return new DeviceSettingsStore(file, privateFiles, DEFAULTS, `${file} is malformed`);
+    if (!parsed) return new DeviceSettingsStore(file, privateFiles, FAIL_CLOSED, `${file} is malformed`);
     return new DeviceSettingsStore(file, privateFiles, parsed, undefined);
   }
 

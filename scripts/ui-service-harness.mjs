@@ -206,7 +206,8 @@ export async function serviceHarness() {
         for await (const chunk of req) raw += chunk;
         const body = JSON.parse(raw);
         res.writeHead(200, { "content-type": "text/event-stream" });
-        if (!body.tools?.length) {
+        // Project read tools are always offered with an open project; only the owner's write grant drives the tool path.
+        if (!JSON.stringify(body.tools ?? []).includes("fs_write_file")) {
           res.end(
             "data: " +
               JSON.stringify({ choices: [{ delta: { content: "Real provider fixture response" } }] }) +
@@ -214,7 +215,7 @@ export async function serviceHarness() {
           );
           return true;
         }
-        if (body.messages.length === 1) {
+        if (body.messages.at(-1)?.role === "user") {
           res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: "Waiting for approved write" } }] })}\n\n`);
           res.write(
             `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: "ui_call", function: { name: "fs_write_file", arguments: JSON.stringify({ path: "chat-proof.txt", content: "real-chat-approved" }) } }] } }] })}\n\n`,

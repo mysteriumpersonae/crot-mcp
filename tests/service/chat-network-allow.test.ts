@@ -252,16 +252,22 @@ describe("ProductRuntime with the default network.allow: []", () => {
     try {
       runtime = await open(core);
       const endpoint = `http://127.0.0.1:${port}/v1`;
-      await runtime.request("chat.configure", { provider: "OpenAI-compatible", endpoint, credential: "k" });
+      const saved = await runtime.request("chat.configure", {
+        provider: "OpenAI-compatible",
+        endpoint,
+        credential: "k",
+      });
+      const key = `OpenAI-compatible:127-0-0-1-${port}`;
+      expect(saved.provider).toBe(key);
       expect(allowed(core, endpoint + "/models")).toBe(true);
-      const result = await runtime.request("chat.testConnection", { provider: "OpenAI-compatible" });
+      const result = await runtime.request("chat.testConnection", { provider: key });
       expect(result).toMatchObject({ ok: true, models: ["river-1"] });
       const listed = (await runtime.request("chat.providers", {})).providers as {
         provider: string;
         connectionStatus?: string;
         connectionError?: unknown;
       }[];
-      const custom = listed.find((p) => p.provider === "OpenAI-compatible");
+      const custom = listed.find((p) => p.provider === key);
       expect(custom).toMatchObject({ connectionStatus: "connected" });
       expect(custom?.connectionError).toBeUndefined();
     } finally {

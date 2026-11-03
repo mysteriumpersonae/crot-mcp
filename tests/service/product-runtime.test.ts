@@ -117,6 +117,8 @@ it(
       id: "custom-check",
       workingDirectory: "build/preview",
     });
+    // Custom families are saved as profiles keyed by the endpoint host ("Custom API:127-0-0-1-<port>").
+    const keys: Record<string, string> = {};
     for (const provider of [
       "OpenAI",
       "Anthropic",
@@ -126,26 +128,34 @@ it(
       "OpenAI-compatible",
       "Local HTTP",
     ]) {
-      await rpc("chat.configure", {
+      const saved = await rpc("chat.configure", {
         provider,
         endpoint: `http://127.0.0.1:${port}`,
         credential: "stage-b-provider-secret",
       });
-      expect((await rpc("chat.testConnection", { provider })).models).toEqual(["fixture-model"]);
-      const configured = (await rpc("chat.providers")).providers.find(
-        (p: { provider: string }) => p.provider === provider,
+      const key = (keys[provider] = saved.provider as string);
+      expect(key).toBe(
+        provider === "Custom API" || provider === "OpenAI-compatible" ? `${provider}:127-0-0-1-${port}` : provider,
       );
+      expect((await rpc("chat.testConnection", { provider: key })).models).toEqual(["fixture-model"]);
+      const configured = (await rpc("chat.providers")).providers.find((p: { provider: string }) => p.provider === key);
       expect(configured).toMatchObject({
         connectionStatus: "connected",
         defaultModel: "fixture-model",
         checkedAt: expect.any(String),
       });
-      await rpc("chat.configure", { provider, endpoint: `http://127.0.0.1:${port}`, defaultModel: "fixture-model" });
+      // The same endpoint updates the same profile instead of adding another one.
+      const again = await rpc("chat.configure", {
+        provider,
+        endpoint: `http://127.0.0.1:${port}`,
+        defaultModel: "fixture-model",
+      });
+      expect(again.provider).toBe(key);
       expect(
-        (await rpc("chat.providers")).providers.find((p: { provider: string }) => p.provider === provider)
-          .connectionStatus,
+        (await rpc("chat.providers")).providers.find((p: { provider: string }) => p.provider === key).connectionStatus,
       ).toBe("connected");
     }
+    const compatible = keys["OpenAI-compatible"]!;
     for (const status of [401, 403, 429, 500]) {
       modelStatus = status;
       const result = await rpc("chat.testConnection", { provider: "OpenAI-compatible" });
@@ -159,7 +169,7 @@ it(
       });
       expect(JSON.stringify(result)).not.toContain("secret-provider-body");
       expect(
-        (await rpc("chat.providers")).providers.find((p: { provider: string }) => p.provider === "OpenAI-compatible"),
+        (await rpc("chat.providers")).providers.find((p: { provider: string }) => p.provider === compatible),
       ).toMatchObject({ connectionStatus: "failed", connectionError: { httpStatus: status } });
     }
     // 404 on /models is treated as an empty inventory (manual model entry), not an HTTP failure.
@@ -177,7 +187,7 @@ it(
     emptyModels = false;
     expect(await rpc("chat.testConnection", { provider: "OpenAI-compatible" })).toMatchObject({ ok: true });
     expect(
-      (await rpc("chat.providers")).providers.find((p: { provider: string }) => p.provider === "OpenAI-compatible")
+      (await rpc("chat.providers")).providers.find((p: { provider: string }) => p.provider === compatible)
         .connectionError,
     ).toBeUndefined();
     const policy = {
