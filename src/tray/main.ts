@@ -43,7 +43,7 @@ import { PRESET_VALUES, type PresetValue } from "../service/protocol.js";
 import { TRAY_CSP, TRAY_ORIGIN, trayAsset } from "./assets.js";
 import { TrayToolClient } from "./tool-client.js";
 import { repairL1 } from "./l1-repair.js";
-import { checkRelayEndpoint, relayCheckUrl } from "./relay-check.js";
+import { checkRelayEndpoint, relayCheckUrl, relayCheckVerdict } from "./relay-check.js";
 import { TrayController } from "./controller.js";
 import { ProjectFolderPicker } from "./project-picker.js";
 import { trayView, type TrayView } from "./view-model.js";
@@ -501,7 +501,9 @@ function registerIpc(): void {
   ipcMain.handle("check-relay", async (event, ...args: unknown[]) => {
     // No renderer-supplied URL: the main process probes only the current view's relay endpoint.
     if (smokeReport || !fromTray(event) || args.length) return { state: "unavailable" };
-    return checkRelayEndpoint(relayCheckUrl(view));
+    // The owner asked: the service registers and reconnects its tunnel first, then the public URL is probed.
+    const tunnel = await controller.reconnectRemote();
+    return relayCheckVerdict(await checkRelayEndpoint(relayCheckUrl(view)), tunnel);
   });
   ipcMain.handle("pick-folder", async (event) => {
     if (smokeReport || !fromTray(event) || !window) return null;

@@ -262,7 +262,12 @@ export async function runAgentsScenarios({
   await screenshot("agents-center-mobile-ru");
   await evaluate("const main=document.querySelector('main.content'); main.scrollTop=main.scrollHeight");
   await screenshot("agents-workspace-mobile-ru");
-  await evaluate("document.querySelector('main.content').scrollTop=0");
+  // Opening Agents always starts at the top, however far the page was scrolled before.
+  assert((await evaluate("document.querySelector('main.content').scrollTop")) > 0, "Mobile Agents did not scroll");
+  await evaluate("document.getElementById('nav-home').click()");
+  await evaluate("document.getElementById('nav-agents').click()");
+  await until("document.querySelector('[data-agents-center]')&&!document.querySelector('[data-provider-loading]')");
+  assert(await evaluate("document.querySelector('main.content').scrollTop===0"), "Agents did not open at the top");
   await size(1584, 960);
   await evaluate("window.CrotI18n.setLanguage('en')");
   assert(
@@ -291,8 +296,10 @@ export async function runAgentsScenarios({
   await evaluate("document.querySelector('[aria-label=\"Copy URL\"]').click()");
   await until(`(async()=>await navigator.clipboard.readText()===${JSON.stringify(recipeUrl)})()`);
   assert(
-    await evaluate("document.querySelector('.agents-center').textContent.includes('OAuth 2.1')"),
-    "Relay OAuth method missing",
+    await evaluate(
+      "[...document.querySelectorAll('.agents-center .agents-description')].some(n=>n.textContent==='Paste the MCP server URL and the Bearer Token into Custom MCP settings (Notion, Claude, n8n).')&&!document.querySelector('.agents-center').textContent.includes('OAuth 2.1')",
+    ),
+    "Relay connection instructions missing",
   );
   await evaluate("document.getElementById('nav-chat').click()");
   await until(
@@ -343,6 +350,47 @@ export async function runAgentsScenarios({
     "document.querySelector('.agents-accordion .agents-connection-state.failed')?.textContent.includes('HTTP 401')",
   );
   await screenshot("agents-openrouter-auth-failure");
+  // The provider list names kinds only. A custom server is one profile per base URL (saving it again
+  // under the legacy family or with a trailing slash updates it) and is edited from Connected providers.
+  const custom = await evaluate(
+    `(async()=>{const p=(method,params)=>window.crot.product(method,params);try{const a=await p('chat.configure',{provider:'Custom API',endpoint:${JSON.stringify(endpoint)},credential:'fixture-ui-agents-key'});const b=await p('chat.configure',{provider:'OpenAI-compatible',endpoint:${JSON.stringify(endpoint + "/")}});await p('chat.testConnection',{provider:a.provider});const profiles=(await p('chat.providers')).providers.filter(v=>v.provider.includes(':'));return {a:a.provider,b:b.provider,profiles:profiles.map(v=>v.provider),connected:profiles.every(v=>v.connectionStatus==='connected'&&v.credentialStored)};}catch(error){return {error:String(error?.message||error)};}})()`,
+  );
+  assert(
+    !custom.error &&
+      custom.a.startsWith("Custom API:") &&
+      custom.b === custom.a &&
+      custom.profiles.length === 1 &&
+      custom.profiles[0] === custom.a &&
+      custom.connected,
+    "One custom server was saved as several profiles: " + JSON.stringify(custom),
+  );
+  await evaluate("document.getElementById('nav-agents').click()");
+  await until(
+    `!document.querySelector('[data-provider-loading]')&&document.querySelector('[data-connected-provider=${JSON.stringify(custom.a)}]')`,
+  );
+  assert(
+    (await evaluate(
+      "JSON.stringify([...document.querySelector('select[aria-label=\"Chat provider\"]').options].map(o=>o.value))",
+    )) ===
+      JSON.stringify(["OpenAI", "Anthropic", "Google Gemini", "OpenRouter", "OpenCode (Free & Zen)", "Custom API"]),
+    "Provider list shows saved profiles instead of provider kinds",
+  );
+  await evaluate(
+    `document.querySelector('[data-connected-provider=${JSON.stringify(custom.a)}] [data-connected-configure]').click()`,
+  );
+  assert(
+    await evaluate(
+      `document.querySelector('select[aria-label="Chat provider"]').value==='Custom API'&&[...document.querySelectorAll('label')].find(l=>l.querySelector('span')?.textContent==='API base URL').querySelector('input').value===${JSON.stringify(endpoint)}`,
+    ),
+    "Configure did not open the saved custom server",
+  );
+  await screenshot("agents-custom-server-profile");
+  assert(
+    await evaluate(
+      `(async()=>{await window.crot.product('chat.remove',{provider:${JSON.stringify(custom.a)}});return true;})()`,
+    ),
+    "Custom server removal failed",
+  );
   // Disconnect removes provider configuration and its vault secret, with no secret in audit.
   for (const provider of ["OpenCode", "Notion Agents"]) {
     assert(

@@ -91,6 +91,9 @@ export async function createSandbox(): Promise<Sandbox> {
     XDG_STATE_HOME: stateHome,
     XDG_DATA_HOME: dataHome,
     XDG_CACHE_HOME: cacheHome,
+    // A fresh home is a new install (remote mode on): keep these services off the public relay.
+    CROT_REMOTE_MODE_DEFAULT: "off",
+    CROT_SELF_RELAY_HOST: "relay.invalid",
   });
   return { base, home, configHome, stateHome, profileDir, workspace, env };
 }

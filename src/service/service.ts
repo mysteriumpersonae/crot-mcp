@@ -82,7 +82,7 @@ import {
   type ServiceToShim,
 } from "./protocol.js";
 import { ResumeDetector } from "./resume-detector.js";
-import { loadOrCreateLocalDeviceIdentity } from "./local-device-id.js";
+import { loadOrCreateLocalDeviceIdentity, resolveSelfRelayHost } from "./local-device-id.js";
 import {
   prepareSecretStore,
   secretStoreProtectedPaths,
@@ -562,15 +562,17 @@ export class CrotService {
             value: id,
           }),
         invalidate: async (id, generation) => {
+          const principal = {
+            id: `client-token:${id}:${generation}`,
+            kind: "local",
+            transport: "http",
+            authMethod: "scoped-token",
+            tokenAccess: { id, generation, scopes: [] },
+          } as const;
           await Promise.all([
             this.product?.invalidateToken(id, generation),
-            this.http?.endPrincipal({
-              id: `client-token:${id}:${generation}`,
-              kind: "local",
-              transport: "http",
-              authMethod: "scoped-token",
-              tokenAccess: { id, generation, scopes: [] },
-            }),
+            this.http?.endPrincipal(principal),
+            this.tunnel?.endPrincipal(principal),
           ]);
         },
       });
@@ -661,7 +663,14 @@ export class CrotService {
       this.banner();
       if (http.enabled) await this.startHttp(http, legacyTokenFile);
       if (identity.environment || localIdentity) {
-        const selfRelayHost = identity.environment?.relayHost ?? "crot.network";
+        // Self-registered tunnel: always the canonical relay whose URL the tray shows (not the
+        // identity environment's relay), unless a test seam or a development override names another.
+        const selfHost =
+          this.options.tunnel?.selfRelayHost !== undefined
+            ? { host: this.options.tunnel.selfRelayHost }
+            : resolveSelfRelayHost();
+        if (localIdentity && "note" in selfHost && selfHost.note) log(`note: tunnel: ${selfHost.note}`);
+        const selfRelayHost = selfHost.host;
         // The device tunnel (WP-30): open while remote mode is on and the device is paired here.
         const tunnel = new RemoteTunnel({
           core: holder.core,
@@ -676,6 +685,21 @@ export class CrotService {
             ? {
                 selfCredential: () => localIdentity.credential(selfRelayHost),
                 selfTargetPort: () => this.http?.port,
+                // HTTP disabled (the desktop default): the tunnel brings its own loopback entry for client tokens.
+                selfEntry: {
+                  verifier: {
+                    method: "local-token",
+                    verifyAccessToken: async (token) => this.clientTokens?.verifyAccessToken(token),
+                  },
+                  principalAdmission: (principal) => {
+                    try {
+                      this.clientTokens?.authorize(principal);
+                      return true;
+                    } catch {
+                      return false;
+                    }
+                  },
+                },
               }
             : {}),
           remoteMode: () => control.statusSummary().remoteMode === true,
@@ -686,7 +710,10 @@ export class CrotService {
         });
         this.tunnel = tunnel;
         control.tunnelView = () => tunnel.view();
-        control.onRemoteChange = () => tunnel.sync();
+        control.tunnelState = () => tunnel.status.state;
+        // The owner turned remote mode on (or paired): register and connect now, whatever failed before.
+        control.onRemoteChange = () => tunnel.sync({ force: true });
+        control.onReconnect = () => tunnel.reconnect();
         await tunnel.sync();
         tunnel.watch();
       }

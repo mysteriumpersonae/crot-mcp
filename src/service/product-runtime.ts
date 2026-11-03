@@ -164,6 +164,16 @@ export interface ProductHost {
 const fail = (message: string): never => {
   throw new CrotError("INVALID_INPUT", message);
 };
+/** The normalized base URL of a custom profile; undefined when it has none or it is malformed. */
+const serverOf = (endpoint?: string): string | undefined => {
+  if (!endpoint) return undefined;
+  try {
+    return chatEndpoint(endpoint);
+  } catch {
+    return undefined;
+  }
+};
+const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const now = () => new Date().toISOString();
 const strings = (v: unknown) => v as string[];
 const object = (v: unknown): Record<string, unknown> =>
@@ -341,8 +351,8 @@ export class ProductRuntime {
   /**
    * Saved chat providers on open: a legacy single custom configuration ("Custom API",
    * "OpenAI-compatible", "River") moves to a named profile ("Custom API:river") together with
-   * its credential. Nothing else is changed or removed; an entry whose endpoint cannot be
-   * migrated stays as it is.
+   * its credential, and profiles of the same server merge into one (mergeDuplicateProfiles).
+   * Nothing else is changed or removed; an entry whose endpoint cannot be migrated stays as it is.
    */
   private migrateChatProviders(): void {
     const saved = this.state.chatProviders as Record<string, ChatProviderConfig | undefined> | undefined;
@@ -366,22 +376,94 @@ export class ProductRuntime {
         continue; // Profile limit reached: keep the legacy entry.
       }
       const credential = credentials[`chat:${key}`];
-      saved[profile] = {
-        ...config,
-        endpoint,
-        label: this.profileLabel(profile, config.label ?? (key === "River" ? "River" : customLabel(endpoint))),
-      };
-      if (credential !== undefined) credentials[`chat:${profile}`] = credential;
+      if (saved[profile]) {
+        // This server already has a profile: it stays, taking the legacy credential only if it has none.
+        if (credential !== undefined && credentials[`chat:${profile}`] === undefined)
+          credentials[`chat:${profile}`] = credential;
+      } else {
+        saved[profile] = {
+          ...config,
+          endpoint,
+          label: this.profileLabel(profile, config.label ?? (key === "River" ? "River" : customLabel(endpoint))),
+        };
+        if (credential !== undefined) credentials[`chat:${profile}`] = credential;
+      }
       delete saved[key];
       delete credentials[`chat:${key}`];
     }
+    this.mergeDuplicateProfiles();
   }
-  /** The profile a custom server is saved as: the existing one for this endpoint, else a new key. */
+  /** The custom profiles (either family) saved for this server. */
+  private sameServerProfiles(endpoint: string): ChatProvider[] {
+    const saved = this.state.chatProviders ?? {};
+    const server = serverOf(endpoint);
+    if (server === undefined) return [];
+    return (Object.keys(saved) as ChatProvider[]).filter(
+      (k) => isProfileKey(k) && isCustomFamily(k) && serverOf(saved[k]?.endpoint) === server,
+    );
+  }
+  /**
+   * One profile per server. Older versions kept one profile per custom family, so the same URL could
+   * be saved twice ("River" and "River 2"): such profiles merge into one, preferably a "Custom API"
+   * key, with the most recently verified configuration, a credential whenever one of them had one,
+   * and the original name. Profiles of other servers are not touched.
+   */
+  private mergeDuplicateProfiles(): void {
+    const saved = this.state.chatProviders as Record<string, ChatProviderConfig | undefined> | undefined;
+    if (!saved) return;
+    const credentials = this.vault.credentials;
+    const groups = new Map<string, ChatProvider[]>();
+    for (const key of Object.keys(saved) as ChatProvider[]) {
+      if (!isProfileKey(key) || !isCustomFamily(key)) continue;
+      const server = serverOf(saved[key]?.endpoint);
+      if (server !== undefined) groups.set(server, [...(groups.get(server) ?? []), key]);
+    }
+    for (const [server, keys] of groups) {
+      if (keys.length < 2) continue;
+      const score = (k: ChatProvider): number[] => [
+        credentials[`chat:${k}`] !== undefined ? 1 : 0,
+        saved[k]?.connectionStatus === "connected" ? 1 : 0,
+        Date.parse(saved[k]?.checkedAt ?? "") || 0,
+        baseProvider(k) === "Custom API" ? 1 : 0,
+      ];
+      const rank = (a: ChatProvider, b: ChatProvider): number => {
+        const x = score(a),
+          y = score(b);
+        for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return y[i]! - x[i]!;
+        return 0;
+      };
+      const ranked = [...keys].sort(rank);
+      const best = ranked[0]!;
+      const keep = ranked.find((k) => baseProvider(k) === "Custom API") ?? best;
+      // The original name, not a numbered copy of another one in the group ("River", not "River 2").
+      const labels = ranked.map((k) => saved[k]?.label).filter((l): l is string => typeof l === "string" && l !== "");
+      const label =
+        labels.find(
+          (l) => !labels.some((other) => other !== l && new RegExp(`^${escapeRegExp(other)} \\d+$`).test(l)),
+        ) ?? customLabel(server);
+      const config: ChatProviderConfig = { ...saved[best]!, endpoint: server };
+      // An OpenAI-compatible profile always spoke the OpenAI protocol, the default of a Custom API profile.
+      if (baseProvider(best) === "OpenAI-compatible") delete config.protocol;
+      const credential = ranked.map((k) => credentials[`chat:${k}`]).find((v) => v !== undefined);
+      for (const k of keys) {
+        delete saved[k];
+        delete credentials[`chat:${k}`];
+      }
+      saved[keep] = config;
+      if (credential !== undefined) credentials[`chat:${keep}`] = credential;
+      config.label = this.profileLabel(keep, label);
+    }
+  }
+  /**
+   * The profile a custom server is saved as: the existing one for this endpoint (of either custom
+   * family, so a legacy "OpenAI-compatible" request updates "Custom API:river"), else a new key.
+   */
   private customProfile(family: CustomProviderFamily, endpoint: string): ChatProvider {
     const saved = this.state.chatProviders ?? {};
     const keys = Object.keys(saved) as ChatProvider[];
-    const same = keys.find((k) => k.startsWith(`${family}:`) && saved[k]?.endpoint === endpoint);
-    if (same) return same;
+    const same = this.sameServerProfiles(endpoint);
+    const match = same.find((k) => baseProvider(k) === family) ?? same[0];
+    if (match) return match;
     if (keys.filter((k) => isProfileKey(k)).length >= 16) fail("Custom provider limit reached; remove one first");
     const slug = customSlug(endpoint);
     for (let n = 1; ; n++) {
@@ -833,6 +915,18 @@ export class ProductRuntime {
           value: provider,
         });
         this.state.chatProviders ??= {};
+        // One profile per server: a profile edited to another profile's URL takes that one over.
+        if (isProfileKey(provider)) {
+          const others = this.sameServerProfiles(endpoint).filter((k) => k !== provider);
+          const credentials = this.vault.credentials;
+          for (const other of others) {
+            const credential = credentials[`chat:${other}`];
+            if (p.credential === undefined && credentials[`chat:${provider}`] === undefined && credential !== undefined)
+              credentials[`chat:${provider}`] = credential;
+            delete this.state.chatProviders[other];
+            delete credentials[`chat:${other}`];
+          }
+        }
         const previous = this.state.chatProviders[provider];
         this.state.chatProviders[provider] = {
           ...(previous?.endpoint === endpoint &&

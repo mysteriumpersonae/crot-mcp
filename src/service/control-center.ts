@@ -312,6 +312,9 @@ export class ControlCenter implements RemoteAdmission {
         );
       case "device.unpair":
         return this.serial(() => this.unpair());
+      case "remote.reconnect":
+        // Not serialized: it waits for the relay for a few seconds and changes no device state.
+        return this.reconnectRemote();
       default:
         return undefined;
     }
@@ -974,6 +977,11 @@ export class ControlCenter implements RemoteAdmission {
 
   /** Network teardown/cleanup runs after local revocation and never delays its result. */
   protected async afterLocalUnpair(): Promise<void> {}
+
+  /** `remote.reconnect`: register and reconnect the relay tunnel now (services with a tunnel override it). */
+  protected reconnectRemote(): Promise<Result> {
+    return Promise.resolve(refusal("unavailable", "This service has no relay tunnel."));
+  }
 
   private pairingView(): PairingView {
     const identity = this.host.identity;

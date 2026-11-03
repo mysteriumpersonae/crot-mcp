@@ -12,7 +12,8 @@
  *     overview | approvals.subscribe | approvals.unsubscribe | approvals.decide |
  *     preset.set | remote.setMode | remote.setFullControl | remote.resetExposure |
  *     remote.revokeClient | pairing.start (WP-22);
- *     remote.regrantClient | pairing.cancel | device.unpair (WP-28)
+ *     remote.regrantClient | pairing.cancel | device.unpair (WP-28);
+ *     remote.reconnect (register and reconnect the relay tunnel now: "Check tunnel")
  *   service -> client: response { id, result } | response { id, error }
  *     and, only to connections that subscribed: event { event, ... }
  *     (approval.requested, approval.resolved, state.changed)
@@ -74,6 +75,7 @@ export const CONTROL_METHODS = [
   "pairing.cancel",
   "device.unpair",
   "remote.regrantClient",
+  "remote.reconnect",
 ] as const;
 export type ControlMethod = (typeof CONTROL_METHODS)[number];
 
@@ -266,6 +268,8 @@ export interface ControlOverview {
     /** The effective profile of remote principals in the running Core (WP-31); absent from older services. */
     readonly profile?: RemoteProfileSummary;
     readonly tunnel: string;
+    /** The tunnel's state for indicators: ready, connecting, waiting (retrying), blocked or stopped; absent from older services. */
+    readonly tunnelState?: "ready" | "connecting" | "waiting" | "blocked" | "stopped";
     readonly clients: readonly RemoteClientView[];
     /** Device state that cannot be read (settings, client list); remote requests are then refused. */
     readonly errors: readonly string[];

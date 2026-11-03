@@ -6,6 +6,7 @@ import { AGENTS_CENTER_CSS } from "../../src/tray/agents-center-style.js";
 import { TRAY_ASSETS } from "../../src/tray/assets.js";
 import { CrotError } from "../../src/core/errors.js";
 import { providerDiagnostic, CHAT_ENDPOINTS } from "../../src/service/chat-runtime.js";
+import { UI_MESSAGES_JSON } from "../../src/ui/i18n.js";
 describe("scoped Agents center", () => {
   it("compiles and removes only Agents workspace tab strip", () => {
     expect(() => new Script(CONTROL_CENTER_RENDERER)).not.toThrow();
@@ -72,7 +73,11 @@ describe("scoped Agents center", () => {
 describe("MCP Server Access remote tunnel toggle", () => {
   it("adds a remote.mode switch and auto-enables it on token generation or URL copy", () => {
     expect(() => new Script(CONTROL_CENTER_RENDERER)).not.toThrow();
-    expect(AGENTS_CENTER_RENDERER).toContain("Удалённый туннель (MCP Relay)");
+    // English source string, translated at render time (ru: «Удалённый туннель (MCP Relay)»).
+    expect(AGENTS_CENTER_RENDERER).toContain("'Remote tunnel (MCP Relay)'");
+    expect((JSON.parse(UI_MESSAGES_JSON) as Record<string, string[]>)["Remote tunnel (MCP Relay)"]?.[1]).toBe(
+      "Удалённый туннель (MCP Relay)",
+    );
     expect(AGENTS_CENTER_RENDERER).toContain("api.action('remote.setMode',{enabled})");
     expect(AGENTS_CENTER_RENDERER).toContain("remoteToggle.input.dataset.remoteMode=''");
     // Every provider card has an explicit Disconnect button that calls chat.remove.
@@ -91,5 +96,78 @@ describe("MCP Server Access remote tunnel toggle", () => {
     );
     expect(AGENTS_CENTER_RENDERER).toContain("if(restored){token.input.value=agentsOneTimeToken.token;");
     expect(AGENTS_CENTER_RENDERER).toContain("function ensureRemote(){if(!remoteOn)void setRemote(true);}");
+  });
+});
+
+describe("Agents provider list, connection note and tunnel status", () => {
+  const messages = JSON.parse(UI_MESSAGES_JSON) as Record<string, string[]>;
+  const line = (start: string) => AGENTS_CENTER_RENDERER.split("\n").find((l) => l.trim().startsWith(start)) ?? "";
+
+  it("lists provider kinds only; saved custom servers are edited from Connected providers", () => {
+    expect(AGENTS_CENTER_RENDERER).toContain(
+      "[['OpenAI','OpenAI'],['Anthropic','Anthropic'],['Google Gemini','Google Gemini'],['OpenRouter','OpenRouter'],['OpenCode (Free & Zen)','OpenCode (Free & Zen)'],['Custom API','Custom API (Own server)']]",
+    );
+    expect(messages["Custom API (Own server)"]?.[1]).toBe("Свой сервер (Custom API)");
+    // cloudOptions() only keeps the selection valid; it never adds saved profiles as options.
+    const options = line("function cloudOptions(){");
+    expect(options).not.toBe("");
+    expect(options).not.toMatch(/createElement\('option'\)|node\('option'|\.append\(/);
+    // Configure picks the profile: the list shows its kind, the form works on that profile.
+    expect(AGENTS_CENTER_RENDERER).toContain(
+      "const configure=button('Configure',()=>{pickCloud(c.provider);selectCloud();apiKey.input.focus();}",
+    );
+    expect(AGENTS_CENTER_RENDERER).toContain("cloudProvider.value=custom?'Custom API':provider;");
+    expect(AGENTS_CENTER_RENDERER).toContain("cloudProvider.onchange=()=>{cloudProfile=undefined;selectCloud();};");
+  });
+
+  it("asks for the URL and Bearer Token in Custom MCP settings, never OAuth 2.1, and translates the hints", () => {
+    const note = "Paste the MCP server URL and the Bearer Token into Custom MCP settings (Notion, Claude, n8n).";
+    expect(AGENTS_CENTER_RENDERER).toContain(`t('${note}')`);
+    expect(messages[note]?.[1]).toBe(
+      "Вставьте URL MCP-сервера и Bearer Token в настройки Custom MCP (Notion, Claude, n8n).",
+    );
+    expect(AGENTS_CENTER_RENDERER).not.toContain("OAuth 2.1");
+    const hint =
+      "Enter the base URL of your server. For OpenAI-compatible servers: /v1. Servers without /models support are fine — enter the model name manually.";
+    expect(AGENTS_CENTER_RENDERER).toContain(`'${hint}'`);
+    expect(messages[hint]?.[1]).toMatch(/^Укажите базовый URL вашего сервера/);
+    for (const key of [
+      "Remote tunnel is off.",
+      "Tunnel connected: remote requests reach this device.",
+      "Tunnel not connected; retrying.",
+      "Connecting the tunnel…",
+      "Checking the tunnel…",
+      "Turn on the remote tunnel to check it.",
+      "Tunnel check unavailable: the CROT service is not connected.",
+      "MCP endpoint is live: requests reach this device through the tunnel.",
+      "crot.network does not know this device: registration failed. Check the network and try again.",
+      "crot.network is reachable, but the tunnel to this device is not connected yet. Try again in a few seconds.",
+      "Cannot reach crot.network. Check the network connection.",
+      "Relay responded HTTP",
+    ]) {
+      expect(AGENTS_CENTER_RENDERER, key).toContain(`'${key}'`);
+      expect(messages[key]?.length, key).toBe(5);
+      expect(messages[key]![1], key).not.toBe(key);
+    }
+  });
+
+  it("turns the tunnel green only for a ready tunnel or a live check, and checking turns remote mode on", () => {
+    expect(AGENTS_CENTER_RENDERER.match(/showTunnel\('connected'/g)).toHaveLength(1);
+    expect(AGENTS_CENTER_RENDERER).toContain("else if(s==='ready')showTunnel('connected',");
+    expect(AGENTS_CENTER_RENDERER.match(/done\('connected'/g)).toHaveLength(1);
+    expect(AGENTS_CENTER_RENDERER).toContain("else if(r.state==='live')done('connected',");
+    expect(AGENTS_CENTER_RENDERER).toContain("if(!remoteOn&&!(await setRemote(true)))");
+    expect(AGENTS_CENTER_RENDERER).toContain("const r=await window.crot?.checkRelay?.();");
+    // The indicator follows the service's tunnel (view updates) and is not wiped by its own text.
+    expect(AGENTS_CENTER_RENDERER).toContain("document.addEventListener('crot:view',onTunnelView)");
+    expect(CONTROL_CENTER_RENDERER).toContain("document.dispatchEvent(new Event('crot:view'))");
+    expect(AGENTS_CENTER_RENDERER).toContain("tunnelStatus.append(tunnelDot)");
+    expect(AGENTS_CENTER_RENDERER).not.toContain("text(tunnelStatus,");
+  });
+
+  it("opens Agents at the top", () => {
+    expect(CONTROL_CENTER_RENDERER).toContain(
+      "renderPage();if(name==='Agents'){const main=document.querySelector('main.content');if(main)main.scrollTop=0;}",
+    );
   });
 });

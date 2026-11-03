@@ -14,12 +14,34 @@ import {
   signTunnelProof,
   type DevicePublicKey,
 } from "../identity/device-credential.js";
-import { deviceIdForPublicKey } from "../identity/device-id.js";
+import { deviceIdForPublicKey, isRelayHost, SELF_RELAY_HOST } from "../identity/device-id.js";
+import { RELEASE_IDENTITY_ENVIRONMENT } from "../identity/release-environment.js";
 import { readStateFile, writeStateFile } from "./private-state.js";
 import type { PrivateFileProtection } from "../core/platform/types.js";
 import type { TunnelCredential } from "./device-binding.js";
 
 const STATE_FILE = "local-device-id.json";
+
+/** Development and test suites only: another relay host for the self-registered tunnel. */
+export const SELF_RELAY_HOST_VARIABLE = "CROT_SELF_RELAY_HOST";
+
+/**
+ * The relay host of the self-registered tunnel: the canonical `crot.network` (SELF_RELAY_HOST),
+ * independent of the identity environment, so the relay URL the tray shows is the one the device
+ * registers and tunnels to. `CROT_SELF_RELAY_HOST` names another relay for development and keeps
+ * test suites off the public relay; a release build ignores it.
+ */
+export function resolveSelfRelayHost(
+  env: NodeJS.ProcessEnv = process.env,
+  release: boolean = RELEASE_IDENTITY_ENVIRONMENT !== undefined,
+): { readonly host: string; readonly note?: string } {
+  const value = env[SELF_RELAY_HOST_VARIABLE];
+  if (value === undefined || value === "") return { host: SELF_RELAY_HOST };
+  if (release) return { host: SELF_RELAY_HOST, note: `${SELF_RELAY_HOST_VARIABLE} is ignored in a release build` };
+  if (!isRelayHost(value))
+    return { host: SELF_RELAY_HOST, note: `${SELF_RELAY_HOST_VARIABLE} is not a relay host; using ${SELF_RELAY_HOST}` };
+  return { host: value, note: `the self-registered tunnel uses the development relay ${value}` };
+}
 
 export interface LocalDeviceIdentity {
   readonly localDeviceId: string;

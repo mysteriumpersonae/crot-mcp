@@ -117,8 +117,10 @@ it(
       id: "custom-check",
       workingDirectory: "build/preview",
     });
-    // Custom families are saved as profiles keyed by the endpoint host ("Custom API:127-0-0-1-<port>").
+    // Custom families are saved as profiles keyed by the endpoint host ("Custom API:127-0-0-1-<port>"),
+    // one profile per base URL: the OpenAI-compatible server here has a base URL of its own.
     const keys: Record<string, string> = {};
+    const base = (provider: string) => `http://127.0.0.1:${port}${provider === "OpenAI-compatible" ? "/compat" : ""}`;
     for (const provider of [
       "OpenAI",
       "Anthropic",
@@ -130,7 +132,7 @@ it(
     ]) {
       const saved = await rpc("chat.configure", {
         provider,
-        endpoint: `http://127.0.0.1:${port}`,
+        endpoint: base(provider),
         credential: "stage-b-provider-secret",
       });
       const key = (keys[provider] = saved.provider as string);
@@ -147,7 +149,7 @@ it(
       // The same endpoint updates the same profile instead of adding another one.
       const again = await rpc("chat.configure", {
         provider,
-        endpoint: `http://127.0.0.1:${port}`,
+        endpoint: base(provider),
         defaultModel: "fixture-model",
       });
       expect(again.provider).toBe(key);
@@ -155,6 +157,10 @@ it(
         (await rpc("chat.providers")).providers.find((p: { provider: string }) => p.provider === key).connectionStatus,
       ).toBe("connected");
     }
+    // The Custom API server's base URL saved again under the other custom family is still its one profile.
+    expect(
+      (await rpc("chat.configure", { provider: "OpenAI-compatible", endpoint: `http://127.0.0.1:${port}/` })).provider,
+    ).toBe(keys["Custom API"]);
     const compatible = keys["OpenAI-compatible"]!;
     for (const status of [401, 403, 429, 500]) {
       modelStatus = status;

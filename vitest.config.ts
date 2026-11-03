@@ -29,7 +29,9 @@ export default defineConfig({
     include: ["tests/**/*.test.ts"],
     // New installs turn remote mode on (the device tunnel then reaches the relay); test services stay offline
     // unless a test turns remote mode on itself. tests/service/device-settings-default.test.ts covers the default.
-    env: { CROT_REMOTE_MODE_DEFAULT: "off" },
+    // A self-registered tunnel never reaches the public relay from a test: `.invalid` never resolves (RFC 2606);
+    // tests that need a relay start a local one and name it through the tunnel seams.
+    env: { CROT_REMOTE_MODE_DEFAULT: "off", CROT_SELF_RELAY_HOST: "relay.invalid" },
     globalSetup: ["tests/global-setup.ts"],
     environment: "node",
     testTimeout: 20_000,

@@ -484,8 +484,10 @@ try {
       "Unpaired MCP view fabricated an integration or URL",
     );
     assert(
-      await evaluate("document.querySelector('.agents-center').textContent.includes('OAuth 2.1')"),
-      "Remote MCP authentication method missing",
+      await evaluate(
+        "[...document.querySelectorAll('.agents-center .agents-description')].some(n=>n.textContent.includes('Custom MCP')&&n.textContent.includes('Bearer Token'))&&!document.querySelector('.agents-center').textContent.includes('OAuth 2.1')",
+      ),
+      "Remote MCP connection instructions missing",
     );
     await click("nav-home");
     await evaluate(
