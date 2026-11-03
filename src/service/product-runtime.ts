@@ -12,11 +12,19 @@ import {
   ChatRuntime,
   CHAT_ENDPOINTS,
   chatEndpoint,
+  customLabel,
+  customSlug,
   providerDiagnostic,
   providerNetworkHosts,
   type ChatProviderConfig,
 } from "./chat-runtime.js";
-import type { ChatProvider } from "./chat-protocol.js";
+import {
+  baseProvider,
+  isCustomFamily,
+  isProfileKey,
+  type ChatProvider,
+  type CustomProviderFamily,
+} from "./chat-protocol.js";
 import { newAuditEventId } from "../core/audit/audit.js";
 import { RuntimePolicySchema, type RuntimePolicy } from "../core/permissions/runtime.js";
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -238,6 +246,11 @@ export class ProductRuntime {
       core: () => this.host.core(),
       configuration: (provider) => this.state.chatProviders?.[provider],
       credential: (provider) => this.vault.credentials[`chat:${provider}`],
+      configured: () => Object.keys(this.state?.chatProviders ?? {}) as ChatProvider[],
+      project: () => {
+        const active = this.state?.projects.find((p) => p.id === this.state.active);
+        return active ? { name: active.name, root: this.host.core().workspace.root } : undefined;
+      },
       context: () => this.context(),
       run: (context, work) => {
         const run = async () => {
@@ -308,6 +321,7 @@ export class ProductRuntime {
     if (!active) fail("Active project is missing from the registry");
     if (active && active.path !== root) await host.selectWorkspace(active.path);
     if (r.state.browserPolicy) host.core().browser.setTabPolicy(r.state.browserPolicy);
+    r.migrateChatProviders();
     // Pre-allow network hosts for all saved provider configurations so that
     // chat.models / chat.generate do not hit NETWORK_GUARD_BLOCKED on restart.
     {
@@ -323,6 +337,75 @@ export class ProductRuntime {
   }
   get activeProject(): Project {
     return this.state.projects.find((p) => p.id === this.state.active)!;
+  }
+  /**
+   * Saved chat providers on open: a legacy single custom configuration ("Custom API",
+   * "OpenAI-compatible", "River") moves to a named profile ("Custom API:river") together with
+   * its credential. Nothing else is changed or removed; an entry whose endpoint cannot be
+   * migrated stays as it is.
+   */
+  private migrateChatProviders(): void {
+    const saved = this.state.chatProviders as Record<string, ChatProviderConfig | undefined> | undefined;
+    if (!saved) return;
+    const credentials = this.vault.credentials;
+    for (const key of Object.keys(saved)) {
+      const config = saved[key];
+      const family: CustomProviderFamily | undefined =
+        key === "River" ? "OpenAI-compatible" : key === "Custom API" || key === "OpenAI-compatible" ? key : undefined;
+      if (!family || !config || typeof config.endpoint !== "string") continue;
+      let endpoint: string;
+      try {
+        endpoint = chatEndpoint(config.endpoint || (key === "River" ? "https://api.river.ai/v1" : ""));
+      } catch {
+        continue;
+      }
+      let profile: ChatProvider;
+      try {
+        profile = this.customProfile(family, endpoint);
+      } catch {
+        continue; // Profile limit reached: keep the legacy entry.
+      }
+      const credential = credentials[`chat:${key}`];
+      saved[profile] = {
+        ...config,
+        endpoint,
+        label: this.profileLabel(profile, config.label ?? (key === "River" ? "River" : customLabel(endpoint))),
+      };
+      if (credential !== undefined) credentials[`chat:${profile}`] = credential;
+      delete saved[key];
+      delete credentials[`chat:${key}`];
+    }
+  }
+  /** The profile a custom server is saved as: the existing one for this endpoint, else a new key. */
+  private customProfile(family: CustomProviderFamily, endpoint: string): ChatProvider {
+    const saved = this.state.chatProviders ?? {};
+    const keys = Object.keys(saved) as ChatProvider[];
+    const same = keys.find((k) => k.startsWith(`${family}:`) && saved[k]?.endpoint === endpoint);
+    if (same) return same;
+    if (keys.filter((k) => isProfileKey(k)).length >= 16) fail("Custom provider limit reached; remove one first");
+    const slug = customSlug(endpoint);
+    for (let n = 1; ; n++) {
+      const key = `${family}:${n === 1 ? slug : `${slug}-${n}`}` as ChatProvider;
+      if (!saved[key]) return key;
+    }
+  }
+  /** A display name that no other custom profile uses ("River", "River 2"). */
+  private profileLabel(provider: ChatProvider, wanted: string): string {
+    const taken = new Set(
+      Object.entries(this.state.chatProviders ?? {})
+        .filter(([k, c]) => k !== provider && isProfileKey(k as ChatProvider) && c?.label)
+        .map(([, c]) => c!.label!.toLowerCase()),
+    );
+    let label = wanted.slice(0, 64);
+    for (let n = 2; taken.has(label.toLowerCase()); n++) label = `${wanted.slice(0, 60)} ${n}`;
+    return label;
+  }
+  /** A bare custom family names its only saved profile; with several the caller must choose one. */
+  private chatKey(provider: ChatProvider): ChatProvider {
+    if (!isCustomFamily(provider) || isProfileKey(provider) || this.state.chatProviders?.[provider]) return provider;
+    const profiles = Object.keys(this.state.chatProviders ?? {}).filter((k) => k.startsWith(`${provider}:`));
+    if (profiles.length > 1) fail("Choose which saved custom provider to use");
+    return (profiles[0] as ChatProvider | undefined) ?? provider;
   }
   private async assertProjectAdmission(): Promise<void> {
     if (this.state.projects.length < PLAN_CATALOG.free.advertisedProjects) return;
@@ -593,7 +676,7 @@ export class ProductRuntime {
         return { ok: true, policy: next };
       }
       case "chat.testConnection": {
-        const provider = p.provider as ChatProvider;
+        const provider = this.chatKey(p.provider as ChatProvider);
         const config = this.state.chatProviders?.[provider];
         if (!config) return fail("Configure the chat provider first");
         try {
@@ -609,7 +692,7 @@ export class ProductRuntime {
           if (!config.defaultModel || !models.includes(config.defaultModel)) config.defaultModel = models[0];
           await this.persist();
           await this.event(method, undefined, provider);
-          return { ...result, checkedAt: config.checkedAt, defaultModel: config.defaultModel };
+          return { ...result, provider, checkedAt: config.checkedAt, defaultModel: config.defaultModel };
         } catch (error) {
           const diagnostic = providerDiagnostic(error);
           if (this.state.chatProviders?.[provider] === config) {
@@ -618,7 +701,7 @@ export class ProductRuntime {
             config.connectionStatus = "failed";
             await this.persist();
           }
-          return { ok: false, message: "Provider check failed", diagnostic };
+          return { ok: false, provider, message: "Provider check failed", diagnostic };
         }
       }
       case "skills.list":
@@ -705,10 +788,17 @@ export class ProductRuntime {
         };
       }
       case "chat.providers":
-        return { ok: true, providers: this.chat.providers(), current: this.chat.current };
+        return {
+          ok: true,
+          providers: this.chat.providers(),
+          current: this.chat.current,
+          thread: this.chat.currentThread,
+        };
+      case "chat.reset":
+        return this.chat.reset(typeof p.thread === "string" ? p.thread : undefined);
       case "chat.remove": {
         if (this.chat.running) return fail("Stop generation before removing a provider");
-        const provider = p.provider as ChatProvider;
+        const provider = this.chatKey(p.provider as ChatProvider);
         await this.event(method, undefined, provider);
         delete this.state.chatProviders?.[provider];
         delete this.vault.credentials[`chat:${provider}`];
@@ -718,8 +808,21 @@ export class ProductRuntime {
       case "chat.configure": {
         if (this.chat.running) return fail("Stop generation before changing provider configuration");
         if (!this.host.recordControlEvent) return fail("Provider configuration audit unavailable");
-        const provider = p.provider as ChatProvider;
-        const endpoint = chatEndpoint(String(p.endpoint ?? CHAT_ENDPOINTS[provider]));
+        const requested = p.provider as ChatProvider;
+        const endpoint = chatEndpoint(
+          String(
+            p.endpoint ??
+              (isProfileKey(requested)
+                ? (this.state.chatProviders?.[requested]?.endpoint ?? "")
+                : CHAT_ENDPOINTS[baseProvider(requested)]),
+          ),
+        );
+        // Each custom server is its own profile: a bare family key saves (or updates) the profile
+        // of this endpoint, so a second server never replaces the first.
+        const provider =
+          isCustomFamily(requested) && !isProfileKey(requested)
+            ? this.customProfile(baseProvider(requested) as CustomProviderFamily, endpoint)
+            : requested;
         await this.host.recordControlEvent({
           kind: "control",
           id: newAuditEventId(),
@@ -741,17 +844,29 @@ export class ProductRuntime {
           ...(p.username !== undefined ? { username: String(p.username) } : {}),
           ...(p.defaultModel !== undefined ? { defaultModel: String(p.defaultModel) } : {}),
           ...(p.protocol !== undefined ? { protocol: p.protocol as "openai" | "anthropic" } : {}),
+          ...(isProfileKey(provider)
+            ? {
+                label: this.profileLabel(
+                  provider,
+                  typeof p.label === "string"
+                    ? p.label
+                    : previous?.endpoint === endpoint && previous.label
+                      ? previous.label
+                      : customLabel(endpoint),
+                ),
+              }
+            : {}),
         };
         if (p.credential !== undefined) this.vault.credentials[`chat:${provider}`] = String(p.credential);
         await this.persist();
         // Auto-allow the provider's preset hosts and its (custom) endpoint host, port included.
         this.host.core().addNetworkAllow(providerNetworkHosts(provider, endpoint));
-        return { ok: true, providers: this.chat.providers(), current: this.chat.current };
+        return { ok: true, provider, providers: this.chat.providers(), current: this.chat.current };
       }
       case "chat.models":
-        return this.chat.models(p.provider as ChatProvider);
+        return this.chat.models(this.chatKey(p.provider as ChatProvider));
       case "chat.start":
-        return this.chat.start(p);
+        return this.chat.start({ ...p, provider: this.chatKey(p.provider as ChatProvider) });
       case "chat.poll":
         return this.chat.poll(id);
       case "chat.stop":

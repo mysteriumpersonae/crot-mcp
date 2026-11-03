@@ -534,7 +534,10 @@ describe("Stage A real chat provider adapters", () => {
           });
           return;
         }
-        if (messages.length === 1 && JSON.stringify(body.tools ?? []).includes("fs_write_file")) {
+        // First round: the owner's message is last (a project system prompt and project tools come with it).
+        const last = messages.at(-1) as { role?: string; content?: unknown } | undefined;
+        const firstRound = last?.role === "user" && !JSON.stringify(last.content ?? "").includes("tool_result");
+        if (firstRound && JSON.stringify(body.tools ?? []).includes("fs_write_file")) {
           const args = JSON.stringify({
             path: anthropic ? "chat-anthropic.txt" : "chat-openai.txt",
             content: "approved-from-chat",

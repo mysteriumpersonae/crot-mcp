@@ -484,8 +484,10 @@ describe("audit of control actions (AD-19 point 9)", () => {
 });
 
 describe("remote admission, exposure reset and revocation (AD-19 points 6 and 8)", () => {
-  it("remote mode is off by default; on admits and lists the client; revocation refuses it from then on", async () => {
+  it("remote mode off refuses; on admits and lists the client; revocation refuses it from then on", async () => {
     await setup();
+    // The suite keeps new installs offline (CROT_REMOTE_MODE_DEFAULT=off, vitest.config.ts).
+    expect(settings.settings.remoteMode).toBe(false);
     expect(center.admit(CLIENT)).toEqual({ admitted: false, reason: "remote_mode_off" });
     await ask(new Conn(), { method: "remote.setMode", params: { enabled: true } });
     expect(center.admit(CLIENT)).toEqual({ admitted: true });

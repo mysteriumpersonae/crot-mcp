@@ -63,7 +63,7 @@ export function svgTree(markup: string): SvgTree {
       continue;
     }
     const attrs: Record<string, string> = {};
-    for (const a of rawAttrs!.matchAll(/([a-zA-Z:-]+)='([^']*)'/g)) {
+    for (const a of rawAttrs!.matchAll(/([a-zA-Z][a-zA-Z0-9:-]*)='([^']*)'/g)) {
       if (!SVG_ATTR.test(a[1]!)) throw new Error("Unsupported SVG attribute " + a[1]);
       attrs[a[1]!] = a[2]!;
     }

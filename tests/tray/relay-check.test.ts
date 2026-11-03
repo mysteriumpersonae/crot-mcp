@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { checkRelayEndpoint, relayCheckUrl } from "../../src/tray/relay-check.js";
-import { INTEGRATION_SVG_TREES, svgTree } from "../../src/tray/integration-svgs.js";
+import {
+  CLAUDE_SVG,
+  INTEGRATION_SVG_TREES,
+  N8N_SVG,
+  NOTION_SVG,
+  svgTree,
+  type SvgTree,
+} from "../../src/tray/integration-svgs.js";
 import { AGENTS_CENTER_RENDERER } from "../../src/tray/agents-center-renderer.js";
 
 const ID = "abcdefghijklmnopqrstuvwxyz".slice(0, 26);
@@ -50,5 +57,23 @@ describe("integration logos are structured SVG data", () => {
     expect(() => svgTree("<svg><script>alert(1)</script></svg>")).toThrow();
     expect(() => svgTree("<svg onload='x'></svg>")).toThrow();
     expect(() => svgTree("<svg><rect/>text</svg>")).toThrow();
+  });
+
+  it("keeps every attribute, including names with digits (the Claude spark lines need x1/y1/x2/y2)", () => {
+    const count = (tree: SvgTree): number => Object.keys(tree[1]).length + tree[2].reduce((n, c) => n + count(c), 0);
+    for (const [name, markup] of [
+      ["Notion", NOTION_SVG],
+      ["Claude", CLAUDE_SVG],
+      ["n8n", N8N_SVG],
+    ] as const)
+      expect(count(INTEGRATION_SVG_TREES[name]!), name).toBe(markup.match(/\s[a-zA-Z][a-zA-Z0-9:-]*='/g)!.length);
+    const spark = INTEGRATION_SVG_TREES.Claude![2][1]!;
+    expect(spark[0]).toBe("g");
+    expect(spark[2]).toHaveLength(4);
+    for (const line of spark[2]) {
+      expect(line[0]).toBe("line");
+      expect(Object.keys(line[1]).sort()).toEqual(["x1", "x2", "y1", "y2"]);
+    }
+    expect(spark[2][0]![1]).toEqual({ x1: "0", y1: "-26", x2: "0", y2: "26" });
   });
 });
