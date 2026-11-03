@@ -16,7 +16,7 @@
         --text3: #7a7a72;
         --border: #e8e8e0;
         --card-bg: #ffffff;
-        --shadow: 0 2px 16px rgba(0,0,0,.08);
+        --shadow: 0 2px 16px rgba(0, 0, 0, 0.08);
         --radius: 14px;
         --font: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
       }
@@ -29,9 +29,13 @@
         --text3: #7a7a68;
         --border: #2e2e24;
         --card-bg: #1e1e1a;
-        --shadow: 0 2px 20px rgba(0,0,0,.4);
+        --shadow: 0 2px 20px rgba(0, 0, 0, 0.4);
       }
-      * { box-sizing: border-box; margin: 0; padding: 0; }
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
       body {
         font-family: var(--font);
         background: var(--bg);
@@ -59,7 +63,7 @@
         gap: 10px;
         font-weight: 700;
         font-size: 20px;
-        letter-spacing: -.5px;
+        letter-spacing: -0.5px;
         color: var(--text);
         text-decoration: none;
       }
@@ -73,7 +77,11 @@
         justify-content: center;
         font-size: 18px;
       }
-      .header-right { display: flex; align-items: center; gap: 12px; }
+      .header-right {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
       .btn {
         padding: 8px 18px;
         border-radius: 8px;
@@ -82,16 +90,37 @@
         cursor: pointer;
         text-decoration: none;
         border: none;
-        transition: all .15s;
+        transition: all 0.15s;
         display: inline-flex;
         align-items: center;
         gap: 6px;
       }
-      .btn-ghost { background: transparent; color: var(--text2); border: 1px solid var(--border); }
-      .btn-ghost:hover { background: var(--bg2); color: var(--text); }
-      .btn-primary { background: var(--yellow); color: #1a1a00; font-weight: 600; }
-      .btn-primary:hover { background: var(--yellow-dark); }
-      .btn-theme { background: none; border: 1px solid var(--border); color: var(--text2); padding: 6px 10px; border-radius: 8px; cursor: pointer; font-size: 16px; }
+      .btn-ghost {
+        background: transparent;
+        color: var(--text2);
+        border: 1px solid var(--border);
+      }
+      .btn-ghost:hover {
+        background: var(--bg2);
+        color: var(--text);
+      }
+      .btn-primary {
+        background: var(--yellow);
+        color: #1a1a00;
+        font-weight: 600;
+      }
+      .btn-primary:hover {
+        background: var(--yellow-dark);
+      }
+      .btn-theme {
+        background: none;
+        border: 1px solid var(--border);
+        color: var(--text2);
+        padding: 6px 10px;
+        border-radius: 8px;
+        cursor: pointer;
+        font-size: 16px;
+      }
 
       /* ── HERO ── */
       .hero {
@@ -112,7 +141,12 @@
         color: var(--text2);
         margin-bottom: 28px;
       }
-      .hero-tag .dot { width: 7px; height: 7px; border-radius: 50%; background: #22c55e; }
+      .hero-tag .dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: #22c55e;
+      }
       h1 {
         font-size: clamp(36px, 6vw, 64px);
         font-weight: 800;
@@ -121,7 +155,9 @@
         margin-bottom: 20px;
         color: var(--text);
       }
-      h1 .accent { color: var(--yellow-dark); }
+      h1 .accent {
+        color: var(--yellow-dark);
+      }
       .hero-sub {
         font-size: 18px;
         color: var(--text2);
@@ -135,7 +171,11 @@
         justify-content: center;
         flex-wrap: wrap;
       }
-      .btn-lg { padding: 14px 28px; font-size: 16px; border-radius: 10px; }
+      .btn-lg {
+        padding: 14px 28px;
+        font-size: 16px;
+        border-radius: 10px;
+      }
 
       /* ── STATUS BADGE ── */
       .status-bar {
@@ -151,12 +191,34 @@
         font-size: 13px;
         color: var(--text2);
       }
-      .status-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-      .status-dot.connected { background: #22c55e; }
-      .status-dot.disconnected { background: #ef4444; }
-      .status-dot.checking { background: #f59e0b; animation: pulse 1.2s infinite; }
-      @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
-      #status-label { flex: 1; }
+      .status-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        flex-shrink: 0;
+      }
+      .status-dot.connected {
+        background: #22c55e;
+      }
+      .status-dot.disconnected {
+        background: #ef4444;
+      }
+      .status-dot.checking {
+        background: #f59e0b;
+        animation: pulse 1.2s infinite;
+      }
+      @keyframes pulse {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.4;
+        }
+      }
+      #status-label {
+        flex: 1;
+      }
 
       /* ── MASCOT SECTION ── */
       .mascot-wrap {
@@ -173,14 +235,27 @@
         align-items: center;
         justify-content: center;
         font-size: 64px;
-        box-shadow: 0 8px 40px rgba(245,196,0,.35);
+        box-shadow: 0 8px 40px rgba(245, 196, 0, 0.35);
         position: relative;
       }
 
       /* ── STEPS ── */
-      .section { max-width: 900px; margin: 0 auto; padding: 40px 40px; }
-      h2 { font-size: 28px; font-weight: 700; letter-spacing: -.8px; margin-bottom: 8px; }
-      .section-sub { color: var(--text2); margin-bottom: 28px; font-size: 15px; }
+      .section {
+        max-width: 900px;
+        margin: 0 auto;
+        padding: 40px 40px;
+      }
+      h2 {
+        font-size: 28px;
+        font-weight: 700;
+        letter-spacing: -0.8px;
+        margin-bottom: 8px;
+      }
+      .section-sub {
+        color: var(--text2);
+        margin-bottom: 28px;
+        font-size: 15px;
+      }
       .steps {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -194,7 +269,8 @@
         box-shadow: var(--shadow);
       }
       .step-num {
-        width: 32px; height: 32px;
+        width: 32px;
+        height: 32px;
         background: var(--yellow);
         color: #1a1a00;
         font-weight: 700;
@@ -205,8 +281,16 @@
         justify-content: center;
         margin-bottom: 12px;
       }
-      .step-card h3 { font-size: 15px; font-weight: 600; margin-bottom: 6px; }
-      .step-card p { font-size: 13px; color: var(--text2); line-height: 1.55; }
+      .step-card h3 {
+        font-size: 15px;
+        font-weight: 600;
+        margin-bottom: 6px;
+      }
+      .step-card p {
+        font-size: 13px;
+        color: var(--text2);
+        line-height: 1.55;
+      }
 
       /* ── DOWNLOAD GRID ── */
       .dl-grid {
@@ -222,15 +306,29 @@
         padding: 20px;
         text-align: center;
         cursor: pointer;
-        transition: all .15s;
+        transition: all 0.15s;
         text-decoration: none;
         color: var(--text);
         box-shadow: var(--shadow);
       }
-      .dl-card:hover { border-color: var(--yellow); transform: translateY(-2px); box-shadow: 0 6px 24px rgba(0,0,0,.12); }
-      .dl-icon { font-size: 32px; margin-bottom: 10px; }
-      .dl-card h3 { font-size: 15px; font-weight: 600; margin-bottom: 4px; }
-      .dl-card p { font-size: 12px; color: var(--text3); }
+      .dl-card:hover {
+        border-color: var(--yellow);
+        transform: translateY(-2px);
+        box-shadow: 0 6px 24px rgba(0, 0, 0, 0.12);
+      }
+      .dl-icon {
+        font-size: 32px;
+        margin-bottom: 10px;
+      }
+      .dl-card h3 {
+        font-size: 15px;
+        font-weight: 600;
+        margin-bottom: 4px;
+      }
+      .dl-card p {
+        font-size: 12px;
+        color: var(--text3);
+      }
       .dl-card .badge-pill {
         display: inline-block;
         background: var(--bg2);
@@ -255,11 +353,32 @@
         border-radius: var(--radius);
         padding: 18px;
       }
-      .feat-icon { font-size: 24px; margin-bottom: 10px; }
-      .feat-card h3 { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
-      .feat-card p { font-size: 12px; color: var(--text2); }
-      .feat-card .avail { font-size: 11px; color: #22c55e; font-weight: 500; margin-top: 6px; display: block; }
-      .feat-card .roadmap { font-size: 11px; color: var(--text3); margin-top: 6px; display: block; }
+      .feat-icon {
+        font-size: 24px;
+        margin-bottom: 10px;
+      }
+      .feat-card h3 {
+        font-size: 14px;
+        font-weight: 600;
+        margin-bottom: 4px;
+      }
+      .feat-card p {
+        font-size: 12px;
+        color: var(--text2);
+      }
+      .feat-card .avail {
+        font-size: 11px;
+        color: #22c55e;
+        font-weight: 500;
+        margin-top: 6px;
+        display: block;
+      }
+      .feat-card .roadmap {
+        font-size: 11px;
+        color: var(--text3);
+        margin-top: 6px;
+        display: block;
+      }
 
       /* ── FOOTER ── */
       footer {
@@ -270,7 +389,10 @@
         border-top: 1px solid var(--border);
         margin-top: 40px;
       }
-      footer a { color: var(--yellow-dark); text-decoration: none; }
+      footer a {
+        color: var(--yellow-dark);
+        text-decoration: none;
+      }
 
       /* ── OPEN-APP ACTIONS ── */
       .open-bar {
@@ -281,10 +403,20 @@
       }
 
       @media (max-width: 600px) {
-        header { padding: 0 20px; }
-        .hero, .section { padding: 40px 20px; }
-        .dl-grid { grid-template-columns: 1fr; }
-        h1 { font-size: 32px; letter-spacing: -1px; }
+        header {
+          padding: 0 20px;
+        }
+        .hero,
+        .section {
+          padding: 40px 20px;
+        }
+        .dl-grid {
+          grid-template-columns: 1fr;
+        }
+        h1 {
+          font-size: 32px;
+          letter-spacing: -1px;
+        }
       }
     </style>
   </head>
@@ -312,10 +444,10 @@
           <div class="mascot-lg">🤖</div>
         </div>
 
-        <h1>Ваш ИИ.<br/>Ваш компьютер.<br/><span class="accent">Ваши правила.</span></h1>
+        <h1>Ваш ИИ.<br />Ваш компьютер.<br /><span class="accent">Ваши правила.</span></h1>
         <p class="hero-sub">
-          Дайте совместимым ИИ-клиентам безопасный доступ к вашим файлам, терминалу и браузеру.
-          Начните локально — без аккаунта и карты.
+          Дайте совместимым ИИ-клиентам безопасный доступ к вашим файлам, терминалу и браузеру. Начните локально — без
+          аккаунта и карты.
         </p>
 
         <div class="hero-actions">
@@ -355,7 +487,7 @@
           <button class="btn btn-ghost" id="copy-cmd">Скопировать команду запуска</button>
         </div>
 
-        <p id="feedback" style="margin-top:12px;font-size:13px;color:var(--text3);min-height:20px;"></p>
+        <p id="feedback" style="margin-top: 12px; font-size: 13px; color: var(--text3); min-height: 20px"></p>
       </section>
 
       <section class="section">
@@ -428,72 +560,74 @@
     </main>
 
     <footer>
-      Локальный режим бесплатен. Удалённый доступ требует облачной подписки.
-      Никогда не передавайте токены и не одобряйте непонятные операции. ·
+      Локальный режим бесплатен. Удалённый доступ требует облачной подписки. Никогда не передавайте токены и не
+      одобряйте непонятные операции. ·
       <a href="https://crot.network" target="_blank" rel="noopener">crot.network</a>
     </footer>
 
     <script>
       // ── Theme ──
       const html = document.documentElement;
-      const stored = localStorage.getItem('crot-theme');
+      const stored = localStorage.getItem("crot-theme");
       if (stored) html.dataset.theme = stored;
-      else if (window.matchMedia('(prefers-color-scheme: dark)').matches) html.dataset.theme = 'dark';
-      document.getElementById('theme-toggle').addEventListener('click', () => {
-        const next = html.dataset.theme === 'dark' ? 'light' : 'dark';
+      else if (window.matchMedia("(prefers-color-scheme: dark)").matches) html.dataset.theme = "dark";
+      document.getElementById("theme-toggle").addEventListener("click", () => {
+        const next = html.dataset.theme === "dark" ? "light" : "dark";
         html.dataset.theme = next;
-        localStorage.setItem('crot-theme', next);
-        document.getElementById('theme-toggle').textContent = next === 'dark' ? '☀️' : '🌙';
+        localStorage.setItem("crot-theme", next);
+        document.getElementById("theme-toggle").textContent = next === "dark" ? "☀️" : "🌙";
       });
-      if (html.dataset.theme === 'dark') document.getElementById('theme-toggle').textContent = '☀️';
+      if (html.dataset.theme === "dark") document.getElementById("theme-toggle").textContent = "☀️";
 
       // ── Status check ──
-      const dot = document.getElementById('status-dot');
-      const label = document.getElementById('status-label');
+      const dot = document.getElementById("status-dot");
+      const label = document.getElementById("status-label");
       function setStatus(state, text) {
-        dot.className = 'status-dot ' + state;
+        dot.className = "status-dot " + state;
         label.textContent = text;
       }
       async function checkConnection() {
-        setStatus('checking', 'Проверка подключения к десктопу…');
+        setStatus("checking", "Проверка подключения к десктопу…");
         try {
-          const bg = chrome.runtime.sendMessage({ type: 'crot:status' });
+          const bg = chrome.runtime.sendMessage({ type: "crot:status" });
           const resp = await Promise.race([
             bg,
-            new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000))
+            new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 3000)),
           ]);
-          if (resp && resp.connection === 'connected') {
-            setStatus('connected', '✓ Десктоп подключён — CROT готов к работе');
+          if (resp && resp.connection === "connected") {
+            setStatus("connected", "✓ Десктоп подключён — CROT готов к работе");
           } else {
-            setStatus('disconnected', '✗ Десктоп не подключён — запустите CROT App');
+            setStatus("disconnected", "✗ Десктоп не подключён — запустите CROT App");
           }
         } catch {
-          setStatus('disconnected', '✗ Десктоп не подключён — запустите CROT App');
+          setStatus("disconnected", "✗ Десктоп не подключён — запустите CROT App");
         }
       }
       checkConnection();
 
       // ── Open app ──
       async function openApp() {
-        const fb = document.getElementById('feedback');
+        const fb = document.getElementById("feedback");
         try {
-          const resp = await chrome.runtime.sendMessage({ type: 'crot:open' });
-          fb.textContent = resp?.ok ? 'CROT App открывается…' : 'Не удалось открыть — убедитесь, что CROT запущен.';
+          const resp = await chrome.runtime.sendMessage({ type: "crot:open" });
+          fb.textContent = resp?.ok ? "CROT App открывается…" : "Не удалось открыть — убедитесь, что CROT запущен.";
         } catch {
-          fb.textContent = 'Не удалось открыть — установите и запустите CROT App.';
+          fb.textContent = "Не удалось открыть — установите и запустите CROT App.";
         }
       }
-      document.getElementById('open-app').addEventListener('click', openApp);
-      document.getElementById('open-app-2').addEventListener('click', openApp);
-      document.getElementById('refresh-status').addEventListener('click', checkConnection);
+      document.getElementById("open-app").addEventListener("click", openApp);
+      document.getElementById("open-app-2").addEventListener("click", openApp);
+      document.getElementById("refresh-status").addEventListener("click", checkConnection);
 
       // ── Copy launch command ──
-      document.getElementById('copy-cmd').addEventListener('click', async () => {
-        const cmd = 'npx crot-mcp';
+      document.getElementById("copy-cmd").addEventListener("click", async () => {
+        const cmd = "npx crot-mcp";
         await navigator.clipboard.writeText(cmd).catch(() => {});
-        const fb = document.getElementById('feedback');
-        fb.textContent = '✓ Команда скопирована: ' + cmd;
-        setTimeout(() => { fb.textContent = ''; }, 3000);
+        const fb = document.getElementById("feedback");
+        fb.textContent = "✓ Команда скопирована: " + cmd;
+        setTimeout(() => {
+          fb.textContent = "";
+        }, 3000);
       });
     </script>
   </body>

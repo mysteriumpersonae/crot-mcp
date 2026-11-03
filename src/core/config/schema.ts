@@ -191,10 +191,10 @@ export const DEFAULT_AI_NETWORK_ALLOW: readonly string[] = [
   "api.river.ai",
   "api.notion.com",
   // Local model servers — loopback must be IP/CIDR rules
-  "127.0.0.1:11434",  // Ollama default
-  "127.0.0.1:1234",   // LM Studio default
-  "127.0.0.1:4096",   // OpenCode default
-  "127.0.0.1:8080",   // common local model port
+  "127.0.0.1:11434", // Ollama default
+  "127.0.0.1:1234", // LM Studio default
+  "127.0.0.1:4096", // OpenCode default
+  "127.0.0.1:8080", // common local model port
 ];
 
 export const CrotConfigSchema = z

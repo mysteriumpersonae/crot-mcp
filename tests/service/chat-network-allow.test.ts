@@ -10,7 +10,7 @@ import http from "node:http";
 import { describe, expect, it } from "vitest";
 import { ChatRuntime } from "../../src/service/chat-runtime.js";
 import { MemoryAuditSink } from "../../src/core/audit/audit.js";
-import { createTestCore, makeTempDirs, testContext, waitFor } from "../helpers.js";
+import { createTestCore, makeTempDirs, testContext } from "../helpers.js";
 
 describe("dynamic network allow for custom AI provider endpoints", () => {
   it("addNetworkAllow extends live policy so a custom endpoint is not blocked", async () => {

@@ -764,9 +764,8 @@ export class ProductRuntime {
           const staticHosts: readonly string[] = PROVIDER_NETWORK_HOSTS[provider] ?? [];
           // For providers with a custom endpoint (e.g. OpenAI-compatible), also allow the endpoint host.
           const customHost = endpoint ? endpointHost(endpoint) : undefined;
-          const hostsToAllow = customHost && !staticHosts.includes(customHost)
-            ? [...staticHosts, customHost]
-            : staticHosts;
+          const hostsToAllow =
+            customHost && !staticHosts.includes(customHost) ? [...staticHosts, customHost] : staticHosts;
           if (hostsToAllow.length) this.host.core().addNetworkAllow(hostsToAllow);
         }
         return { ok: true, providers: this.chat.providers(), current: this.chat.current };

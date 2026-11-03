@@ -16,10 +16,7 @@ export function parseConfig(input: unknown): CrotConfig {
   // existing projects created before PR #51 (which have an empty or partial allow list)
   // can reach built-in AI providers without manual config edits.
   const existing = new Set(config.permissions.network.allow);
-  const merged = [
-    ...config.permissions.network.allow,
-    ...DEFAULT_AI_NETWORK_ALLOW.filter((h) => !existing.has(h)),
-  ];
+  const merged = [...config.permissions.network.allow, ...DEFAULT_AI_NETWORK_ALLOW.filter((h) => !existing.has(h))];
   if (merged.length === config.permissions.network.allow.length) return config;
   return {
     ...config,

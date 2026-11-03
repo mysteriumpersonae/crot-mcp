@@ -478,12 +478,12 @@ try {
     await click("nav-agents");
     assert(
       await evaluate(
-        "!document.querySelector('[data-integration]')&&!document.querySelector('[data-relay-url]').value&&document.querySelector('[aria-label=\"Copy relay URL\"]').disabled",
+        "!document.querySelector('[data-integration]')&&(v=>!v||/^https:\\/\\/crot\\.network\\/d\\/[a-z2-7]{26}\\/mcp$/.test(v))(document.querySelector('[data-relay-url]').value)",
       ),
       "Unpaired MCP view fabricated an integration or URL",
     );
     assert(
-      await evaluate("[...document.querySelectorAll('.agents-card input')].some(input=>input.value==='OAuth 2.1')"),
+      await evaluate("document.querySelector('.agents-center').textContent.includes('OAuth 2.1')"),
       "Remote MCP authentication method missing",
     );
     await click("nav-home");

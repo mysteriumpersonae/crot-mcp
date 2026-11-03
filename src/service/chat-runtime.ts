@@ -23,7 +23,9 @@ import { ChatEventStream } from "./chat-stream.js";
 function isNetworkDenied(core: CrotCore): boolean {
   if (core.permissions.runtime.halted) return true;
   const rules = core.permissions.runtime.policy.rules;
-  return rules.some((r) => r.state === "deny" && (r.operation === "network.request" || r.capability === "network.access"));
+  return rules.some(
+    (r) => r.state === "deny" && (r.operation === "network.request" || r.capability === "network.access"),
+  );
 }
 
 /**
@@ -43,7 +45,7 @@ async function controlFetch(
   const signal =
     options.signal && options.timeoutMs
       ? AbortSignal.any([options.signal, AbortSignal.timeout(options.timeoutMs)])
-      : options.signal ?? (options.timeoutMs ? AbortSignal.timeout(options.timeoutMs) : undefined);
+      : (options.signal ?? (options.timeoutMs ? AbortSignal.timeout(options.timeoutMs) : undefined));
   const res = await fetch(url, {
     method: options.method ?? "GET",
     headers: options.headers,
@@ -72,7 +74,7 @@ async function controlFetchStream(
   const signal =
     options.signal && options.timeoutMs
       ? AbortSignal.any([options.signal, AbortSignal.timeout(options.timeoutMs)])
-      : options.signal ?? (options.timeoutMs ? AbortSignal.timeout(options.timeoutMs) : undefined);
+      : (options.signal ?? (options.timeoutMs ? AbortSignal.timeout(options.timeoutMs) : undefined));
   const res = await fetch(url, {
     method: "POST",
     headers: options.headers,
@@ -139,20 +141,18 @@ export function providerDiagnostic(error: unknown): ProviderDiagnostic {
     code: error.code,
     stage: ["models", "workspace", "inventory"].includes(String(d?.stage)) ? String(d?.stage) : "network",
     ...(Number.isInteger(status) && status >= 100 && status <= 599 ? { httpStatus: status } : {}),
-    ...(
-      [
-        "ENOTFOUND",
-        "EAI_AGAIN",
-        "ECONNRESET",
-        "ETIMEDOUT",
-        "CERT_HAS_EXPIRED",
-        "DEPTH_ZERO_SELF_SIGNED_CERT",
-        "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
-        "ERR_TLS_CERT_ALTNAME_INVALID",
-      ].includes(errno)
-        ? { networkCode: errno }
-        : {}
-    ),
+    ...([
+      "ENOTFOUND",
+      "EAI_AGAIN",
+      "ECONNRESET",
+      "ETIMEDOUT",
+      "CERT_HAS_EXPIRED",
+      "DEPTH_ZERO_SELF_SIGNED_CERT",
+      "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+      "ERR_TLS_CERT_ALTNAME_INVALID",
+    ].includes(errno)
+      ? { networkCode: errno }
+      : {}),
   };
 }
 
@@ -212,12 +212,13 @@ export const PROVIDER_NETWORK_HOSTS: Partial<Record<ChatProvider, readonly strin
  */
 export function migrateProvider(provider: string): { provider: ChatProvider; endpoint?: string } {
   if (provider === "River") return { provider: "OpenAI-compatible", endpoint: "https://api.river.ai/v1" };
-  const parsed = (z as unknown as { parse?: (v: unknown) => ChatProvider }).parse;
   // If the value is already a valid ChatProvider, return as-is.
   try {
     const p = provider as ChatProvider;
     if (Object.keys(CHAT_ENDPOINTS).includes(p)) return { provider: p };
-  } catch { /* fall through */ }
+  } catch {
+    /* fall through */
+  }
   return { provider: "OpenAI-compatible" };
 }
 
@@ -282,7 +283,8 @@ export class ChatRuntime {
         defaultModel: config?.defaultModel,
         username: config?.username,
         protocol: config?.protocol ?? "openai",
-        credentialRequired: provider !== "Local HTTP" && provider !== "OpenCode" && provider !== "OpenCode (Free & Zen)",
+        credentialRequired:
+          provider !== "Local HTTP" && provider !== "OpenCode" && provider !== "OpenCode (Free & Zen)",
         kind: provider === "OpenCode" || provider === "Notion Agents" ? "workspace" : "model",
         connectionError: config?.connectionError,
         checkedAt: config?.checkedAt,
@@ -297,15 +299,11 @@ export class ChatRuntime {
     if (!config) return bad("Configure the chat provider first");
     const key = this.host.credential(provider);
     // OpenCode Free & Zen: key is optional (free models need no key)
-    const keyRequired =
-      provider !== "Local HTTP" &&
-      provider !== "OpenCode" &&
-      provider !== "OpenCode (Free & Zen)";
+    const keyRequired = provider !== "Local HTTP" && provider !== "OpenCode" && provider !== "OpenCode (Free & Zen)";
     if (keyRequired && !key) return bad("Provider credential is not configured");
     // Determine if this provider uses Anthropic protocol
     const anthropicProtocol =
-      provider === "Anthropic" ||
-      (provider === "Custom API" && config.protocol === "anthropic");
+      provider === "Anthropic" || (provider === "Custom API" && config.protocol === "anthropic");
     return {
       endpoint: chatEndpoint(config.endpoint),
       anthropic: anthropicProtocol,
@@ -333,22 +331,51 @@ export class ChatRuntime {
         this.workspaceRequest(provider, this.host.context(), route, method, body),
       );
     if (isNetworkDenied(this.host.core()))
-      throw new CrotError("PERMISSION_DENIED", "Runtime policy denies network.request", { operation: "network.request", missing: [] });
+      throw new CrotError("PERMISSION_DENIED", "Runtime policy denies network.request", {
+        operation: "network.request",
+        missing: [],
+      });
     // OpenCode (Free & Zen): try /models but fall back to bundled free model list on failure
     if (provider === "OpenCode (Free & Zen)") {
       try {
-        const r = await controlFetch(`${endpoint}/models`, { headers, timeoutMs: 10000, signal: this.host.context().signal });
+        const r = await controlFetch(`${endpoint}/models`, {
+          headers,
+          timeoutMs: 10000,
+          signal: this.host.context().signal,
+        });
         if (r.status === 200) {
           let body: Record<string, unknown>;
-          try { body = record(JSON.parse(r.body)); } catch { body = {}; }
+          try {
+            body = record(JSON.parse(r.body));
+          } catch {
+            body = {};
+          }
           if (Array.isArray(body.data)) {
             const fetched: string[] = [];
-            for (const item of array(body.data)) { const id = text(record(item).id); if (id && id.length <= 256) fetched.push(id); }
-            if (fetched.length > 0) return { ok: true, models: fetched.sort(), labels: { "big-pickle": "Big Pickle (free)", "glm-4.7-free": "GLM-4.7 (free)", "minimax-m2.1-free": "MiniMax M2.1 (free)" } };
+            for (const item of array(body.data)) {
+              const id = text(record(item).id);
+              if (id && id.length <= 256) fetched.push(id);
+            }
+            if (fetched.length > 0)
+              return {
+                ok: true,
+                models: fetched.sort(),
+                labels: {
+                  "big-pickle": "Big Pickle (free)",
+                  "glm-4.7-free": "GLM-4.7 (free)",
+                  "minimax-m2.1-free": "MiniMax M2.1 (free)",
+                },
+              };
           }
         }
-      } catch { /* fall through to bundled list */ }
-      return { ok: true, models: [...OPENCODE_FREE_MODELS].sort(), labels: Object.fromEntries(OPENCODE_FREE_MODELS.map(m => [m, `${m} (free)`])) };
+      } catch {
+        /* fall through to bundled list */
+      }
+      return {
+        ok: true,
+        models: [...OPENCODE_FREE_MODELS].sort(),
+        labels: Object.fromEntries(OPENCODE_FREE_MODELS.map((m) => [m, `${m} (free)`])),
+      };
     }
     let cursor = "";
     for (let page = 0; page < 10; page++) {
@@ -391,7 +418,10 @@ export class ChatRuntime {
     body?: unknown,
   ): Promise<Record<string, unknown>> {
     if (isNetworkDenied(this.host.core()))
-      throw new CrotError("PERMISSION_DENIED", "Runtime policy denies network.request", { operation: "network.request", missing: [] });
+      throw new CrotError("PERMISSION_DENIED", "Runtime policy denies network.request", {
+        operation: "network.request",
+        missing: [],
+      });
     const { endpoint, headers } = this.settings(provider);
     const response = await controlFetch(endpoint + route, {
       method,
@@ -617,10 +647,9 @@ export class ChatRuntime {
           return bad("Provider tool arguments exceed their limit");
         this.bounded(c);
       });
-      if (isNetworkDenied(this.host.core()))
-        return bad("Runtime policy denies network.request");
+      if (isNetworkDenied(this.host.core())) return bad("Runtime policy denies network.request");
       let streamingOk = false;
-      const { status: streamStatus, contentType } = await controlFetchStream(
+      const { status: streamStatus } = await controlFetchStream(
         `${endpoint}/${anthropic ? "messages" : "chat/completions"}`,
         {
           headers,
