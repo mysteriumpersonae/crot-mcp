@@ -122,7 +122,7 @@ it(
       "Anthropic",
       "Google Gemini",
       "OpenRouter",
-      "River",
+      "Custom API",
       "OpenAI-compatible",
       "Local HTTP",
     ]) {
@@ -146,28 +146,39 @@ it(
           .connectionStatus,
       ).toBe("connected");
     }
-    for (const status of [401, 403, 404, 429, 500]) {
+    for (const status of [401, 403, 429, 500]) {
       modelStatus = status;
-      const result = await rpc("chat.testConnection", { provider: "River" });
+      const result = await rpc("chat.testConnection", { provider: "OpenAI-compatible" });
       expect(result).toMatchObject({
         ok: false,
-        diagnostic: { code: "OPERATION_FAILED", stage: "models", httpStatus: status },
+        diagnostic: {
+          code: status === 401 || status === 403 ? "AUTH_INVALID_KEY" : "OPERATION_FAILED",
+          stage: "models",
+          httpStatus: status,
+        },
       });
       expect(JSON.stringify(result)).not.toContain("secret-provider-body");
       expect(
-        (await rpc("chat.providers")).providers.find((p: { provider: string }) => p.provider === "River"),
+        (await rpc("chat.providers")).providers.find((p: { provider: string }) => p.provider === "OpenAI-compatible"),
       ).toMatchObject({ connectionStatus: "failed", connectionError: { httpStatus: status } });
     }
+    // 404 on /models is treated as an empty inventory (manual model entry), not an HTTP failure.
+    modelStatus = 404;
+    expect(await rpc("chat.testConnection", { provider: "OpenAI-compatible" })).toMatchObject({
+      ok: false,
+      diagnostic: { code: "OPERATION_FAILED", stage: "inventory" },
+    });
     modelStatus = 200;
     emptyModels = true;
-    expect(await rpc("chat.testConnection", { provider: "River" })).toMatchObject({
+    expect(await rpc("chat.testConnection", { provider: "OpenAI-compatible" })).toMatchObject({
       ok: false,
       diagnostic: { stage: "inventory" },
     });
     emptyModels = false;
-    expect(await rpc("chat.testConnection", { provider: "River" })).toMatchObject({ ok: true });
+    expect(await rpc("chat.testConnection", { provider: "OpenAI-compatible" })).toMatchObject({ ok: true });
     expect(
-      (await rpc("chat.providers")).providers.find((p: { provider: string }) => p.provider === "River").connectionError,
+      (await rpc("chat.providers")).providers.find((p: { provider: string }) => p.provider === "OpenAI-compatible")
+        .connectionError,
     ).toBeUndefined();
     const policy = {
       mode: "targeted",

@@ -46,7 +46,8 @@ describe("scoped Unified Chat workspace", () => {
     expect(chat).not.toContain("['GitHub','Notion','YouTube']");
     expect(chat).not.toContain("data-agent-id");
     expect(chat).not.toContain("agents.list");
-    expect(chat).toContain("Inbound MCP client sessions are not callable outbound chat providers");
+    // Inbound MCP client sessions must never be offered as outbound chat providers (comment removed in #56;
+    // the behavioural guarantee is the absence of agent ids / agents.list above).
     expect(chat).toContain("inventoryLoaded&&chatWeb");
     expect(chat).toContain("inventoryLoaded&&chatSkill");
   });

@@ -68,3 +68,17 @@ describe("scoped Agents center", () => {
     expect(CHAT_ENDPOINTS.OpenRouter).toBe("https://openrouter.ai/api/v1");
   });
 });
+
+describe("MCP Server Access remote tunnel toggle", () => {
+  it("adds a remote.mode switch and auto-enables it on token generation or URL copy", () => {
+    expect(() => new Script(CONTROL_CENTER_RENDERER)).not.toThrow();
+    expect(AGENTS_CENTER_RENDERER).toContain("Удалённый туннель (MCP Relay)");
+    expect(AGENTS_CENTER_RENDERER).toContain("control('remote.setMode',{enabled})");
+    expect(AGENTS_CENTER_RENDERER).toContain("remoteToggle.input.dataset.remoteMode=''");
+    expect(AGENTS_CENTER_RENDERER).toContain("let remoteOn=view.remoteMode===true");
+    // Copy URL, silent token generation and Generate / rotate all turn the tunnel on.
+    expect(AGENTS_CENTER_RENDERER).toContain("async()=>{ensureRemote();await copy(displayRelayUrl,relayUrlCopy);}");
+    expect(AGENTS_CENTER_RENDERER.match(/tokenCopy\.disabled=false;ensureRemote\(\);/g)?.length).toBe(2);
+    expect(AGENTS_CENTER_RENDERER).toContain("function ensureRemote(){if(!remoteOn)void setRemote(true);}");
+  });
+});
