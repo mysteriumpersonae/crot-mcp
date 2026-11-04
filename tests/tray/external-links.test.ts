@@ -22,7 +22,8 @@ it("opens only allowlisted HTTPS pages in the browser", () => {
 });
 
 it("still denies every in-app window and opens allowlisted links outside the app", () => {
-  const main = readFileSync(new URL("../../src/tray/main.ts", import.meta.url), "utf8");
+  // Windows checkouts may use CRLF; compare the source with normalized line endings.
+  const main = readFileSync(new URL("../../src/tray/main.ts", import.meta.url), "utf8").replace(/\r\n/g, "\n");
   expect(main).toContain("contents.setWindowOpenHandler(({ url }) => {");
   expect(main).toContain("const target = smokeReport ? undefined : externalLink(url);");
   expect(main).toContain('if (target) void shell.openExternal(target);\n      return { action: "deny" };');
