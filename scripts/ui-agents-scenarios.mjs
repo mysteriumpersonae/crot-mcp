@@ -98,6 +98,73 @@ export async function runAgentsScenarios({
     !JSON.stringify(tokens).includes(before) && !JSON.stringify(tokens).includes(after),
     "Token plaintext persisted",
   );
+  // Other authorization methods of the crot.network URL (self-registered device): Basic, API key, OAuth.
+  const relayUrl = await evaluate("document.querySelector('[data-relay-url]').value");
+  const deviceId = /^https:\/\/crot\.network\/d\/([a-z2-7]{26})\/mcp$/.exec(relayUrl ?? "")?.[1];
+  const authMethods = await evaluate(
+    "(()=>{const d=document.querySelector('[data-auth-methods]');if(!d)return null;d.open=true;const v=k=>d.querySelector('[data-auth-value='+JSON.stringify(k)+']');return {summary:d.querySelector('summary').textContent,values:Object.fromEntries([...d.querySelectorAll('[data-auth-value]')].map(i=>[i.dataset.authValue,i.value])),readOnly:[...d.querySelectorAll('[data-auth-value]')].every(i=>i.readOnly),copies:d.querySelectorAll('button').length,secretPlaceholder:v('oauth-client-secret').placeholder};})()",
+  );
+  if (deviceId) {
+    assert(
+      authMethods?.summary === "Other authorization methods (Basic, API Key, OAuth)" &&
+        authMethods.values["basic-username"] === "crot" &&
+        authMethods.values["api-key-header"] === "X-API-Key" &&
+        authMethods.values["oauth-client-id"] === `crot-${deviceId}` &&
+        authMethods.values["basic-password"] === "" &&
+        authMethods.values["oauth-client-secret"] === "" &&
+        authMethods.secretPlaceholder === "Same as the Bearer token" &&
+        authMethods.readOnly &&
+        authMethods.copies === 6,
+      "Authorization methods panel: " + JSON.stringify(authMethods),
+    );
+    await evaluate("document.querySelector('[data-auth-methods]').scrollIntoView({block:'center'})");
+    await screenshot("agents-auth-methods");
+    // A copy button of a token row copies the visible token.
+    await evaluate(
+      "document.querySelector('[data-auth-value=\"api-key-value\"]').parentElement.querySelector('button').click()",
+    );
+    await until("navigator.clipboard.readText().then(v=>v===document.querySelector('[data-bearer-token]').value)");
+    await evaluate("document.querySelector('[data-auth-methods]').open=false");
+  } else assert(authMethods === null, "Authorization methods shown without a self-registered URL");
+
+  // OpenCode (Free & Zen): the optional key field, its hint and Save & Test stay visible; free models are listed.
+  await evaluate("document.querySelectorAll('.agents-accordion')[0].open=true");
+  const zen = await evaluate(
+    `(async()=>{const select=document.querySelector('select[aria-label="Chat provider"]');select.value='OpenCode (Free & Zen)';select.dispatchEvent(new Event('change'));await new Promise(r=>setTimeout(r,300));const visible=el=>!!el&&el.getClientRects().length>0;const key=document.querySelector('[data-cloud-key]');return {label:document.querySelector('[data-cloud-key-field]').firstChild.textContent,placeholder:key.placeholder,key:visible(key),test:visible(document.querySelector('[data-cloud-test]')),hint:visible(document.querySelector('[data-zen-hint]')),models:[...document.querySelector('select[aria-label="Default cloud model"]').options].map(o=>o.value)};})()`,
+  );
+  assert(
+    zen.label === "API Key (optional for Free / Zen API Key)" &&
+      zen.placeholder === "Optional: OpenCode Zen API key" &&
+      zen.key &&
+      zen.test &&
+      zen.hint &&
+      zen.models.includes("big-pickle"),
+    "OpenCode (Free & Zen) form: " + JSON.stringify(zen),
+  );
+  await screenshot("agents-opencode-zen-free");
+  // Every cloud provider keeps its key field and Save & Test; Local and Workspaces keep their checks.
+  const forms = await evaluate(
+    `(async()=>{const select=document.querySelector('select[aria-label="Chat provider"]');const visible=el=>!!el&&el.getClientRects().length>0;const out={};for(const value of [...select.options].map(o=>o.value)){select.value=value;select.dispatchEvent(new Event('change'));await new Promise(r=>setTimeout(r,80));out[value]=visible(document.querySelector('[data-cloud-test]'))&&visible(document.querySelector('[data-cloud-key]'))&&(value==='OpenCode (Free & Zen)')===visible(document.querySelector('[data-zen-hint]'));}select.value='OpenAI';select.dispatchEvent(new Event('change'));await new Promise(r=>setTimeout(r,80));return out;})()`,
+  );
+  assert(
+    Object.keys(forms).length === 6 && Object.values(forms).every(Boolean),
+    "A cloud provider lost its key field or Save & Test: " + JSON.stringify(forms),
+  );
+  const local = await evaluate(
+    "(()=>{document.querySelectorAll('.agents-accordion')[1].open=true;const l=[...document.querySelectorAll('label')].find(l=>l.querySelector('span')?.textContent==='Server URL / Port');return {url:l.querySelector('input').value,presets:[...document.querySelectorAll('[data-local-preset]')].map(b=>b.dataset.localPreset),test:!!document.querySelector('[data-local-test]')};})()",
+  );
+  assert(
+    local.url === "http://127.0.0.1:11434" && local.presets.join() === "Ollama,LM Studio" && local.test,
+    "Local LLM form: " + JSON.stringify(local),
+  );
+  await evaluate("(()=>{document.querySelector('[data-local-preset=\"LM Studio\"]').click();})()");
+  assert(
+    (await evaluate(
+      "[...document.querySelectorAll('label')].find(l=>l.querySelector('span')?.textContent==='Server URL / Port').querySelector('input').value",
+    )) === "http://127.0.0.1:1234",
+    "LM Studio preset did not fill its URL",
+  );
+  await evaluate("document.querySelectorAll('.agents-accordion')[0].open=true");
   const state = await real.verify(),
     endpoint = state.endpoint.replace("/provider-probe", "/chat-provider/v1");
   await evaluate(
@@ -422,6 +489,9 @@ export async function runAgentsScenarios({
         river401SafeDiagnostic: true,
         exclusiveAccordionFrames: true,
         workspaceDisconnectRemovesSecret: true,
+        authorizationMethodsPanel: true,
+        openCodeFreeZenForm: true,
+        everyProviderHasCheck: true,
       },
       null,
       2,

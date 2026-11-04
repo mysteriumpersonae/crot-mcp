@@ -766,12 +766,15 @@ export class ProductRuntime {
           const models = result.models as string[];
           if (!models.length)
             throw new CrotError("OPERATION_FAILED", "Provider returned no usable models", { stage: "inventory" });
+          const model = config.defaultModel && models.includes(config.defaultModel) ? config.defaultModel : models[0]!;
+          // OpenCode Zen without a key: one tiny completion proves anonymous free use is accepted.
+          await this.chat.verify(provider, model);
           if (this.state.chatProviders?.[provider] !== config)
             return fail("Provider configuration changed; test again");
           config.checkedAt = now();
           config.connectionStatus = "connected";
           delete config.connectionError;
-          if (!config.defaultModel || !models.includes(config.defaultModel)) config.defaultModel = models[0];
+          config.defaultModel = model;
           await this.persist();
           await this.event(method, undefined, provider);
           return { ...result, provider, checkedAt: config.checkedAt, defaultModel: config.defaultModel };

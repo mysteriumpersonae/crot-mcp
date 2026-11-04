@@ -20,6 +20,7 @@
  * (PermissionEngine, ExecutionGuard, audit) exactly as before.
  */
 import { ClientTokenRegistry, clientTokenPath } from "./client-tokens.js";
+import { ACCESS_TOKEN_PREFIX, OAuthGrants, OAuthTokenEndpoint, oauthGrantPath } from "./oauth-grants.js";
 import { RuntimePermissionState } from "../core/permissions/runtime.js";
 import { newAuditEventId } from "../core/audit/audit.js";
 import { newLocalExposureScope } from "../core/auth/principal.js";
@@ -166,6 +167,10 @@ export class CrotService {
   private native: NativeHost | undefined;
   private bridge: BrowserBridge | undefined;
   private clientTokens: ClientTokenRegistry | undefined;
+  /** OAuth grants of the self-registered relay URL, bound to client tokens (oauth-grants.ts). */
+  private oauthGrants: OAuthGrants | undefined;
+  /** The token endpoint the relay forwards `/d/<deviceId>/oauth/token` to (loopback entry points). */
+  private oauthToken: OAuthTokenEndpoint | undefined;
   private product: ProductRuntime | undefined;
   private socialAccounts: SocialAccountRuntime | undefined;
   private publications: PublicationRuntime | undefined;
@@ -576,6 +581,18 @@ export class CrotService {
           ]);
         },
       });
+      this.oauthGrants = await OAuthGrants.open({
+        file: oauthGrantPath(stateDir),
+        privateFiles: servicePlatform.privateFiles,
+        parents: this.clientTokens,
+      });
+      if (localDeviceId)
+        this.oauthToken = new OAuthTokenEndpoint({
+          grants: this.oauthGrants,
+          parents: this.clientTokens,
+          deviceId: () => localDeviceId,
+          log,
+        });
       this.socialAccounts = await SocialAccountRuntime.open({
         ...this.options.socialAccounts,
         stateDir,
@@ -689,8 +706,9 @@ export class CrotService {
                 selfEntry: {
                   verifier: {
                     method: "local-token",
-                    verifyAccessToken: async (token) => this.clientTokens?.verifyAccessToken(token),
+                    verifyAccessToken: async (token) => this.clientCredential(token),
                   },
+                  ...(this.oauthToken ? { oauthToken: this.oauthToken } : {}),
                   principalAdmission: (principal) => {
                     try {
                       this.clientTokens?.authorize(principal);
@@ -777,6 +795,13 @@ export class CrotService {
     log(`browser: ${status.browser.state}`);
   }
 
+  /** A client token (tokens.issue) or an OAuth access token granted with one, by SHA-256 digest. */
+  private async clientCredential(token: string) {
+    return token.startsWith(ACCESS_TOKEN_PREFIX)
+      ? this.oauthGrants?.verifyAccessToken(token)
+      : this.clientTokens?.verifyAccessToken(token);
+  }
+
   /**
    * HTTP with the local token from the secret store, or (http.auth.storage
    * "token-file", compatibility mode) from the plaintext token file.
@@ -822,9 +847,9 @@ export class CrotService {
       },
       verifier: {
         method: "local-token",
-        verifyAccessToken: async (token) =>
-          (await bootstrap.verifyAccessToken(token)) ?? this.clientTokens?.verifyAccessToken(token),
+        verifyAccessToken: async (token) => (await bootstrap.verifyAccessToken(token)) ?? this.clientCredential(token),
       },
+      ...(this.oauthToken ? { oauthToken: this.oauthToken } : {}),
     });
     log(`http: listening on ${this.http.url} (loopback only; bearer token required)`);
   }
@@ -1174,6 +1199,7 @@ export class CrotService {
     this.deviceIdentity?.cancelPairing();
     await this.tunnel?.close();
     if (this.http) await this.http.close();
+    await this.oauthGrants?.close();
     await this.clientTokens?.close();
     await this.publications?.close();
     await this.socialAccounts?.close();

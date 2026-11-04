@@ -21,7 +21,7 @@
  * works with the desktop app's default configuration (HTTP disabled).
  */
 import type { AccessTokenVerifier } from "../adapters/http/auth.js";
-import { CrotHttpServer, type RemoteAdmission } from "../adapters/http/server.js";
+import { CrotHttpServer, type OAuthTokenHandler, type RemoteAdmission } from "../adapters/http/server.js";
 import type { Principal } from "../core/auth/principal.js";
 import type { HttpConfig } from "../core/config/schema.js";
 import type { CrotCore } from "../core/crot-core.js";
@@ -84,6 +84,8 @@ export interface RemoteTunnelOptions extends RemoteTunnelSeams {
   readonly selfEntry?: {
     readonly verifier: AccessTokenVerifier;
     readonly principalAdmission: (principal: Principal) => boolean;
+    /** The loopback OAuth token endpoint (client credentials and refresh grants). */
+    readonly oauthToken?: OAuthTokenHandler;
   };
   readonly remoteMode: () => boolean;
   readonly software: string;
@@ -357,6 +359,7 @@ export class RemoteTunnel {
       config: { ...this.options.http, host: "127.0.0.1", port: 0 },
       verifier: entry.verifier,
       principalAdmission: entry.principalAdmission,
+      ...(entry.oauthToken ? { oauthToken: entry.oauthToken } : {}),
       log: this.options.log,
     });
     this.options.log("tunnel: HTTP is disabled; the self-registered tunnel uses its own loopback entry");

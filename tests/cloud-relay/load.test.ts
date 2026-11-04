@@ -51,7 +51,8 @@ describe("WP-29 limits/load", () => {
     expect(parseRelayConfig(base).limits.clientConcurrency).toBe(4);
     for (const limits of [
       { clientConcurrency: 0 },
-      { sourceHandshakes: 65 },
+      { sourceHandshakes: 1025 },
+      { sourceConnections: 8, sourceHandshakes: 9 },
       { counterKeys: NaN },
       { clientRequests: { max: 1, windowMs: 0 } },
       { typo: 1 },

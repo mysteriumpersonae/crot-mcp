@@ -135,6 +135,8 @@ export function providerDiagnostic(error: unknown): ProviderDiagnostic {
     if (Array.isArray(d?.missing)) return { code: "NETWORK_GUARD_BLOCKED", stage: "network" };
     return { code: "PERMISSION_DENIED", stage: "network" };
   }
+  // OpenCode Zen without a key: anonymous free use refused (FreeUsageLimitError).
+  if (d?.reason === "free_usage_limit") return { code: "FREE_USAGE_LIMIT", stage: "probe", httpStatus: 429 };
   // ECONNREFUSED on a loopback address → local server not running.
   if (errno === "ECONNREFUSED") {
     return { code: "LOCAL_SERVER_OFFLINE", stage: "network", networkCode: errno };
@@ -179,15 +181,107 @@ export interface ChatProviderConfig {
   label?: string;
 }
 
-/** Free models available on OpenCode (Free & Zen) without an API key. */
+/**
+ * OpenCode Zen's free models (cost 0 in the public inventory https://opencode.ai/zen/v1/models). The
+ * owner sees them before the first check; Save & Test replaces them with the live inventory.
+ */
 export const OPENCODE_FREE_MODELS: readonly string[] = [
   "big-pickle",
-  "glm-4.7-free",
-  "minimax-m2.1-free",
-  "grok-code",
-  "deepseek-r1-free",
-  "meta-llama/llama-4-scout",
+  "beam-free",
+  "crouton-alpha-free",
+  "deepseek-v4.1-flash-free",
+  "flint-40b-free",
+  "glm-5.3-flash-free",
+  "mimo-v2.6-flash-free",
+  "nemotron-3.5-lightning-free",
+  "nemotron-3.5-super-vl-free",
+  "pulse-alpha-free",
 ];
+export const OPENCODE_FREE_LABELS: Readonly<Record<string, string>> = {
+  "big-pickle": "Big Pickle (free)",
+  "beam-free": "Beam (free)",
+  "crouton-alpha-free": "Crouton Alpha (free)",
+  "deepseek-v4.1-flash-free": "DeepSeek V4.1 Flash (free)",
+  "flint-40b-free": "Flint 40B (free)",
+  "glm-5.3-flash-free": "GLM-5.3-Flash (free)",
+  "mimo-v2.6-flash-free": "MiMo-V2.6-Flash (free)",
+  "nemotron-3.5-lightning-free": "Nemotron 3.5 Lightning (free)",
+  "nemotron-3.5-super-vl-free": "Nemotron 3.5 Super VL (free)",
+  "pulse-alpha-free": "Pulse Alpha (free)",
+};
+
+/** One model of OpenCode Zen's inventory: its wire protocol, and whether it is free. */
+export interface ZenModel {
+  readonly id: string;
+  readonly label: string;
+  readonly free: boolean;
+  /** "openai": /chat/completions; "anthropic": /messages. */
+  readonly protocol: "openai" | "anthropic";
+}
+
+/**
+ * OpenCode Zen's /models: the models served over chat completions or Anthropic messages, free first.
+ * Models that need the Responses or Gemini API are left out (CROT's chat does not speak them).
+ */
+export function zenInventory(body: unknown): ZenModel[] {
+  const out: ZenModel[] = [];
+  for (const item of array(record(body).data)) {
+    const m = record(item),
+      id = text(m.id);
+    if (!id || id.length > 256 || out.some((o) => o.id === id)) continue;
+    const api = record(m.api),
+      kinds = Object.keys(api);
+    const protocol =
+      kinds.length === 0 || "chat-completions" in api ? "openai" : "messages" in api ? "anthropic" : undefined;
+    if (!protocol) continue;
+    const cost = record(record(m.cost).text),
+      input = record(cost.input).price,
+      output = record(cost.output).price;
+    const free =
+      typeof input === "number" && typeof output === "number" ? input === 0 && output === 0 : id.endsWith("-free");
+    const name =
+      text(m.name)
+        .replace(/[\u0000-\u001f\u007f]/g, "")
+        .replace(/\s+free$/i, "")
+        .trim()
+        .slice(0, 128) || id;
+    out.push({ id, label: free ? `${name} (free)` : name, free, protocol });
+  }
+  return out.sort((a, b) => Number(b.free) - Number(a.free) || a.id.localeCompare(b.id));
+}
+
+/** A provider's non-2xx answer as an error: its status and a fixed reason, never its text. */
+function providerHttpError(status: number, body: string, stage: string): CrotError {
+  const reason = body.slice(0, 8192).includes("FreeUsageLimitError") ? "free_usage_limit" : undefined;
+  return new CrotError("OPERATION_FAILED", "Provider request failed", {
+    stage,
+    httpStatus: status,
+    ...(reason ? { reason } : {}),
+  });
+}
+
+/**
+ * The owner-facing message of a failed chat turn: fixed, translatable text chosen by the provider's
+ * status (never the provider's own text), or undefined for the generic message.
+ */
+export function chatFailure(error: unknown): string | undefined {
+  if (!(error instanceof CrotError)) return undefined;
+  const d = error.details ?? {},
+    status = Number(d.httpStatus);
+  if (d.reason === "free_usage_limit")
+    return "OpenCode Zen refused free use without a key (free usage limit). Enter an OpenCode Zen API key in Cloud LLM, or use OpenCode in Workspaces (opencode serve).";
+  if (error.code === "PERMISSION_DENIED") return "Network access is blocked by the runtime policy.";
+  if (!Number.isInteger(status)) return undefined;
+  if (status === 401) return "The provider rejected the credential (HTTP 401). Check the API key or token.";
+  if (status === 403) return "The provider refused access (HTTP 403). Check the account and model permissions.";
+  if (status === 404)
+    return "The model or endpoint was not found (HTTP 404). Choose another model or check the API base URL.";
+  if (status === 429) return "Provider rate or quota limit reached (HTTP 429). Wait and try again, or check the plan.";
+  if (status === 400 || status === 422)
+    return "The provider rejected the request (HTTP 400/422). The model may not support this input or tools.";
+  if (status >= 500) return "The provider failed to answer (HTTP 5xx). Try again later.";
+  return undefined;
+}
 
 export const CHAT_ENDPOINTS: Record<ChatBaseProvider, string> = {
   OpenAI: "https://api.openai.com/v1",
@@ -313,6 +407,8 @@ interface Conversation {
   state: "running" | "completed" | "cancelled" | "failed";
   blocks: Block[];
   error?: string;
+  /** The fixed message of a failed turn (chatFailure), shown instead of the generic one. */
+  failure?: string;
   controller: AbortController;
   done?: Promise<void>;
 }
@@ -329,6 +425,30 @@ interface Thread {
 const MAX_THREADS = 16;
 const MAX_HISTORY_MESSAGES = 40;
 const MAX_HISTORY_CHARS = 120_000;
+/** All threads kept in memory together (at most MAX_THREADS of them). */
+const MAX_TOTAL_HISTORY_CHARS = 1_000_000;
+/** One turn's request (history, tool calls and their outputs) before older tool outputs are compacted. */
+const MAX_TURN_CHARS = 400_000;
+const OMITTED_TOOL_OUTPUT = '{"isError":false,"omitted":"Earlier tool output removed to fit the context window."}';
+const threadChars = (thread: Thread): number => thread.messages.reduce((n, m) => n + m.content.length, 0);
+/**
+ * Keep a turn's request within MAX_TURN_CHARS: tool outputs before `keepFrom` (earlier rounds) are
+ * replaced by a short note, oldest first; the latest round's outputs and all text stay.
+ */
+function compactTurn(messages: unknown[], anthropic: boolean, keepFrom: number): void {
+  let size = JSON.stringify(messages).length;
+  for (let i = 0; i < keepFrom && size > MAX_TURN_CHARS; i++) {
+    const m = messages[i] as Record<string, unknown>;
+    const parts =
+      anthropic && m.role === "user" && Array.isArray(m.content) ? (m.content as Record<string, unknown>[]) : [];
+    const outputs = !anthropic && m.role === "tool" ? [m] : parts.filter((part) => part.type === "tool_result");
+    for (const output of outputs)
+      if (typeof output.content === "string" && output.content.length > OMITTED_TOOL_OUTPUT.length) {
+        size -= output.content.length - OMITTED_TOOL_OUTPUT.length;
+        output.content = OMITTED_TOOL_OUTPUT;
+      }
+  }
+}
 const MAX_REMEMBERED_CHARS = 48_000;
 /** Tool output sent back to the model, and the share of it shown in the transcript. */
 const MAX_TOOL_OUTPUT = 48_000;
@@ -365,6 +485,8 @@ export class ChatRuntime {
   private readonly threads = new Map<string, Thread>();
   private lastThread: string | undefined;
   private closed = false;
+  /** Wire protocol of OpenCode Zen models, from the latest inventory ("anthropic" = /messages). */
+  private readonly zenProtocols = new Map<string, "openai" | "anthropic">();
   constructor(private readonly host: Host) {}
   get running(): boolean {
     return [...this.conversations.values()].some((c) => c.state === "running");
@@ -407,6 +529,10 @@ export class ChatRuntime {
         connectionStatus: status,
         configured: !!config,
         credentialStored,
+        // Shown before the first check (OpenCode Zen's free models); the live inventory replaces them.
+        ...(base === "OpenCode (Free & Zen)"
+          ? { suggestedModels: [...OPENCODE_FREE_MODELS], suggestedLabels: { ...OPENCODE_FREE_LABELS } }
+          : {}),
       };
     });
   }
@@ -451,46 +577,32 @@ export class ChatRuntime {
         operation: "network.request",
         missing: [],
       });
-    // OpenCode (Free & Zen): try /models but fall back to bundled free model list on failure
-    if (provider === "OpenCode (Free & Zen)") {
+    // OpenCode (Free & Zen): the live public inventory; a failure is reported, never replaced by a bundled list.
+    if (base === "OpenCode (Free & Zen)") {
+      const response = await controlFetch(`${endpoint}/models`, {
+        headers,
+        timeoutMs: 15000,
+        signal: this.host.context().signal,
+      });
+      if (response.status !== 200) throw providerHttpError(response.status, "", "models");
+      let body: unknown;
       try {
-        const r = await controlFetch(`${endpoint}/models`, {
-          headers,
-          timeoutMs: 10000,
-          signal: this.host.context().signal,
-        });
-        if (r.status === 200) {
-          let body: Record<string, unknown>;
-          try {
-            body = record(JSON.parse(r.body));
-          } catch {
-            body = {};
-          }
-          if (Array.isArray(body.data)) {
-            const fetched: string[] = [];
-            for (const item of array(body.data)) {
-              const id = text(record(item).id);
-              if (id && id.length <= 256) fetched.push(id);
-            }
-            if (fetched.length > 0)
-              return {
-                ok: true,
-                models: fetched.sort(),
-                labels: {
-                  "big-pickle": "Big Pickle (free)",
-                  "glm-4.7-free": "GLM-4.7 (free)",
-                  "minimax-m2.1-free": "MiniMax M2.1 (free)",
-                },
-              };
-          }
-        }
+        body = JSON.parse(response.body);
       } catch {
-        /* fall through to bundled list */
+        return bad("Invalid provider model inventory");
       }
+      // Without a key only the free models can answer.
+      const keyed = !!this.host.credential(provider);
+      const inventory = zenInventory(body).filter((m) => keyed || m.free);
+      if (!inventory.length)
+        throw new CrotError("OPERATION_FAILED", "Provider returned no valid model inventory", { stage: "inventory" });
+      this.zenProtocols.clear();
+      for (const m of inventory) this.zenProtocols.set(m.id, m.protocol);
       return {
         ok: true,
-        models: [...OPENCODE_FREE_MODELS].sort(),
-        labels: Object.fromEntries(OPENCODE_FREE_MODELS.map((m) => [m, `${m} (free)`])),
+        models: inventory.map((m) => m.id),
+        labels: Object.fromEntries(inventory.map((m) => [m.id, m.label])),
+        free: inventory.filter((m) => m.free).map((m) => m.id),
       };
     }
     let cursor = "";
@@ -525,6 +637,38 @@ export class ChatRuntime {
       cursor = next;
     }
     return bad("Provider model pagination exceeds its limit");
+  }
+  /**
+   * Save & Test of OpenCode Zen without a key: one tiny completion with the chosen free model, so a refused
+   * anonymous use (free usage limit, key required) is reported at once instead of at the first chat.
+   */
+  async verify(provider: ChatProvider, model: string): Promise<void> {
+    if (baseProvider(provider) !== "OpenCode (Free & Zen)" || this.host.credential(provider)) return;
+    const { endpoint, headers } = this.settings(provider);
+    if (isNetworkDenied(this.host.core()))
+      throw new CrotError("PERMISSION_DENIED", "Runtime policy denies network.request", {
+        operation: "network.request",
+        missing: [],
+      });
+    const response = await controlFetch(`${endpoint}/chat/completions`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ model, messages: [{ role: "user", content: "ping" }], max_tokens: 1, stream: false }),
+      timeoutMs: 30000,
+      signal: this.host.context().signal,
+    });
+    if (response.status < 200 || response.status >= 300)
+      throw providerHttpError(response.status, response.body, "probe");
+  }
+  /** The protocol of an OpenCode Zen model; the inventory is fetched once when a turn needs it. */
+  private async zenProtocol(provider: ChatProvider, model: string): Promise<"openai" | "anthropic"> {
+    if (!this.zenProtocols.has(model))
+      try {
+        await this.models(provider);
+      } catch {
+        // The chat request itself reports an unreachable provider.
+      }
+    return this.zenProtocols.get(model) ?? "openai";
   }
   private async workspaceRequest(
     provider: ChatProvider,
@@ -620,7 +764,8 @@ export class ChatRuntime {
       .run(context, async (ctx) => {
         try {
           await this.generate(c, p, ctx);
-        } catch {
+        } catch (error) {
+          c.failure = chatFailure(error);
           return bad("Chat generation failed");
         }
       })
@@ -628,6 +773,8 @@ export class ChatRuntime {
         () => {
           c.state = c.controller.signal.aborted ? "cancelled" : "completed";
           this.remember(c);
+          // The thread keeps the history; the finished turn no longer needs its own copy.
+          c.history = [];
         },
         () => {
           c.state = c.controller.signal.aborted ? "cancelled" : "failed";
@@ -635,10 +782,11 @@ export class ChatRuntime {
           // No provider response, key, prompt or thrown decoder text is reflected as an error.
           c.error =
             c.state === "failed"
-              ? "Generation failed. Check provider configuration, model, Core policy and audit."
+              ? (c.failure ?? "Generation failed. Check provider configuration, model, Core policy and audit.")
               : undefined;
           // A stopped answer stays part of the thread; a failed turn is not remembered (the owner retries).
           if (c.state === "cancelled") this.remember(c);
+          c.history = [];
         },
       );
     return { ok: true, id: c.id, thread: thread.id, ...(reset ? { threadReset: true } : {}) };
@@ -668,9 +816,22 @@ export class ChatRuntime {
       { role: "user", content: clip(c.prompt, MAX_REMEMBERED_CHARS) },
       { role: "assistant", content: clip(reply, MAX_REMEMBERED_CHARS) },
     );
-    const size = () => thread.messages.reduce((n, m) => n + m.content.length, 0);
-    while (thread.messages.length > MAX_HISTORY_MESSAGES || (thread.messages.length > 2 && size() > MAX_HISTORY_CHARS))
-      thread.messages.splice(0, 2);
+    // Sliding window: the first exchange (the conversation's goal) stays while later turns go, oldest first.
+    while (
+      thread.messages.length > MAX_HISTORY_MESSAGES ||
+      (thread.messages.length > 2 && threadChars(thread) > MAX_HISTORY_CHARS)
+    )
+      thread.messages.splice(thread.messages.length > 4 ? 2 : 0, 2);
+    // All remembered threads together stay bounded: the least recently used other threads go first.
+    let total = 0;
+    for (const t of this.threads.values()) total += threadChars(t);
+    for (const [id, t] of this.threads) {
+      if (total <= MAX_TOTAL_HISTORY_CHARS) break;
+      if (id === thread.id) continue;
+      total -= threadChars(t);
+      this.threads.delete(id);
+      if (this.lastThread === id) this.lastThread = undefined;
+    }
   }
   /** Forget a thread (default: the latest); the next turn starts without history. */
   reset(id?: string): Record<string, unknown> {
@@ -738,7 +899,22 @@ export class ChatRuntime {
       this.bounded(c);
       return;
     }
-    const { endpoint, headers, anthropic } = this.settings(p.provider);
+    const settings = this.settings(p.provider);
+    const { endpoint } = settings;
+    let { headers, anthropic } = settings;
+    // OpenCode Zen serves Claude and Qwen models over Anthropic messages, the others over chat completions.
+    if (
+      baseProvider(p.provider) === "OpenCode (Free & Zen)" &&
+      (await this.zenProtocol(p.provider, p.model)) === "anthropic"
+    ) {
+      const key = this.host.credential(p.provider);
+      anthropic = true;
+      headers = {
+        "content-type": "application/json",
+        "anthropic-version": "2023-06-01",
+        ...(key ? { "x-api-key": key } : {}),
+      };
+    }
     const content: unknown[] = [{ type: "text", text: p.message }];
     for (const a of p.attachments) {
       const bytes = Buffer.from(a.data, "base64");
@@ -773,6 +949,8 @@ export class ChatRuntime {
     const messages: unknown[] = [...history, { role: "user", content }];
     // A server that rejects tool definitions (many local models) still gets the conversation once without them.
     let toolFallback = automatic.length > 0 && p.tools.length === 0;
+    // Where the latest round's messages start: its tool outputs are kept whole (compactTurn).
+    let latest = messages.length;
     for (let round = 0; round < 8; round++) {
       if (context.signal?.aborted || this.closed) return bad("Generation cancelled");
       const assistant: Block = { type: "assistant", text: "" };
@@ -840,7 +1018,12 @@ export class ChatRuntime {
         this.bounded(c);
       });
       if (isNetworkDenied(this.host.core())) return bad("Runtime policy denies network.request");
+      compactTurn(messages, anthropic, latest);
+      latest = messages.length;
       let streamingOk = false;
+      // The start of a refused request's body: classified (chatFailure), never shown.
+      const refusal: Buffer[] = [];
+      let refusalBytes = 0;
       const { status: streamStatus } = await controlFetchStream(
         `${endpoint}/${anthropic ? "messages" : "chat/completions"}`,
         {
@@ -858,6 +1041,10 @@ export class ChatRuntime {
         },
         (chunk) => {
           if (streamingOk) stream.push(chunk);
+          else if (refusalBytes < 8192) {
+            refusal.push(chunk);
+            refusalBytes += chunk.length;
+          }
         },
         (status, ct) => {
           streamingOk = status >= 200 && status < 300 && ct.includes("text/event-stream");
@@ -874,7 +1061,7 @@ export class ChatRuntime {
       }
       toolFallback = false;
       if (!streamingOk || streamStatus < 200 || streamStatus >= 300)
-        return bad(`Provider streaming failed (HTTP ${streamStatus})`);
+        throw providerHttpError(streamStatus, Buffer.concat(refusal).toString("utf8"), "chat");
       stream.end();
       if (!completed) return bad("Provider stream ended without completion");
       if (!calls.size) return;

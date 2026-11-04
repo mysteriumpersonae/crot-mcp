@@ -21,15 +21,25 @@ before pairing completes.
 
 **Pairing URL format:** `https://crot.network/d/<deviceId>/mcp`
 
-**Authorization:** OAuth 2.1. The CROT auth server is `https://auth.crot.network`.
-An external client (Notion, Claude, n8n) receives a token via the OAuth flow —
-not a manually copied Bearer token. For services that require a pre-shared Bearer
-token (local testing), the Local HTTP section supplies one.
+**Authorization (self-registered URL, the default):** the client token generated on
+this screen (CrotService stores only its SHA-256 digest). MCP clients present it in
+the form they support; every form carries the same token:
+- `Authorization: Bearer <token>` (Notion Custom MCP: Authentication → Bearer token);
+- Basic Auth: username `crot`, password `<token>`;
+- an API-key header: `X-API-Key: <token>` (`Api-Key` and `X-CROT-Token` work too);
+- OAuth 2.0: Client ID `crot-<deviceId>`, Client Secret `<token>`. The client
+  discovers the endpoints from the MCP URL; the owner approves the request on the
+  crot.network consent page (authorization code + PKCE), or the client uses the
+  `client_credentials` grant. See [RELAY.md](RELAY.md).
+
+The details «Other authorization methods (Basic, API Key, OAuth)» under the token
+show these values with copy buttons. **Paired devices** keep OAuth 2.1 through
+`https://auth.crot.network` (Bearer access tokens only).
 
 ### Notion Custom Agent setup
 Settings → Tools & Access → Add connection → Custom MCP server:
 - Server URL: `https://crot.network/d/<your-deviceId>/mcp`
-- Authorization: OAuth 2.1
+- Authentication: Bearer token (paste the generated token)
 - Choose tools → Connect
 
 An administrator may first need to enable custom MCP servers for the workspace.
@@ -60,7 +70,11 @@ is reachable even if the user has a custom config that omits the default list.
 - `NETWORK_GUARD_BLOCKED` — ExecutionGuard blocked the request (PERMISSION_DENIED)
 - `AUTH_INVALID_KEY` — server returned HTTP 401 or 403
 - `LOCAL_SERVER_OFFLINE` — ECONNREFUSED on a loopback address
+- `FREE_USAGE_LIMIT` — OpenCode Zen refused anonymous free use (HTTP 429 `FreeUsageLimitError`)
 - `OPERATION_FAILED` — other network or protocol error
+
+A failed chat turn shows a fixed message chosen by the provider's HTTP status (401,
+403, 404, 429, 400/422, 5xx, free usage limit), never the provider's own text.
 
 The UI maps these to actionable messages without exposing credentials or URLs.
 
@@ -69,9 +83,20 @@ OpenAI/Anthropic/Gemini/OpenRouter/River use their actual model-list and generat
 APIs. Save & Test stores credentials in the existing encrypted vault, checks an
 actual nonempty inventory via Core and persists check time/status/default model.
 
+**OpenCode (Free & Zen)** (`https://opencode.ai/zen/v1`): the API key field and
+Save & Test are always shown; the key is optional (empty = free models). Before
+the first check the form lists OpenCode Zen's free models; Save & Test loads the
+live inventory (`/models`): without a key the free models only, with a key every
+model CROT can talk to (chat completions, and Claude/Qwen over `/messages`; models
+that need the Responses or Gemini API are left out). Without a key Save & Test also
+sends one tiny completion, so a refused anonymous use (OpenCode's free usage limit
+per network address) is reported at once: enter a Zen API key from
+`opencode.ai/zen`, or use OpenCode in Workspaces (`opencode serve`).
+
 ### Local Models
 Ollama defaults to http://127.0.0.1:11434 (explicit IP required for loopback allow).
-LM Studio defaults to 127.0.0.1:1234. OpenCode is in Workspaces.
+LM Studio defaults to 127.0.0.1:1234; preset buttons fill either URL. Test loads
+the server's models into the model selector. OpenCode is in Workspaces.
 
 ### Workspaces
 - **OpenCode server**: native adapter at http://127.0.0.1:4096

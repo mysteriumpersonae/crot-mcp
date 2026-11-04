@@ -88,6 +88,43 @@ WP-38 (staging) and WP-39 (production). The binary is not yet listed in
 | `/d/<id>/mcp` | POST, GET, DELETE | MCP endpoint, forwarded to the device |
 | `/.crot/tunnel` | GET (WebSocket upgrade) | Device tunnel, subprotocol `crot-tunnel.v1` |
 | `/.crot/health` | GET | `{"status":"ok"}` (`shutting_down` while closing) |
+| `/.well-known/oauth-authorization-server/d/<id>` and `/d/<id>/.well-known/oauth-authorization-server` | GET | RFC 8414 metadata of a self-registered device's issuer `https://<relay>/d/<id>` (self-registration on) |
+| `/d/<id>/oauth/authorize` | GET, POST | Consent page (GET); the owner's Allow/Deny (POST, same-origin) issues a single-use code or `access_denied` |
+| `/d/<id>/oauth/token` | POST | Token endpoint: checks the code, then forwards a `client_credentials` or `refresh_token` grant to the device |
+| `/.well-known/oauth-authorization-server`, `/oauth/authorize`, `/oauth/token` | GET, POST | Relay-wide issuer `https://<relay>` (device from `client_id`); only when the relay's host is not the paired issuer's |
+
+### Self-registered devices: client credentials and OAuth
+
+A self-registered device's MCP URL accepts the device's own client token
+(`tokens.issue`) in four forms; the relay forwards the request and the device
+checks the token's SHA-256 digest (`src/adapters/http/credentials.ts`):
+
+| Form | Request |
+| --- | --- |
+| Bearer | `Authorization: Bearer <token>` |
+| Basic | `Authorization: Basic base64(crot:<token>)` (the password; the user name when the password is empty) |
+| API key | `X-API-Key: <token>` (also `Api-Key`, `X-CROT-Token`) |
+| OAuth 2.0 | Client ID `crot-<id>` (or `<id>`), Client Secret `<token>`, scope `mcp` or empty |
+
+A repeated credential header, or two headers with different tokens, is refused
+as malformed. A paired device keeps the OAuth Bearer form only (AD-21).
+
+OAuth (`src/cloud-relay/self-oauth.ts`): the device's PRM names the issuer
+`https://<relay>/d/<id>`. The authorization endpoint validates the request
+(redirect URI https, http on loopback or a private-use scheme; PKCE S256 when
+present; `resource` = the device's canonical URI when present), then shows a
+consent page that cannot be framed; it never redirects without the owner's
+decision. Allow issues a 256-bit code (five minutes, single use, memory only)
+bound to the device, redirect URI, PKCE challenge and scope. The token endpoint
+checks the code and forwards `grant_type=client_credentials` with the client's
+own id and secret (`client_secret_basic`) through the tunnel; refresh and
+client-credentials grants are forwarded as they are. The device authenticates
+the secret as a client token and mints a one-hour access token (`crot_at_…`)
+and a rotating refresh token (`crot_rt_…`) bound to it
+(`src/service/oauth-grants.ts`, SHA-256 digests only, at most 512 grants).
+Rotating, revoking or expiring the client token ends its grants. The relay keeps
+no secrets; token requests share the exchange admission (rates, concurrency,
+device online).
 
 ### Registration
 
@@ -138,14 +175,14 @@ All values are positive safe integers. Rate objects require both `max` and
 
 | Setting | Default | Scope |
 | --- | --- | --- |
-| `clientRequests` | `{ "max": 120, "windowMs": 60000 }` | `(deviceId, clientId)` |
-| `deviceRequests` | `{ "max": 600, "windowMs": 60000 }` | device |
-| `accountRegistrations` | `{ "max": 10, "windowMs": 60000 }` | verified pairing-token `sub` |
+| `clientRequests` | `{ "max": 600, "windowMs": 60000 }` | `(deviceId, clientId)` |
+| `deviceRequests` | `{ "max": 3000, "windowMs": 60000 }` | device |
+| `accountRegistrations` | `{ "max": 10, "windowMs": 60000 }` | verified pairing-token `sub`; self-registration: an already registered device id, or the peer address for a new id |
 | `clientConcurrency` | 4 | active exchanges **and** pending body buffers/client |
 | `deviceConcurrency` | 32 | active exchanges and pending body buffers/device |
-| `globalConcurrency` | 64 | all admitted exchanges/body buffers |
-| `sourceConnections` | 64 | concurrent TCP sockets per peer address, including pre-HTTP |
-| `sourceHandshakes` | 8 | pending tunnel handshakes per peer; global 256 remains |
+| `globalConcurrency` | 1024 | all admitted exchanges/body buffers |
+| `sourceConnections` | 1024 | concurrent TCP sockets per peer address, including pre-HTTP |
+| `sourceHandshakes` | 64 | pending tunnel handshakes per peer; global 256 remains |
 | `counterKeys` | 10000 | maximum identity keys retained per rate counter |
 
 Client concurrency is also capped at half the device's advertised stream
@@ -158,6 +195,13 @@ Slots are reserved before reading chunked bodies and released on finish/abort.
 Chunked body max remains 4 MiB/exchange; global admission bounds simultaneous
 body assembly (transient concatenation copies are additional bounded memory).
 Counter capacity exhaustion fails closed; expired entries are reclaimed.
+
+The defaults are sized for one node in commercial use: an active MCP client
+(Notion, Claude) sends bursts of several requests per second and keeps a GET
+stream open. Peer-address limits count the proxy's address once behind a
+TLS-terminating proxy, where every client connection and device tunnel shares
+it; lower `sourceConnections` and `sourceHandshakes` only when the relay faces
+clients directly.
 
 **Source means TCP peer address, never Forwarded/X-Forwarded-For.** A load
 balancer makes its users share a peer quota; WP-38 deployment must additionally

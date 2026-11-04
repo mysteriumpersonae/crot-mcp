@@ -18,6 +18,7 @@ import { CrotError } from "../../core/errors.js";
 import { createCrotModernMcpServer, MODERN_PROTOCOL_VERSIONS } from "../mcp/modern.js";
 import { createCrotMcpServer } from "../mcp/server.js";
 import type { AccessTokenVerifier } from "./auth.js";
+import { presentedCredential } from "./credentials.js";
 import {
   exposureScopeFor,
   httpContextResolver,
@@ -94,7 +95,20 @@ export interface CrotHttpServerOptions {
    * device is not paired. Ignored on loopback.
    */
   readonly resourceMetadataUrl?: () => string | undefined;
+  /**
+   * Loopback entry point of the self-registered relay URL: the OAuth token endpoint
+   * (`/oauth/token`, src/service/oauth-grants.ts) the relay forwards token requests to.
+   */
+  readonly oauthToken?: OAuthTokenHandler;
 }
+
+/** Serves `POST /oauth/token` (after the Host check); never reaches the MCP server or Core. */
+export interface OAuthTokenHandler {
+  handle(req: IncomingMessage, res: ServerResponse): Promise<void>;
+}
+
+/** Path of the OAuth token endpoint on the loopback entry point (self-registered relay URL). */
+export const OAUTH_TOKEN_HTTP_PATH = "/oauth/token";
 
 /** The remote client of a request: its exposure scope (AD-15 point 8). */
 export interface RemoteClientKey {
@@ -374,6 +388,7 @@ export class CrotHttpServer {
     remoteAdmission: RemoteAdmission | undefined,
     resourceMetadataUrl: (() => string | undefined) | undefined,
     private readonly principalAdmission: ((principal: Principal) => boolean) | undefined,
+    private readonly oauthToken: OAuthTokenHandler | undefined,
   ) {
     this.log = log ?? (() => undefined);
     this.entryPoint = entryPoint;
@@ -410,6 +425,7 @@ export class CrotHttpServer {
       options.remoteAdmission,
       options.resourceMetadataUrl,
       options.principalAdmission,
+      entryPoint === "loopback" ? options.oauthToken : undefined,
     );
     await server.listen();
     return server;
@@ -497,6 +513,7 @@ export class CrotHttpServer {
       return sendError(res, { status: 403, code: -32000, message: "Forbidden: invalid Host header" });
 
     const pathname = (req.url ?? "").split("?")[0];
+    if (pathname === OAUTH_TOKEN_HTTP_PATH && this.oauthToken) return this.oauthToken.handle(req, res);
     if (pathname !== MCP_HTTP_PATH) return sendError(res, { status: 404, code: -32000, message: "Not found" });
 
     // Browsers always send Origin on cross-origin requests; native MCP clients do not.
@@ -691,12 +708,19 @@ export class CrotHttpServer {
     return { status: 401, code: -32001, message: "Unauthorized", headers: { "WWW-Authenticate": value } };
   }
 
+  /**
+   * The request's credential (see presentedCredential): on loopback a client token arrives as
+   * Bearer, Basic or an API-key header; the relay entry point of a paired device accepts only an
+   * OAuth Bearer token (AD-21).
+   */
   private async authenticate(req: IncomingMessage): Promise<AuthInfo | "missing" | "invalid"> {
-    const header = req.headers.authorization;
-    if (typeof header !== "string") return "missing";
-    const match = /^Bearer +(\S+) *$/i.exec(header);
-    const token = match?.[1];
-    if (!token) return "missing";
+    const presented = presentedCredential(req.rawHeaders, { bearerOnly: this.entryPoint === "relay" });
+    if (presented === "missing") return "missing";
+    if (presented === "malformed") {
+      this.log("http: rejected a request with a malformed credential");
+      return "invalid";
+    }
+    const token = presented.token;
     let info: AuthInfo | undefined;
     try {
       info = await this.verifier.verifyAccessToken(token);

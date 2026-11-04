@@ -40,6 +40,18 @@ opens details/configuration rather than dispatching a fake chat request. The Oth
 menu lists returned models and connected clients. Conversation blocks remain
 visible across successive sends in the renderer session, not durable chat storage.
 
+## Conversation memory
+
+ChatRuntime keeps conversation threads in memory only (never on disk), at most 16.
+Each new turn resends its thread's completed turns. A thread is a sliding window
+of at most 40 messages / 120,000 characters: the project system prompt (built
+anew for every turn) and the thread's first exchange (its goal) stay, the oldest
+later turns go first. Within one turn, earlier tool outputs are replaced by a short
+note once the request exceeds 400,000 characters; the latest round's outputs and all
+text stay. All threads together stay under 1,000,000 characters: the least recently
+used other threads are forgotten first. A finished turn drops its own copy of the
+history, so memory follows the threads only.
+
 Verification uses shipped assets in Chromium and an isolated CrotService: RU/EN,
 desktop/mobile bounds, menu role separation, matching icons, selection persistence,
 composer/button/badge geometry, file attach/remove, real HTTP streaming, guarded

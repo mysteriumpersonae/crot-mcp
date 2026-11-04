@@ -1,10 +1,11 @@
 /**
- * Owner-approved self-registration: MCP client → relay /d/<id>/mcp with a Bearer token from
- * tokens.issue → WebSocket tunnel → CrotService (no pairing, no cloud OAuth).
+ * Owner-approved self-registration: MCP client → relay /d/<id>/mcp with a client token from
+ * tokens.issue (Bearer, Basic, an API-key header, or OAuth 2.0 with the token as the client secret)
+ * → WebSocket tunnel → CrotService (no pairing, no cloud OAuth).
  */
 import { afterEach, describe, expect, it } from "vitest";
-import { generateKeyPairSync } from "node:crypto";
-import { request } from "node:http";
+import { createHash, generateKeyPairSync, randomBytes } from "node:crypto";
+import { request, type IncomingHttpHeaders } from "node:http";
 import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -227,7 +228,12 @@ async function until(check: () => boolean | Promise<boolean>, what: string, ms =
 }
 
 /** The desktop app's default service: HTTP disabled, identity environment of another relay. */
-async function desktopService(relayPort: number, selfRelayHost: string, selfRetry?: { baseMs: number }) {
+async function desktopService(
+  relayPort: number,
+  selfRelayHost: string,
+  selfRetry?: { baseMs: number },
+  http: { enabled: boolean; port?: number } = { enabled: false },
+) {
   const base = await mkdtemp(path.join(process.platform === "win32" ? tmpdir() : "/tmp", "crot-desk-"));
   cleanup.push(() => rm(base, { recursive: true, force: true }));
   const workspace = path.join(base, "project"),
@@ -242,7 +248,7 @@ async function desktopService(relayPort: number, selfRelayHost: string, selfRetr
         workspace: { root: workspace },
         environment: { path: "inherited" },
         secrets: { store: "file" },
-        http: { enabled: false },
+        http,
         audit: { sink: "none" },
         permissions: { mode: "sandbox", capabilities: ["filesystem.read"] },
       } as ServeCommand["config"],
@@ -345,4 +351,201 @@ describe("desktop default (HTTP disabled) → crot.network → tunnel → CrotSe
       relayCheckVerdict(await checkRelayEndpoint(url, fetchVia(r.port)), { state: "waiting", reason: "refused_403" }),
     ).toEqual({ state: "unregistered", status: 404, tunnel: "waiting" });
   }, 30_000);
+});
+
+/** Any request to the local relay with the public URL's Host header; the full response. */
+function send(port: number, method: string, p: string, body: string | undefined, headers: Record<string, string>) {
+  return new Promise<{ status: number; headers: IncomingHttpHeaders; text: string }>((resolve, reject) => {
+    const req = request(
+      {
+        host: "127.0.0.1",
+        port,
+        path: p,
+        method,
+        headers: { ...(body !== undefined ? { "content-length": String(Buffer.byteLength(body)) } : {}), ...headers },
+      },
+      (res) => {
+        let text = "";
+        res.on("data", (c) => (text += c));
+        res.on("end", () => resolve({ status: res.statusCode!, headers: res.headers, text }));
+      },
+    );
+    req.once("error", reject);
+    req.end(body);
+  });
+}
+
+const basicAuth = (user: string, password: string) => `Basic ${Buffer.from(`${user}:${password}`).toString("base64")}`;
+
+describe("every MCP authorization method: client → relay /d/<id>/mcp → tunnel → CrotService", () => {
+  it.each([
+    ["desktop default (HTTP disabled)", { enabled: false }],
+    ["HTTP enabled", { enabled: true, port: 0 }],
+  ])(
+    "%s: Bearer, Basic, API-key headers and OAuth 2.0 reach the device; wrong credentials get 401",
+    async (_, http) => {
+      const events: object[] = [];
+      const r = await relay(true, SELF_RELAY_HOST, (e) => events.push(e));
+      const { ask, deviceId } = await desktopService(r.port, SELF_RELAY_HOST, undefined, http);
+      await ask("remote.setMode", { enabled: true });
+      await until(() => r.status().tunnels.ready === 1, "tunnel ready");
+      const issued = (await ask("tokens.issue", { name: "Claude", ttlSeconds: 3600, scopes: ["files"] })) as {
+        id: string;
+        token: string;
+      };
+      const token = issued.token;
+      const host = { host: SELF_RELAY_HOST };
+      const mcp = `/d/${deviceId}/mcp`;
+      const json = { "content-type": "application/json", accept: "application/json, text/event-stream" };
+      const initialize = (headers: Record<string, string>) =>
+        send(r.port, "POST", mcp, INITIALIZE, { ...host, ...json, ...headers });
+
+      // Bearer, Basic (crot:<token> or <token>:) and the API-key headers carry the same client token.
+      for (const headers of [
+        { authorization: `Bearer ${token}` },
+        { authorization: basicAuth("crot", token) },
+        { authorization: basicAuth(token, "") },
+        { "x-api-key": token },
+        { "api-key": token },
+        { "x-crot-token": token },
+      ] as Record<string, string>[]) {
+        const init = await initialize(headers);
+        expect(init.status, Object.keys(headers).join()).toBe(200);
+        expect(init.text).toContain('"serverInfo"');
+      }
+      // A tool listing in an API-key session.
+      const session = await initialize({ "x-api-key": token });
+      const version = /"protocolVersion":"([^"]+)"/.exec(session.text)![1]!;
+      const sessionId = session.headers["mcp-session-id"];
+      const list = await send(r.port, "POST", mcp, JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list" }), {
+        ...host,
+        ...json,
+        "x-api-key": token,
+        "mcp-protocol-version": version,
+        ...(typeof sessionId === "string" ? { "mcp-session-id": sessionId } : {}),
+      });
+      expect(list.status).toBe(200);
+      expect(list.text).toContain("fs_read_file");
+      const wrong = "wrong-token-00000000000000000000000000";
+      for (const headers of [
+        { authorization: `Bearer ${wrong}` },
+        { authorization: basicAuth("crot", wrong) },
+        { "x-api-key": wrong },
+        { "api-key": wrong },
+        { authorization: `Bearer ${token}`, "x-api-key": wrong },
+        {},
+      ] as Record<string, string>[])
+        expect((await initialize(headers)).status, JSON.stringify(Object.keys(headers))).toBe(401);
+
+      // OAuth 2.0: discovery from the 401, the owner's consent, authorization code with PKCE.
+      const challenge401 = await initialize({});
+      const prmUrl = `https://${SELF_RELAY_HOST}/.well-known/oauth-protected-resource/d/${deviceId}/mcp`;
+      expect(challenge401.headers["www-authenticate"]).toContain(`resource_metadata="${prmUrl}"`);
+      const local = (url: string) => new URL(url).pathname;
+      const prm = JSON.parse((await send(r.port, "GET", local(prmUrl), undefined, host)).text);
+      const issuer = `https://${SELF_RELAY_HOST}/d/${deviceId}`;
+      expect(prm).toMatchObject({
+        resource: `https://${SELF_RELAY_HOST}${mcp}`,
+        authorization_servers: [issuer],
+        scopes_supported: ["mcp"],
+      });
+      const metadataPath = `/.well-known/oauth-authorization-server${local(issuer)}`;
+      const meta = JSON.parse((await send(r.port, "GET", metadataPath, undefined, host)).text);
+      expect(meta).toMatchObject({
+        issuer,
+        authorization_endpoint: `${issuer}/oauth/authorize`,
+        token_endpoint: `${issuer}/oauth/token`,
+        code_challenge_methods_supported: ["S256"],
+      });
+      const verifier = randomBytes(32).toString("base64url");
+      const redirect = "https://client.example/callback";
+      const clientId = `crot-${deviceId}`;
+      const authorize = new URLSearchParams({
+        response_type: "code",
+        client_id: clientId,
+        redirect_uri: redirect,
+        code_challenge: createHash("sha256").update(verifier).digest("base64url"),
+        code_challenge_method: "S256",
+        state: "s1",
+        scope: "mcp",
+        resource: `https://${SELF_RELAY_HOST}${mcp}`,
+      });
+      const page = await send(r.port, "GET", `${local(meta.authorization_endpoint)}?${authorize}`, undefined, host);
+      expect(page.status).toBe(200);
+      const signed = /name="request" value="([^"]+)"/.exec(page.text)![1]!;
+      const form = { ...host, "content-type": "application/x-www-form-urlencoded" };
+      const decided = await send(
+        r.port,
+        "POST",
+        local(meta.authorization_endpoint),
+        new URLSearchParams({ request: signed, decision: "allow" }).toString(),
+        { ...form, origin: `https://${SELF_RELAY_HOST}` },
+      );
+      expect(decided.status).toBe(303);
+      const back = new URL(String(decided.headers.location));
+      expect(`${back.origin}${back.pathname}`).toBe(redirect);
+      expect(back.searchParams.get("state")).toBe("s1");
+      expect(back.searchParams.get("iss")).toBe(issuer);
+      const code = back.searchParams.get("code")!;
+      const tokenRequest = (params: Record<string, string>, headers: Record<string, string> = {}) =>
+        send(r.port, "POST", local(meta.token_endpoint), new URLSearchParams(params).toString(), {
+          ...form,
+          ...headers,
+        });
+      const clientAuth = { authorization: basicAuth(encodeURIComponent(clientId), encodeURIComponent(token)) };
+      const exchange = { grant_type: "authorization_code", code, redirect_uri: redirect, code_verifier: verifier };
+      const granted = await tokenRequest(exchange, clientAuth);
+      expect(granted.status).toBe(200);
+      expect(granted.headers["cache-control"]).toBe("no-store");
+      expect(granted.headers["access-control-allow-origin"]).toBe("*");
+      const first = JSON.parse(granted.text) as Record<string, string | number>;
+      expect(first).toMatchObject({ token_type: "Bearer", scope: "mcp" });
+      expect(first.access_token).toMatch(/^crot_at_/);
+      expect(first.refresh_token).toMatch(/^crot_rt_/);
+      expect(first.expires_in).toBeGreaterThan(3500);
+      const viaAccess = await initialize({ authorization: `Bearer ${first.access_token}` });
+      expect(viaAccess.status).toBe(200);
+      expect(viaAccess.text).toContain('"serverInfo"');
+      // Single-use code; the access token is not a client token for other forms.
+      expect((await tokenRequest(exchange, clientAuth)).status).toBe(400);
+      // Refresh (client_secret_post): rotation; the old refresh and access tokens stop working.
+      const refreshed = await tokenRequest({
+        grant_type: "refresh_token",
+        refresh_token: String(first.refresh_token),
+        client_id: clientId,
+        client_secret: token,
+      });
+      expect(refreshed.status).toBe(200);
+      const next = JSON.parse(refreshed.text) as Record<string, string>;
+      expect((await initialize({ authorization: `Bearer ${next.access_token}` })).status).toBe(200);
+      expect((await initialize({ authorization: `Bearer ${first.access_token}` })).status).toBe(401);
+      expect(
+        (await tokenRequest({ grant_type: "refresh_token", refresh_token: String(first.refresh_token) }, clientAuth))
+          .status,
+      ).toBe(400);
+      // client_credentials (n8n, scripts) with the client token as the secret; a wrong secret is the device's 401.
+      const direct = await tokenRequest({ grant_type: "client_credentials" }, clientAuth);
+      expect(direct.status).toBe(200);
+      const wrongSecret = await tokenRequest(
+        { grant_type: "client_credentials" },
+        { authorization: basicAuth(clientId, wrong) },
+      );
+      expect(wrongSecret.status).toBe(401);
+      expect(JSON.parse(wrongSecret.text)).toEqual({ error: "invalid_client" });
+      // Rotating the client token ends its OAuth grants.
+      await ask("tokens.rotate", { id: issued.id });
+      expect((await initialize({ authorization: `Bearer ${next.access_token}` })).status).toBe(401);
+      const directAccess = (JSON.parse(direct.text) as Record<string, string>).access_token;
+      expect((await initialize({ authorization: `Bearer ${directAccess}` })).status).toBe(401);
+      expect(
+        (await tokenRequest({ grant_type: "refresh_token", refresh_token: next.refresh_token! }, clientAuth)).status,
+      ).toBe(401);
+      // The relay logs neither the client token nor OAuth tokens.
+      const logged = JSON.stringify(events);
+      for (const secret of [token, code, first.access_token, first.refresh_token, next.access_token])
+        expect(logged).not.toContain(String(secret));
+      expect(events.some((e) => (e as { event?: string }).event === "oauth.token")).toBe(true);
+    },
+    60_000,
+  );
 });
