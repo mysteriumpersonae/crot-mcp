@@ -167,6 +167,25 @@ export class TrayController {
     return this.client.request(method, params);
   }
 
+  /**
+   * "Check tunnel": the service registers and reconnects its relay tunnel now and reports the
+   * tunnel's state afterwards; undefined when the service could not be asked or has no tunnel.
+   */
+  async reconnectRemote(): Promise<{ readonly state: string; readonly reason?: string } | undefined> {
+    const client = this.client;
+    if (!client || client.closed) return undefined;
+    let result: unknown;
+    try {
+      result = await client.request("remote.reconnect");
+    } catch {
+      return undefined;
+    }
+    await this.refresh();
+    const tunnel = isRecord(result) && result.ok === true && isRecord(result.tunnel) ? result.tunnel : undefined;
+    if (!tunnel || typeof tunnel.state !== "string") return undefined;
+    return { state: tunnel.state, ...(typeof tunnel.reason === "string" ? { reason: tunnel.reason } : {}) };
+  }
+
   /** Cancel a running pairing; the service refuses (`not_pairing`) when none is in progress. */
   cancelPairing(): Promise<boolean> {
     return this.action("pairing.cancel", undefined, () => "Pairing cancelled.");

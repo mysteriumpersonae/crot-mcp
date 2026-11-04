@@ -26,6 +26,8 @@ export async function serviceHarness() {
     APPDATA: path.join(base, "roaming"),
     XDG_STATE_HOME: path.join(base, "state"),
     XDG_CONFIG_HOME: path.join(base, "config"),
+    // The UI turns the remote tunnel on (Copy URL, tokens): keep the self-registered tunnel off the public relay.
+    CROT_SELF_RELAY_HOST: "relay.invalid",
   };
   const stateDir =
     process.platform === "win32"

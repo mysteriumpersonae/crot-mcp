@@ -126,26 +126,113 @@ describe("custom chat provider profiles", () => {
       await runtime.close();
       runtime = await open();
       const after = runtime as unknown as Internals;
-      expect(Object.keys(after.state.chatProviders ?? {}).sort()).toEqual([
-        "Bogus",
-        "Custom API:river",
-        "OpenAI-compatible:river",
-      ]);
+      // Both legacy entries name the same server (River's default URL): one profile, one credential.
+      expect(Object.keys(after.state.chatProviders ?? {}).sort()).toEqual(["Bogus", "Custom API:river"]);
+      expect(after.state.chatProviders?.["Custom API:river"]?.defaultModel).toBe("river-large");
       expect(after.vault.credentials["chat:Custom API:river"]).toBe("legacy-custom-key");
-      expect(after.vault.credentials["chat:OpenAI-compatible:river"]).toBe("legacy-river-key");
+      expect(after.vault.credentials["chat:OpenAI-compatible:river"]).toBeUndefined();
       expect(after.vault.credentials["chat:Custom API"]).toBeUndefined();
+      expect(after.vault.credentials["chat:River"]).toBeUndefined();
       const providers = await listed(runtime);
       expect(providers.find((p) => p.provider === "Custom API:river")).toMatchObject({
         displayName: "River",
         endpoint: "https://api.river.ai/v1",
         credentialStored: true,
       });
-      expect(providers.find((p) => p.provider === "OpenAI-compatible:river")).toMatchObject({
-        displayName: "River 2",
-        endpoint: "https://api.river.ai/v1",
-      });
+      expect(providers.filter((p) => p.provider.includes(":"))).toHaveLength(1);
       // Unknown saved keys are left alone and never listed.
       expect(providers.map((p) => p.provider)).not.toContain("Bogus");
+    } finally {
+      await runtime.close();
+      await cleanup();
+    }
+  });
+
+  it("keeps one profile per server: the legacy family, a trailing slash and an edited URL reuse it", async () => {
+    const { open, cleanup } = await setup();
+    const runtime = await open();
+    try {
+      const internals = runtime as unknown as Internals;
+      const river = "https://api.river.ai/v1";
+      expect(
+        (await runtime.request("chat.configure", { provider: "Custom API", endpoint: river, credential: "river-key" }))
+          .provider,
+      ).toBe("Custom API:river");
+      // The same base URL saved as "OpenAI-compatible" (older clients) updates the existing profile.
+      expect(
+        (await runtime.request("chat.configure", { provider: "OpenAI-compatible", endpoint: `${river}/` })).provider,
+      ).toBe("Custom API:river");
+      expect(Object.keys(internals.state.chatProviders ?? {})).toEqual(["Custom API:river"]);
+      expect(internals.vault.credentials["chat:Custom API:river"]).toBe("river-key");
+      // A profile edited to another profile's base URL takes that one over: still one profile per server.
+      expect(
+        (
+          await runtime.request("chat.configure", {
+            provider: "Custom API",
+            endpoint: "https://llm.example.com/v1",
+            credential: "llm-key",
+          })
+        ).provider,
+      ).toBe("Custom API:llm");
+      expect((await runtime.request("chat.configure", { provider: "Custom API:llm", endpoint: river })).provider).toBe(
+        "Custom API:llm",
+      );
+      expect(Object.keys(internals.state.chatProviders ?? {})).toEqual(["Custom API:llm"]);
+      expect(internals.vault.credentials["chat:Custom API:llm"]).toBe("llm-key");
+      expect(internals.vault.credentials["chat:Custom API:river"]).toBeUndefined();
+      expect((await listed(runtime)).filter((p) => p.endpoint === river)).toHaveLength(1);
+    } finally {
+      await runtime.close();
+      await cleanup();
+    }
+  });
+
+  it("merges duplicate profiles of one server saved by older versions, keeping a credential and the name", async () => {
+    const { open, cleanup } = await setup();
+    let runtime = await open();
+    try {
+      const internals = runtime as unknown as Internals;
+      internals.state.chatProviders = {
+        "Custom API:river": {
+          endpoint: "https://api.river.ai/v1",
+          label: "River",
+          protocol: "anthropic",
+          connectionStatus: "failed",
+          checkedAt: "2026-01-01T00:00:00.000Z",
+        },
+        "OpenAI-compatible:river": {
+          endpoint: "https://api.river.ai/v1/",
+          label: "River 2",
+          defaultModel: "river-large",
+          connectionStatus: "connected",
+          checkedAt: "2026-01-02T00:00:00.000Z",
+        },
+        "Custom API:llm": { endpoint: "https://llm.example.com/v1", label: "Llm" },
+      } as Record<string, ChatProviderConfig>;
+      internals.vault.credentials["chat:OpenAI-compatible:river"] = "river-key";
+      internals.vault.credentials["chat:Custom API:llm"] = "llm-key";
+      await internals.persist();
+      await runtime.close();
+      runtime = await open();
+      const after = runtime as unknown as Internals;
+      expect(Object.keys(after.state.chatProviders ?? {}).sort()).toEqual(["Custom API:llm", "Custom API:river"]);
+      // The verified configuration (it spoke the OpenAI protocol), the stored key and the original name.
+      expect(after.state.chatProviders?.["Custom API:river"]).toMatchObject({
+        endpoint: "https://api.river.ai/v1",
+        label: "River",
+        defaultModel: "river-large",
+        connectionStatus: "connected",
+      });
+      expect(after.state.chatProviders?.["Custom API:river"]?.protocol).toBeUndefined();
+      expect(after.vault.credentials["chat:Custom API:river"]).toBe("river-key");
+      expect(after.vault.credentials["chat:OpenAI-compatible:river"]).toBeUndefined();
+      // Other servers are untouched.
+      expect(after.state.chatProviders?.["Custom API:llm"]).toMatchObject({ label: "Llm" });
+      expect(after.vault.credentials["chat:Custom API:llm"]).toBe("llm-key");
+      expect((await listed(runtime)).find((p) => p.provider === "Custom API:river")).toMatchObject({
+        displayName: "River",
+        credentialStored: true,
+      });
     } finally {
       await runtime.close();
       await cleanup();

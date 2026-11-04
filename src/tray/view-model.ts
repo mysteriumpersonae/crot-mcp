@@ -181,6 +181,8 @@ export interface TrayView {
   readonly presets: readonly PresetOption[];
   readonly presetBlockedBy?: string;
   readonly remoteMode: boolean;
+  /** The relay tunnel: ready, connecting, waiting (retrying), blocked or stopped; absent from older services. */
+  readonly tunnelState?: NonNullable<ControlOverview["remote"]["tunnelState"]>;
   /** The full-control opt-in as recorded in the device settings. */
   readonly fullControl: boolean;
   /** Whether the running Core applies it (WP-31): recorded and bound to the device paired here. */
@@ -358,6 +360,7 @@ export function trayView(state: TrayState): TrayView {
     presets,
     ...(o?.preset.blockedBy ? { presetBlockedBy: o.preset.blockedBy } : {}),
     remoteMode: o?.remote.mode ?? false,
+    ...(o?.remote.tunnelState ? { tunnelState: o.remote.tunnelState } : {}),
     fullControl: o?.remote.fullControl ?? false,
     fullControlEffective: o?.remote.fullControlEffective ?? o?.remote.profile?.fullControl.enabled ?? false,
     fullControlNote: o?.remote.fullControlNote ?? "",

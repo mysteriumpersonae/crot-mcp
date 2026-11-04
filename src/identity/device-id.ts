@@ -78,6 +78,13 @@ export function isRelayHost(value: unknown): value is string {
   return labels.every((l) => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(l));
 }
 
+/**
+ * The relay host of a self-registered device (owner-approved, no pairing): the canonical public
+ * relay, whose URL `https://crot.network/d/<localDeviceId>/mcp` the tray shows. Paired devices use
+ * the relay host of their identity environment instead.
+ */
+export const SELF_RELAY_HOST = "crot.network";
+
 /** The canonical device resource URI `https://<relay-host>/d/<deviceId>/mcp` (AD-21 point 5). */
 export function canonicalDeviceUri(relayHost: string, deviceId: string): string {
   if (!isRelayHost(relayHost)) throw new Error("not a valid relay host");

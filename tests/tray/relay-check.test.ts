@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { checkRelayEndpoint, relayCheckUrl } from "../../src/tray/relay-check.js";
+import { SELF_RELAY_HOST } from "../../src/identity/device-id.js";
+import {
+  checkRelayEndpoint,
+  classifyRelayResponse,
+  RELAY_HOST,
+  relayCheckUrl,
+  relayCheckVerdict,
+} from "../../src/tray/relay-check.js";
 import {
   CLAUDE_SVG,
   INTEGRATION_SVG_TREES,
@@ -23,25 +30,60 @@ describe("relay endpoint check runs in the main process", () => {
     expect(relayCheckUrl({})).toBeUndefined();
   });
 
-  it("maps HTTP outcomes to states and never forwards bodies or headers", async () => {
-    const reply = (status: number) => (async () => new Response("secret-body", { status })) as typeof fetch;
+  it("tells who answered: this device through the tunnel, or one of the relay's own refusals", async () => {
+    const seen: (RequestInit | undefined)[] = [];
+    const reply = (status: number, headers: Record<string, string> = {}) =>
+      (async (_url: unknown, init?: RequestInit) => {
+        seen.push(init);
+        return new Response(status === 204 ? null : "secret-body", { status, headers });
+      }) as typeof fetch;
+    const url = "https://crot.network/d/x/mcp";
+    const relay = { "crot-request-outcome": "not_executed" };
     expect(await checkRelayEndpoint(undefined, reply(200))).toEqual({ state: "unavailable" });
-    expect(await checkRelayEndpoint("https://crot.network/d/x/mcp", reply(200))).toEqual({
-      state: "live",
-      status: 200,
-    });
-    expect(await checkRelayEndpoint("https://crot.network/d/x/mcp", reply(404))).toEqual({
-      state: "tunnel_inactive",
-      status: 404,
-    });
-    expect(await checkRelayEndpoint("https://crot.network/d/x/mcp", reply(502))).toEqual({
-      state: "http",
-      status: 502,
-    });
+    // CROT's own refusal of the throwaway token: the request crossed the tunnel to this device.
+    const crot401 = { "www-authenticate": 'Bearer realm="crot", error="invalid_token"' };
+    expect(await checkRelayEndpoint(url, reply(401, crot401))).toEqual({ state: "live", status: 401 });
+    expect(await checkRelayEndpoint(url, reply(200))).toEqual({ state: "live", status: 200 });
+    // The relay's refusals carry its outcome header.
+    expect(await checkRelayEndpoint(url, reply(404, relay))).toEqual({ state: "unregistered", status: 404 });
+    expect(await checkRelayEndpoint(url, reply(503, relay))).toEqual({ state: "tunnel_inactive", status: 503 });
+    const relay401 = { ...relay, "www-authenticate": 'Bearer resource_metadata="https://crot.network/x"' };
+    expect(await checkRelayEndpoint(url, reply(401, relay401))).toEqual({ state: "relay_auth", status: 401 });
+    expect(await checkRelayEndpoint(url, reply(429, relay))).toEqual({ state: "http", status: 429 });
+    // Anything else (a proxy's 502, a 404 or 401 without the relay's header) is never success.
+    expect(await checkRelayEndpoint(url, reply(502))).toEqual({ state: "http", status: 502 });
+    expect(await checkRelayEndpoint(url, reply(404))).toEqual({ state: "http", status: 404 });
+    expect(await checkRelayEndpoint(url, reply(401))).toEqual({ state: "http", status: 401 });
+    // Only a throwaway token is ever presented, never a real credential or a cookie.
+    const tokens = seen.map((init) => new Headers(init?.headers).get("authorization"));
+    for (const token of tokens) expect(token).toMatch(/^Bearer crot-probe-[\w-]{24}$/);
+    expect(new Set(tokens).size).toBe(tokens.length);
+    expect(seen.every((init) => init?.credentials === "omit" && init?.redirect === "error")).toBe(true);
     const failing = (async () => {
       throw new Error("ENOTFOUND");
     }) as typeof fetch;
-    expect(await checkRelayEndpoint("https://crot.network/d/x/mcp", failing)).toEqual({ state: "unreachable" });
+    expect(await checkRelayEndpoint(url, failing)).toEqual({ state: "unreachable" });
+    expect(classifyRelayResponse(503, new Headers(relay))).toEqual({ state: "tunnel_inactive", status: 503 });
+  });
+
+  it("is green for a relay that checks OAuth itself only with the service's tunnel ready", () => {
+    const relayAuth = { state: "relay_auth", status: 401 } as const;
+    expect(relayCheckVerdict(relayAuth, { state: "ready" })).toEqual({ state: "live", status: 401, tunnel: "ready" });
+    expect(relayCheckVerdict(relayAuth, { state: "connecting" })).toEqual({ ...relayAuth, tunnel: "connecting" });
+    expect(relayCheckVerdict(relayAuth, undefined)).toEqual(relayAuth);
+    // The probe decides: a ready report never turns a relay refusal green.
+    expect(relayCheckVerdict({ state: "unregistered", status: 404 }, { state: "ready" })).toEqual({
+      state: "unregistered",
+      status: 404,
+      tunnel: "ready",
+    });
+    expect(relayCheckVerdict({ state: "unreachable" }, { state: "waiting", reason: "unreachable" })).toEqual({
+      state: "unreachable",
+      tunnel: "waiting",
+    });
+    // The URL the tray shows is the relay the device registers at.
+    expect(RELAY_HOST).toBe(SELF_RELAY_HOST);
+    expect(SELF_RELAY_HOST).toBe("crot.network");
   });
 
   it("renderer uses the IPC bridge, not fetch or markup injection", () => {
