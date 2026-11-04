@@ -3,6 +3,22 @@ import { parseProduct, PRODUCT_METHODS } from "../../src/service/product-protoco
 import { parseControlRequest } from "../../src/service/protocol.js";
 it("owner product RPC is a closed allowlist and rejects secrets in unsafe headers, arbitrary fields and malformed grants", () => {
   expect(PRODUCT_METHODS).toContain("mcpServers.callTool");
+  // Local OpenCode: status, install and stop take nothing (no command, port, package or directory from the UI).
+  expect(PRODUCT_METHODS).toEqual(expect.arrayContaining(["opencode.status", "opencode.install", "opencode.stop"]));
+  expect(parseProduct("opencode.status", {})).toEqual({});
+  expect(parseProduct("opencode.install", {})).toEqual({});
+  // The owner picks neither the package, its version nor the directory.
+  expect(parseProduct("opencode.install", { version: "latest" })).toBeUndefined();
+  expect(parseProduct("opencode.stop", { port: 4096 })).toBeUndefined();
+  expect(parseProduct("opencode.status", { command: "sh" })).toBeUndefined();
+  expect(
+    parseProduct("chat.configure", { provider: "OpenCode", endpoint: "http://127.0.0.1:4096", managed: true }),
+  ).toMatchObject({
+    managed: true,
+  });
+  expect(
+    parseProduct("chat.configure", { provider: "OpenCode", endpoint: "http://127.0.0.1:4096", managed: "yes" }),
+  ).toBeUndefined();
   for (const method of ["exec", "tools.call", "__proto__", "network_request"])
     expect(parseProduct(method, {})).toBeUndefined();
   expect(parseProduct("connectors.configure", { id: "GitHub", credential: "a\r\nInjected: yes" })).toBeUndefined();

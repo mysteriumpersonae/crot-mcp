@@ -47,6 +47,9 @@ import type { PrivateFileProtection, ManagedProcess } from "../core/platform/typ
 import type { SecretStore } from "./secrets/store.js";
 import { writePrivateFileAtomic } from "./secrets/backends.js";
 import { parseProduct, type ProductMethod } from "./product-protocol.js";
+import { OPENCODE_INSTALL_COMMAND, OpenCodeBridge, type OpenCodeBridgeOptions } from "./opencode-bridge.js";
+import { findOpenCodeKey } from "./opencode-local.js";
+import { OpenCodeRuntime, type OpenCodeInstallHost } from "./opencode-runtime.js";
 
 export const CONNECTOR_IDS = CONNECTOR_MANIFESTS.map((m) => m.id);
 interface Project {
@@ -160,6 +163,23 @@ export interface ProductHost {
   tokens?: import("./client-tokens.js").ClientTokenRegistry;
   emergencyStop?(): Promise<Record<string, unknown>>;
   recordControlEvent?: (event: import("../core/audit/audit.js").ControlAuditRecord) => Promise<void>;
+  /**
+   * The owner's local OpenCode: key discovery (OPENCODE_API_KEY, auth.json) and the managed `opencode serve`
+   * bridge. Absent: CROT neither reads OpenCode's files nor starts OpenCode.
+   */
+  openCode?: Omit<OpenCodeBridgeOptions, "directory" | "allowed" | "record" | "runtime" | "pidFile"> & {
+    /** npm and the binary check for "Install and start OpenCode"; absent: CROT never installs OpenCode. */
+    install?: OpenCodeInstallHost;
+  };
+}
+/** The emergency stop, or an explicit runtime deny of starting processes, also refuses the OpenCode bridge. */
+function processDenied(core: CrotCore): boolean {
+  if (core.permissions.runtime.halted) return true;
+  return core.permissions.runtime.policy.rules.some(
+    (r) =>
+      r.state === "deny" &&
+      (r.operation === "process.start" || r.capability === "process.manage" || r.capability === "shell.execute"),
+  );
 }
 const fail = (message: string): never => {
   throw new CrotError("INVALID_INPUT", message);
@@ -250,9 +270,60 @@ export class ProductRuntime {
   private poller: NodeJS.Timeout | undefined;
   private schemaValidator = new AjvJsonSchemaValidator();
   private readonly chat: ChatRuntime;
+  /** CROT's local OpenCode server (`opencode serve`), when the host enables local OpenCode. */
+  private readonly openCode: OpenCodeBridge | undefined;
+  /** OpenCode installed by CROT into <stateDir>/opencode-runtime, when the host can run npm. */
+  private readonly runtime: OpenCodeRuntime | undefined;
   private readonly avatars = new AccountAvatars();
   private constructor(private host: ProductHost) {
+    const openCode = host.openCode;
+    const allowed = () => !processDenied(this.host.core());
+    this.runtime = openCode?.install
+      ? new OpenCodeRuntime({
+          directory: path.join(host.stateDir, "opencode-runtime"),
+          platform: openCode.local.platform,
+          arch: process.arch,
+          host: openCode.install,
+          allowed,
+          record: (outcome, reason) =>
+            void this.host
+              .recordControlEvent?.({
+                kind: "control",
+                id: newAuditEventId(),
+                timestamp: now(),
+                action: "opencode_runtime",
+                actor: { channel: "control" },
+                outcome,
+                value: "install",
+                ...(reason ? { reason } : {}),
+              })
+              .catch(() => undefined),
+        })
+      : undefined;
+    this.openCode = openCode
+      ? new OpenCodeBridge({
+          ...openCode,
+          directory: path.join(host.stateDir, "opencode-chat"),
+          ...(this.runtime ? { runtime: this.runtime } : {}),
+          pidFile: path.join(host.stateDir, "opencode-bridge.pid"),
+          allowed,
+          record: (event, outcome) =>
+            void this.host
+              .recordControlEvent?.({
+                kind: "control",
+                id: newAuditEventId(),
+                timestamp: now(),
+                action: "opencode_bridge",
+                actor: { channel: "control" },
+                outcome,
+                value: event,
+              })
+              .catch(() => undefined),
+        })
+      : undefined;
+    const bridge = this.openCode;
     this.chat = new ChatRuntime({
+      ...(openCode && bridge ? { openCode: { key: () => findOpenCodeKey(openCode.local), bridge } } : {}),
       core: () => this.host.core(),
       configuration: (provider) => this.state.chatProviders?.[provider],
       credential: (provider) => this.vault.credentials[`chat:${provider}`],
@@ -343,6 +414,8 @@ export class ProductRuntime {
     await r.persist();
     r.poller = setInterval(() => void r.pollProcesses().catch(() => undefined), 1200);
     r.poller.unref();
+    // An OpenCode server that a killed or crashed CROT left running (its PID file) stops now.
+    void r.openCode?.reap();
     return r;
   }
   get activeProject(): Project {
@@ -616,6 +689,7 @@ export class ProductRuntime {
       method === "projects.inspect" ||
       method === "security.status" ||
       (method.startsWith("chat.") && method !== "chat.configure") ||
+      method.startsWith("opencode.") ||
       method.startsWith("tokens.") ||
       method.startsWith("accounts.") ||
       method.endsWith(".list") ||
@@ -775,6 +849,12 @@ export class ProductRuntime {
           config.connectionStatus = "connected";
           delete config.connectionError;
           config.defaultModel = model;
+          // OpenCode (Free & Zen): the route and key source of this check (never the key).
+          if (result.route === "zen" || result.route === "local") config.route = result.route;
+          else delete config.route;
+          if (typeof result.keySource === "string")
+            config.keySource = result.keySource as ChatProviderConfig["keySource"];
+          else delete config.keySource;
           await this.persist();
           await this.event(method, undefined, provider);
           return { ...result, provider, checkedAt: config.checkedAt, defaultModel: config.defaultModel };
@@ -784,9 +864,22 @@ export class ProductRuntime {
             config.connectionError = diagnostic;
             config.checkedAt = now();
             config.connectionStatus = "failed";
+            delete config.route;
+            delete config.keySource;
             await this.persist();
           }
-          return { ok: false, provider, message: "Provider check failed", diagnostic };
+          // OpenCode: whether the CLI is installed, so the owner sees how to get a key or install it.
+          const openCode =
+            baseProvider(provider) === "OpenCode (Free & Zen)" || provider === "OpenCode"
+              ? await this.openCodeStatus().catch(() => undefined)
+              : undefined;
+          return {
+            ok: false,
+            provider,
+            message: "Provider check failed",
+            diagnostic,
+            ...(openCode ? { openCode } : {}),
+          };
         }
       }
       case "skills.list":
@@ -888,6 +981,8 @@ export class ProductRuntime {
         delete this.state.chatProviders?.[provider];
         delete this.vault.credentials[`chat:${provider}`];
         await this.persist();
+        // CROT's own OpenCode server goes when no provider uses it any more.
+        if (!this.openCodeInUse()) await this.openCode?.stop();
         return { ok: true };
       }
       case "chat.configure": {
@@ -941,6 +1036,7 @@ export class ProductRuntime {
           ...(p.username !== undefined ? { username: String(p.username) } : {}),
           ...(p.defaultModel !== undefined ? { defaultModel: String(p.defaultModel) } : {}),
           ...(p.protocol !== undefined ? { protocol: p.protocol as "openai" | "anthropic" } : {}),
+          ...(provider === "OpenCode" && p.managed !== undefined ? { managed: p.managed === true } : {}),
           ...(isProfileKey(provider)
             ? {
                 label: this.profileLabel(
@@ -955,13 +1051,30 @@ export class ProductRuntime {
             : {}),
         };
         if (p.credential !== undefined) this.vault.credentials[`chat:${provider}`] = String(p.credential);
+        // A managed OpenCode server gets its own random password; an old server password is not kept.
+        if (provider === "OpenCode" && p.managed === true) delete this.vault.credentials[`chat:${provider}`];
         await this.persist();
         // Auto-allow the provider's preset hosts and its (custom) endpoint host, port included.
         this.host.core().addNetworkAllow(providerNetworkHosts(provider, endpoint));
         return { ok: true, provider, providers: this.chat.providers(), current: this.chat.current };
       }
       case "chat.models":
-        return this.chat.models(this.chatKey(p.provider as ChatProvider));
+        // Listing models never starts local OpenCode; Save & Test and the chat do.
+        return this.chat.models(this.chatKey(p.provider as ChatProvider), { start: false });
+      case "opencode.status":
+        return { ok: true, ...(await this.openCodeStatus()) };
+      case "opencode.install": {
+        // "Install and start OpenCode": npm installs the pinned OpenCode in the background; the status
+        // reports its progress, and the owner's next Save & Test starts it.
+        if (!this.runtime) return fail("Installing OpenCode is unavailable in this host");
+        await this.runtime.start();
+        return { ok: true, ...(await this.openCodeStatus()) };
+      }
+      case "opencode.stop": {
+        if (this.chat.running) return fail("Stop generation before stopping OpenCode");
+        const stopped = (await this.openCode?.stop()) ?? false;
+        return { ok: true, stopped, ...(await this.openCodeStatus()) };
+      }
       case "chat.start":
         return this.chat.start({ ...p, provider: this.chatKey(p.provider as ChatProvider) });
       case "chat.poll":
@@ -1773,11 +1886,50 @@ export class ProductRuntime {
     for (const agent of this.state.agents) agent.connected = false;
     await Promise.all([...this.clients.values()].map((c) => c.close().catch(() => undefined)));
     await chatStopped;
+    // Emergency stop: CROT's own OpenCode server (its agents) and a running installation stop too.
+    this.runtime?.cancel();
+    await this.openCode?.stop();
     await this.persist();
+  }
+  /** Last resort (CROT's emergency and 'exit' paths): CROT's OpenCode server and installation go at once. */
+  terminateSync(): void {
+    this.openCode?.terminateSync();
+    this.runtime?.cancel();
+  }
+  /**
+   * Local OpenCode for the owner UI: installed or not, where the Zen key comes from (never the key), and the
+   * running server (url, managed, version; never its password).
+   */
+  private async openCodeStatus(): Promise<Record<string, unknown>> {
+    const openCode = this.host.openCode;
+    if (!this.openCode || !openCode) return { available: false, installCommand: OPENCODE_INSTALL_COMMAND };
+    const install = openCode.install;
+    const [status, key, runtime, installable] = await Promise.all([
+      this.openCode.status(),
+      findOpenCodeKey(openCode.local).catch(() => undefined),
+      this.runtime?.status(),
+      this.runtime && install ? install.npm().catch(() => false) : false,
+    ]);
+    return {
+      available: true,
+      installCommand: OPENCODE_INSTALL_COMMAND,
+      installed: status.installed,
+      // One-click install (hosts that can run npm): possible (npm found) and its state.
+      ...(runtime ? { installable, runtime } : {}),
+      ...(key ? { keySource: key.source } : {}),
+      ...(status.server ? { server: status.server } : {}),
+    };
+  }
+  /** Whether a configured provider uses CROT's own OpenCode server. */
+  private openCodeInUse(): boolean {
+    const providers = this.state.chatProviders ?? {};
+    return !!providers.OpenCode?.managed || providers["OpenCode (Free & Zen)"]?.route === "local";
   }
   async close(): Promise<void> {
     this.avatars.close();
     await this.chat.close();
+    await this.runtime?.close();
+    await this.openCode?.close();
     clearInterval(this.poller);
     for (const controller of this.serverControllers.values()) controller.abort();
     await Promise.all([...this.connecting.values()].map((p) => p.catch(() => undefined)));

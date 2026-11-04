@@ -10,8 +10,9 @@ import type { CrotCore } from "../../src/core/crot-core.js";
 import { createPrivateFileProtection } from "../../src/core/platform/private-files.js";
 import {
   chatFailure,
-  OPENCODE_FREE_LABELS,
   OPENCODE_FREE_MODELS,
+  OPENCODE_MODEL_LABELS,
+  OPENCODE_PAID_MODELS,
   providerDiagnostic,
   zenInventory,
 } from "../../src/service/chat-runtime.js";
@@ -45,9 +46,9 @@ describe("zenInventory", () => {
     expect(zenInventory(INVENTORY)).toEqual([
       { id: "big-pickle", label: "Big Pickle (free)", free: true, protocol: "openai" },
       { id: "glm-5.3-flash-free", label: "GLM-5.3-Flash (free)", free: true, protocol: "openai" },
-      { id: "claude-haiku-4-5", label: "Claude Haiku 4.5", free: false, protocol: "anthropic" },
-      { id: "kimi-k2.6", label: "Kimi K2.6", free: false, protocol: "openai" },
-      { id: "qwen3.6-plus", label: "Qwen3.6 Plus", free: false, protocol: "anthropic" },
+      { id: "claude-haiku-4-5", label: "Claude Haiku 4.5 (Zen / Go)", free: false, protocol: "anthropic" },
+      { id: "kimi-k2.6", label: "Kimi K2.6 (Zen / Go)", free: false, protocol: "openai" },
+      { id: "qwen3.6-plus", label: "Qwen3.6 Plus (Zen / Go)", free: false, protocol: "anthropic" },
     ]);
     // Older inventories without api/cost: chat completions, free by the "-free" suffix; junk is skipped.
     expect(
@@ -67,11 +68,13 @@ describe("zenInventory", () => {
       }),
     ).toEqual([
       { id: "legacy-free", label: "legacy-free (free)", free: true, protocol: "openai" },
-      { id: "ctl", label: "Bad Name", free: false, protocol: "openai" },
-      { id: "legacy", label: "legacy", free: false, protocol: "openai" },
+      { id: "ctl", label: "Bad Name (Zen / Go)", free: false, protocol: "openai" },
+      { id: "legacy", label: "legacy (Zen / Go)", free: false, protocol: "openai" },
     ]);
     expect(zenInventory(undefined)).toEqual([]);
-    expect(OPENCODE_FREE_MODELS.every((id) => OPENCODE_FREE_LABELS[id]?.endsWith("(free)"))).toBe(true);
+    expect(OPENCODE_FREE_MODELS.every((id) => OPENCODE_MODEL_LABELS[id]?.endsWith("(free)"))).toBe(true);
+    expect(OPENCODE_PAID_MODELS.every((id) => OPENCODE_MODEL_LABELS[id]?.endsWith("(Zen / Go)"))).toBe(true);
+    expect(Object.keys(OPENCODE_MODEL_LABELS)).toEqual([...OPENCODE_FREE_MODELS, ...OPENCODE_PAID_MODELS]);
   });
 
   it("maps provider failures to fixed messages and diagnostics, never provider text", () => {
@@ -94,6 +97,31 @@ describe("zenInventory", () => {
       "Network access is blocked by the runtime policy.",
     );
     expect(chatFailure(new Error("provider said secret"))).toBeUndefined();
+    // The local OpenCode bridge.
+    const local = (code: "OPERATION_FAILED" | "NOT_FOUND" | "PERMISSION_DENIED", reason: string, httpStatus?: number) =>
+      new CrotError(code, "x", { stage: "local", reason, ...(httpStatus ? { httpStatus } : {}) });
+    expect(providerDiagnostic(local("OPERATION_FAILED", "free_tier_limit", 429))).toEqual({
+      code: "FREE_TIER_LIMIT",
+      stage: "local",
+      httpStatus: 429,
+    });
+    expect(providerDiagnostic(local("NOT_FOUND", "opencode_not_installed"))).toEqual({
+      code: "OPENCODE_NOT_INSTALLED",
+      stage: "local",
+    });
+    expect(providerDiagnostic(local("OPERATION_FAILED", "opencode_start_failed"))).toEqual({
+      code: "OPENCODE_START_FAILED",
+      stage: "local",
+    });
+    expect(providerDiagnostic(local("PERMISSION_DENIED", "opencode_refused"))).toEqual({
+      code: "OPENCODE_START_REFUSED",
+      stage: "local",
+    });
+    expect(chatFailure(local("OPERATION_FAILED", "free_tier_limit", 429))).toContain("free usage limit is reached");
+    expect(chatFailure(local("NOT_FOUND", "opencode_not_installed"))).toContain("npm i -g opencode-ai");
+    expect(chatFailure(local("OPERATION_FAILED", "opencode_start_failed"))).toContain("could not be started");
+    expect(chatFailure(local("PERMISSION_DENIED", "opencode_refused"))).toContain("emergency stop");
+    expect(chatFailure(local("OPERATION_FAILED", "local_text_only"))).toContain("text only");
   });
 });
 
@@ -193,7 +221,8 @@ describe("OpenCode (Free & Zen) connection and chat", () => {
       expect(await listed()).toMatchObject({
         credentialRequired: false,
         configured: false,
-        suggestedModels: [...OPENCODE_FREE_MODELS],
+        suggestedModels: [...OPENCODE_FREE_MODELS, ...OPENCODE_PAID_MODELS],
+        suggestedLabels: OPENCODE_MODEL_LABELS,
       });
       await rpc("chat.configure", { provider: ZEN, endpoint });
 

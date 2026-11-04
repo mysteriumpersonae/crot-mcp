@@ -1,4 +1,5 @@
 import { websiteUrl } from "./website.js";
+import { externalLink } from "./external-links.js";
 import { ProviderSettings } from "../desktop-auth/providers.js";
 import { DesktopAuth } from "../desktop-auth/store.js";
 import { mailDelivery } from "../desktop-auth/config.js";
@@ -202,12 +203,31 @@ function createWindow(): void {
   void window.loadURL(`${ORIGIN_PREFIX}index.html`);
 }
 
+let openCodeStopping: Promise<void> | undefined;
+/**
+ * Quitting the tray: CROT's own OpenCode server (opencode serve) stops with it, best effort and at most 2 s
+ * (the service refuses while a reply is generating; the chat starts the server again when needed).
+ */
+function stopOpenCode(): Promise<void> {
+  return (openCodeStopping ??= smokeReport
+    ? Promise.resolve()
+    : Promise.race([
+        controller.product("opencode.stop", {}).then(
+          () => undefined,
+          () => undefined,
+        ),
+        new Promise<void>((resolve) => setTimeout(resolve, 2000).unref()),
+      ]));
+}
+
 function quit(): void {
   quitting = true;
   desktopAuth?.cancel();
-  controller.stop();
-  void toolClient?.close();
-  app.quit();
+  void stopOpenCode().finally(() => {
+    controller.stop();
+    void toolClient?.close();
+    app.quit();
+  });
 }
 
 function harden(): void {
@@ -233,7 +253,12 @@ function harden(): void {
     contents.on("will-navigate", (event) => event.preventDefault());
     contents.on("will-redirect", (event) => event.preventDefault());
     contents.on("will-attach-webview", (event) => event.preventDefault());
-    contents.setWindowOpenHandler(() => ({ action: "deny" }));
+    // Nothing opens inside the app; allowlisted HTTPS pages (opencode.ai/zen, integrations) open in the browser.
+    contents.setWindowOpenHandler(({ url }) => {
+      const target = smokeReport ? undefined : externalLink(url);
+      if (target) void shell.openExternal(target);
+      return { action: "deny" };
+    });
   });
 }
 
@@ -572,8 +597,12 @@ app.on("window-all-closed", () => {
   // The tray keeps running without a window.
 });
 app.on("second-instance", () => showWindow());
-app.on("before-quit", () => {
+app.on("before-quit", (event) => {
   quitting = true;
+  if (smokeReport || openCodeStopping) return;
+  // Quit from the OS (Dock, logout, installer): CROT's OpenCode server stops first, then the tray quits.
+  event.preventDefault();
+  void stopOpenCode().finally(() => app.quit());
 });
 
 void app.whenReady().then(async () => {

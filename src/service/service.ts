@@ -28,10 +28,13 @@ import { authorizeProductionPublication } from "./publications/authorization.js"
 import { PublicationRuntime } from "./publications/runtime.js";
 import { SocialAccountRuntime } from "./social/runtime.js";
 import { ProductRuntime, productPaths } from "./product-runtime.js";
+import { runProgram } from "./opencode-runtime.js";
 import type net from "node:net";
 import { launchControlCenter } from "../tray/launch.js";
 import { lstat } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
+import { createChildEnvironment } from "../core/platform/child-environment.js";
 import { DEFAULT_HTTP_TOKEN_FILE_NAME, LocalTokenVerifier, loadOrCreateLocalToken } from "../adapters/http/auth.js";
 import { CrotHttpServer } from "../adapters/http/server.js";
 import { localContextResolver } from "../adapters/mcp/context.js";
@@ -608,6 +611,11 @@ export class CrotService {
             value: JSON.stringify(event),
           }),
       });
+      const installEnv = createChildEnvironment(
+        servicePlatform.baseEnvironment,
+        [...parsed.environment.allow, "npm_config_*", "NPM_CONFIG_*"],
+        servicePlatform.environment.caseInsensitive,
+      ).base;
       this.product = await ProductRuntime.open({
         socialAccounts: this.socialAccounts,
         publications: () => this.publications,
@@ -643,6 +651,34 @@ export class CrotService {
         selectWorkspace: async (root) => {
           await control.selectWorkspace(root);
           activeWorkspace = root;
+        },
+        // Local OpenCode: its key in the owner's environment and files, and CROT's own `opencode serve`
+        // (allowlisted child environment plus OpenCode's own OPENCODE_* settings; no CROT service secrets).
+        openCode: {
+          local: { env: servicePlatform.baseEnvironment, home: os.homedir(), platform: process.platform },
+          env: createChildEnvironment(
+            servicePlatform.baseEnvironment,
+            [...parsed.environment.allow, "OPENCODE_*"],
+            servicePlatform.environment.caseInsensitive,
+          ).base,
+          launch: (command, args, { cwd, env }) =>
+            servicePlatform.launcher.launch(
+              { file: command, args, display: [command, ...args].join(" ") },
+              { cwd, env, stdin: false },
+            ),
+          // "Install and start OpenCode": the owner's npm (never one from the working directory) with the
+          // allowlisted child environment plus npm's own npm_config_* settings (registry, proxy, cache).
+          install: {
+            npm: () =>
+              servicePlatform.launcher
+                .resolveCommand("npm", [], { cwd: stateDir, env: installEnv, searchCurrentDirectory: false })
+                .then(
+                  () => true,
+                  () => false,
+                ),
+            run: (command, args, options) =>
+              runProgram(servicePlatform.launcher, command, args, { ...options, env: installEnv }),
+          },
         },
       });
       this.publications = await PublicationRuntime.open({
@@ -1285,6 +1321,8 @@ export class CrotService {
   /** Last resort when the graceful shutdown hangs: kill process trees synchronously. */
   emergency(): void {
     this.holder?.instance.terminateProcessesSync();
+    // CROT's own OpenCode server (and an installation) never outlives CROT.
+    this.product?.terminateSync();
     this.native?.closeSync();
   }
 }
