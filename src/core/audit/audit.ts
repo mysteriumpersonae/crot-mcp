@@ -64,6 +64,7 @@ export const CONTROL_AUDIT_ACTIONS = [
   "token_issue",
   "chat_provider",
   "opencode_bridge",
+  "opencode_runtime",
   "social_account",
   "publication",
   "token_rotate",

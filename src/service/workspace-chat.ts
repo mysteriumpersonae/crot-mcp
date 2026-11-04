@@ -103,6 +103,11 @@ export interface OpenCodeTurn {
   readonly probeMs?: number;
   /** How often the session status is checked for a refusal (free usage limit, long retry). */
   readonly watchMs?: number;
+  /**
+   * CROT's instructions for every message of the session (the open project, CROT tools). OpenCode adds them to
+   * its own system prompt for that message only, so each message carries them again.
+   */
+  readonly system?: string;
 }
 /** A failed OpenCode turn (info.error) as a fixed error: status and reason only, never OpenCode's text. */
 function openCodeError(error: Json): CrotError {
@@ -119,11 +124,109 @@ function openCodeError(error: Json): CrotError {
   });
 }
 /**
- * One turn with an OpenCode server (`opencode serve`): a new session, the message, the text answer. While the
+ * One CROT turn with an OpenCode server (`opencode serve`): a new session whose messages follow each other
+ * (OpenCode keeps them, so a later message sees the earlier ones and their answers), then closed. While an
  * answer is pending, the session status is watched: OpenCode retries a refused model call instead of failing
  * (e.g. "Free usage exceeded" with action.reason "free_tier_limit", or a retry scheduled minutes ahead), so
- * such a turn is aborted at once and reported as a fixed limit error instead of waiting for the timeout.
+ * such a message is aborted at once and reported as a fixed limit error instead of waiting for the timeout.
  */
+export class OpenCodeSession {
+  private constructor(
+    readonly id: string,
+    private readonly request: WorkspaceRequest,
+    private readonly cancel: WorkspaceCancel,
+    private readonly options: OpenCodeTurn,
+  ) {}
+  static async open(
+    request: WorkspaceRequest,
+    cancel: WorkspaceCancel,
+    options: OpenCodeTurn = {},
+  ): Promise<OpenCodeSession> {
+    const id = safeId((await request("/session", "POST", { title: "CROT chat" })).id);
+    return new OpenCodeSession(id, request, cancel, options);
+  }
+  /** One message and OpenCode's text answer; a message that fails is aborted on the server. */
+  async send(model: string, message: string, signal: AbortSignal | undefined): Promise<string> {
+    if (signal?.aborted) return fail("Workspace generation cancelled");
+    const split = model.indexOf("/");
+    if (split < 1 || split === model.length - 1) return fail("Select an OpenCode provider/model");
+    const { request, options, id: session } = this;
+    const stop = new AbortController();
+    let completed = false,
+      refusal: CrotError | undefined,
+      accepted = false;
+    const watcher = (async () => {
+      const started = Date.now();
+      while (!stop.signal.aborted) {
+        await delay(options.watchMs ?? 1000, undefined, { signal: stop.signal }).catch(() => undefined);
+        if (stop.signal.aborted) return;
+        let state: Json;
+        try {
+          state = obj((await request("/session/status", "GET", undefined, stop.signal))[session]);
+        } catch {
+          continue;
+        }
+        if (state.type === "retry") {
+          const action = obj(state.action),
+            next = Number(state.next),
+            freeTier = action.reason === "free_tier_limit";
+          if (freeTier || (Number.isFinite(next) && next - Date.now() > 60_000) || Number(state.attempt) >= 5) {
+            refusal = new CrotError("OPERATION_FAILED", "OpenCode refused the model request", {
+              stage: "local",
+              httpStatus: 429,
+              ...(freeTier ? { reason: "free_tier_limit" } : {}),
+            });
+            stop.abort();
+            return;
+          }
+        } else if (options.probeMs && Date.now() - started >= options.probeMs) {
+          accepted = true;
+          stop.abort();
+          return;
+        }
+      }
+    })();
+    try {
+      let result: Json | undefined;
+      try {
+        result = await request(
+          `/session/${session}/message`,
+          "POST",
+          {
+            model: { providerID: model.slice(0, split), modelID: model.slice(split + 1) },
+            ...(options.system ? { system: options.system } : {}),
+            ...(options.answerOnly ? { tools: Object.fromEntries(OPENCODE_TOOL_IDS.map((id) => [id, false])) } : {}),
+            parts: [{ type: "text", text: message }],
+          },
+          stop.signal,
+        );
+      } catch (error) {
+        if (!refusal && !accepted) throw error;
+      }
+      if (refusal) throw refusal;
+      if (accepted || !result) return "";
+      const failure = obj(obj(result.info).error);
+      if (Object.keys(failure).length) throw openCodeError(failure);
+      const reply = list(result.parts)
+        .filter((p) => obj(p).type === "text")
+        .map((p) => str(obj(p).text))
+        .join("\n");
+      if (!reply || reply.length > 128000 || signal?.aborted) return fail("OpenCode returned no usable answer");
+      completed = true;
+      return reply;
+    } finally {
+      stop.abort();
+      await watcher;
+      // Abort on timeout/error/stop/refusal/probe; never auto-approve workspace actions. Cleanup uses Core policy.
+      if (!completed) await this.cancel(`/session/${session}/abort`).catch(() => {});
+    }
+  }
+  /** The end of the turn: an ephemeral session is deleted (a failed cleanup is ignored). */
+  async close(): Promise<void> {
+    if (this.options.ephemeral) await this.cancel(`/session/${this.id}`, "DELETE").catch(() => {});
+  }
+}
+/** One message in a new OpenCode session (a workspace turn, a probe or a model-only answer). */
 export async function openCodeReply(
   model: string,
   message: string,
@@ -135,75 +238,11 @@ export async function openCodeReply(
   if (signal?.aborted) return fail("Workspace generation cancelled");
   const split = model.indexOf("/");
   if (split < 1 || split === model.length - 1) return fail("Select an OpenCode provider/model");
-  const session = safeId((await request("/session", "POST", { title: "CROT chat" })).id);
-  const stop = new AbortController();
-  let completed = false,
-    refusal: CrotError | undefined,
-    accepted = false;
-  const watcher = (async () => {
-    const started = Date.now();
-    while (!stop.signal.aborted) {
-      await delay(options.watchMs ?? 1000, undefined, { signal: stop.signal }).catch(() => undefined);
-      if (stop.signal.aborted) return;
-      let state: Json;
-      try {
-        state = obj((await request("/session/status", "GET", undefined, stop.signal))[session]);
-      } catch {
-        continue;
-      }
-      if (state.type === "retry") {
-        const action = obj(state.action),
-          next = Number(state.next),
-          freeTier = action.reason === "free_tier_limit";
-        if (freeTier || (Number.isFinite(next) && next - Date.now() > 60_000) || Number(state.attempt) >= 5) {
-          refusal = new CrotError("OPERATION_FAILED", "OpenCode refused the model request", {
-            stage: "local",
-            httpStatus: 429,
-            ...(freeTier ? { reason: "free_tier_limit" } : {}),
-          });
-          stop.abort();
-          return;
-        }
-      } else if (options.probeMs && Date.now() - started >= options.probeMs) {
-        accepted = true;
-        stop.abort();
-        return;
-      }
-    }
-  })();
+  const session = await OpenCodeSession.open(request, cancel, options);
   try {
-    let result: Json | undefined;
-    try {
-      result = await request(
-        `/session/${session}/message`,
-        "POST",
-        {
-          model: { providerID: model.slice(0, split), modelID: model.slice(split + 1) },
-          ...(options.answerOnly ? { tools: Object.fromEntries(OPENCODE_TOOL_IDS.map((id) => [id, false])) } : {}),
-          parts: [{ type: "text", text: message }],
-        },
-        stop.signal,
-      );
-    } catch (error) {
-      if (!refusal && !accepted) throw error;
-    }
-    if (refusal) throw refusal;
-    if (accepted || !result) return "";
-    const failure = obj(obj(result.info).error);
-    if (Object.keys(failure).length) throw openCodeError(failure);
-    const reply = list(result.parts)
-      .filter((p) => obj(p).type === "text")
-      .map((p) => str(obj(p).text))
-      .join("\n");
-    if (!reply || reply.length > 128000 || signal?.aborted) return fail("OpenCode returned no usable answer");
-    completed = true;
-    return reply;
+    return await session.send(model, message, signal);
   } finally {
-    stop.abort();
-    await watcher;
-    // Abort on timeout/error/stop/refusal; never auto-approve workspace actions. Cleanup still uses Core policy.
-    if (!completed) await cancel(`/session/${session}/abort`).catch(() => {});
-    if (options.ephemeral) await cancel(`/session/${session}`, "DELETE").catch(() => {});
+    await session.close();
   }
 }
 export async function workspaceReply(

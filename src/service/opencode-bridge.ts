@@ -8,6 +8,10 @@
  * The server is a control-plane helper like the provider requests of chat-runtime: the owner starts it, it
  * gets the allowlisted child environment (no CROT service secrets) and a CROT-owned working directory, and
  * the emergency stop or an explicit runtime deny of process.start refuses it. Its output is never read.
+ *
+ * It never outlives CROT: close() stops it (the service's shutdown on SIGINT/SIGTERM/SIGHUP), terminateSync()
+ * kills it on the emergency and 'exit' paths, and its PID file (opencode-pid.ts) lets the next start stop a
+ * server that a killed or crashed CROT left behind before a new one starts.
  */
 import { randomBytes } from "node:crypto";
 import { mkdir } from "node:fs/promises";
@@ -17,6 +21,7 @@ import { CrotError } from "../core/errors.js";
 import { createEnvironmentPolicy } from "../core/platform/environment.js";
 import type { ManagedProcess } from "../core/platform/types.js";
 import { findOpenCodeBinary, type OpenCodeLocal } from "./opencode-local.js";
+import { BridgePidFile, nodeBridgeProcesses, type BridgeProcesses } from "./opencode-pid.js";
 
 export const OPENCODE_DEFAULT_PORT = 4096;
 export const OPENCODE_USERNAME = "opencode";
@@ -50,12 +55,18 @@ export interface OpenCodeBridgeOptions {
   readonly directory: string;
   /** False while the emergency stop or an explicit runtime deny forbids starting processes. */
   allowed?(): boolean;
-  /** Owner audit of the server's start, stop and unexpected exit (no secrets). */
-  record?(event: "start" | "stop" | "exit", outcome: "applied" | "failed"): void;
+  /** Owner audit of the server's start, stop, unexpected exit and a left-behind server stopped (no secrets). */
+  record?(event: "start" | "stop" | "exit" | "reap", outcome: "applied" | "failed"): void;
   /** Default 4096 (OpenCode's own default). */
   readonly port?: number;
-  /** The command that runs OpenCode; default: the discovered `opencode` binary. */
+  /** The command that runs OpenCode; default: the discovered `opencode` binary, else CROT's installed one. */
   command?(): Promise<OpenCodeCommand | undefined>;
+  /** OpenCode installed by CROT (opencode-runtime.ts), used when the owner has no `opencode` of their own. */
+  readonly runtime?: { binary(): Promise<string | undefined> };
+  /** <stateDir>/opencode-bridge.pid: the running server, so a later start stops one left behind. */
+  readonly pidFile?: string;
+  /** Process inspection for the PID file; default: the operating system's. */
+  readonly processes?: BridgeProcesses;
   readonly readyTimeoutMs?: number;
 }
 export interface OpenCodeBridgeStatus {
@@ -118,9 +129,19 @@ export class OpenCodeBridge {
   private starting: Promise<OpenCodeServer> | undefined;
   private closed = false;
   private hooked = false;
+  private reaping: Promise<boolean> | undefined;
+  private readonly pid: BridgePidFile | undefined;
   /** CROT exiting without close(): the managed server goes with it. */
-  private readonly exitHook = () => this.server?.proc?.terminateSync();
-  constructor(private readonly options: OpenCodeBridgeOptions) {}
+  private readonly exitHook = () => this.terminateSync();
+  constructor(private readonly options: OpenCodeBridgeOptions) {
+    this.pid = options.pidFile
+      ? new BridgePidFile(
+          options.pidFile,
+          options.processes ?? nodeBridgeProcesses(options.local.platform),
+          options.local.platform,
+        )
+      : undefined;
+  }
   get directory(): string {
     return this.options.directory;
   }
@@ -130,7 +151,7 @@ export class OpenCodeBridge {
   /** The command that starts OpenCode, or undefined when OpenCode is not installed. */
   async command(): Promise<OpenCodeCommand | undefined> {
     if (this.options.command) return this.options.command();
-    const binary = await findOpenCodeBinary(this.options.local);
+    const binary = (await findOpenCodeBinary(this.options.local)) ?? (await this.options.runtime?.binary());
     return binary ? { command: binary, args: [] } : undefined;
   }
   async installed(): Promise<boolean> {
@@ -171,7 +192,22 @@ export class OpenCodeBridge {
     }));
     return until(start, signal);
   }
+  /**
+   * Stop the server a previous CROT left running (its PID file), once per bridge: at the service start and
+   * before the first server starts. True when one was stopped.
+   */
+  reap(): Promise<boolean> {
+    return (this.reaping ??= (this.pid?.reap() ?? Promise.resolve(false)).then(
+      (stopped) => {
+        if (stopped) this.options.record?.("reap", "applied");
+        return stopped;
+      },
+      () => false,
+    ));
+  }
   private async open(): Promise<OpenCodeServer> {
+    // A server left behind holds its port (often the default one) and would run on: it goes first.
+    await this.reap();
     const current = this.current();
     if (current && (await health(current.url)).healthy) return current;
     this.server = undefined;
@@ -221,6 +257,10 @@ export class OpenCodeBridge {
     proc.stdout.resume();
     proc.stderr.resume();
     this.hook(true);
+    if (proc.pid)
+      await this.pid
+        ?.write({ pid: proc.pid, port, command: command.command, startedAt: new Date().toISOString() })
+        .catch(() => undefined);
     const url = `http://127.0.0.1:${port}`,
       authorization = basicAuthorization(OPENCODE_USERNAME, password),
       deadline = Date.now() + (this.options.readyTimeoutMs ?? 30_000);
@@ -253,6 +293,7 @@ export class OpenCodeBridge {
     this.server = server;
     this.options.record?.("start", "applied");
     void proc.exited.then(() => {
+      void this.pid?.clear(proc.pid);
       if (this.server !== server) return;
       this.server = undefined;
       this.hook(false);
@@ -275,7 +316,15 @@ export class OpenCodeBridge {
     // The rest of the tree (descendants may outlive the server).
     await proc.terminate("force").catch(() => undefined);
     await Promise.race([proc.exited, delay(3000)]);
+    await this.pid?.clear(proc.pid);
     if (!this.server?.proc) this.hook(false);
+  }
+  /** Kill CROT's own server at once (CROT's emergency and 'exit' paths), without waiting. */
+  terminateSync(): void {
+    const proc = this.server?.proc;
+    if (!proc) return;
+    proc.terminateSync();
+    this.pid?.clearSync(proc.pid);
   }
   /** Stop CROT's own server (an owner's server is only forgotten). True when a server was stopped. */
   async stop(): Promise<boolean> {

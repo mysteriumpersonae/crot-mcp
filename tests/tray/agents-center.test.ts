@@ -278,14 +278,48 @@ describe("Other authorization methods and provider checks", () => {
       "OpenCode CLI is not installed. Install it (npm i -g opencode-ai) or enter an OpenCode Zen API key.",
       "Local OpenCode could not be started. Check the OpenCode installation.",
       "Starting local OpenCode is blocked by the emergency stop or the runtime policy.",
-      "Local OpenCode answers text only: CROT tools and images are not forwarded. Turn them off or enter an OpenCode Zen API key.",
+      // Chat errors of the local bridge (chat-runtime.ts), translated where the chat shows them.
+      "Local OpenCode takes text only: images are not forwarded. Remove them or enter an OpenCode Zen API key.",
+      "Through local OpenCode the model can only read the open project (list, read and search files); other CROT tools are not forwarded. Turn them off or enter an OpenCode Zen API key.",
+      "Installing OpenCode…",
+      "CROT downloads OpenCode with npm into its own folder (about 200 MB) and starts it. No terminal needed.",
+      "One-click install needs npm (Node.js). Install Node.js from nodejs.org, or run the command below in a terminal.",
+      "Installing OpenCode is blocked by the emergency stop or the runtime policy.",
+      "npm was not found. Install Node.js (nodejs.org) and try again.",
+      "npm could not install OpenCode. Check the network or proxy and try again.",
+      "No OpenCode build for this system runs here. Install OpenCode with the command below.",
+      "The installation was stopped.",
+      "CROT installs OpenCode with npm into its own folder, then starts opencode serve on 127.0.0.1 with a random password and connects to it. OpenCode agents act in the open project with their own permissions (files, commands); CROT tool grants are not forwarded and CROT never auto-approves their actions.",
     ]) {
       expect(messages[key]?.length, key).toBe(5);
       expect(messages[key]![1], key).not.toBe(key);
       expect(
-        AGENTS_CENTER_RENDERER.includes(key.replace("'", "\\'")) || key.startsWith("Local OpenCode answers"),
+        AGENTS_CENTER_RENDERER.includes(key.replace("'", "\\'")) ||
+          key.startsWith("Local OpenCode takes") ||
+          key.startsWith("Through local OpenCode the model"),
         key,
       ).toBe(true);
     }
+  });
+
+  it("installs and starts OpenCode in one click on the Zen card and in Workspaces", () => {
+    // The service installs in the background (opencode.install); the UI follows the status, then connects.
+    expect(AGENTS_CENTER_RENDERER).toContain("openCodeInfo=await rpc('opencode.install')");
+    expect(AGENTS_CENTER_RENDERER).toContain("run.dataset.opencodeInstallRun=''");
+    expect(AGENTS_CENTER_RENDERER).toContain("while(openCodeInfo?.runtime?.state==='installing'&&layout.isConnected)");
+    // Shown only when OpenCode is missing and npm is there; otherwise how to get npm.
+    expect(AGENTS_CENTER_RENDERER).toContain("if(info.installable||installing)");
+    expect(AGENTS_CENTER_RENDERER).toContain("const missing=zen&&!ok&&openCodeInfo?.installed===false;");
+    // Zen: the same Save & Test as Auto-connect; Workspaces: the managed server, after the owner confirms.
+    expect(AGENTS_CENTER_RENDERER).toContain(
+      "installHint(zenInstall,missing?openCodeInfo:undefined,true,()=>checkProvider('OpenCode (Free & Zen)',cloudEndpoint.input.value||defaults['OpenCode (Free & Zen)'],'',cloudState,checked,cloudModel));",
+    );
+    expect(AGENTS_CENTER_RENDERER).toContain(
+      "false,()=>checkProvider('OpenCode','http://127.0.0.1:4096','',workspaceState,workspaceChecked,workspaceModel,{managed:true}),'CROT installs OpenCode with npm",
+    );
+    expect(AGENTS_CENTER_RENDERER).toContain(
+      "warning?confirm('Install and start OpenCode (1 click)',()=>installOpenCode(connect),warning):installOpenCode(connect)",
+    );
+    expect(messages["Install and start OpenCode (1 click)"]?.[1]).toBe("Установить и запустить OpenCode (1 клик)");
   });
 });

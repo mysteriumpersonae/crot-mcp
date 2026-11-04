@@ -28,6 +28,7 @@ import { authorizeProductionPublication } from "./publications/authorization.js"
 import { PublicationRuntime } from "./publications/runtime.js";
 import { SocialAccountRuntime } from "./social/runtime.js";
 import { ProductRuntime, productPaths } from "./product-runtime.js";
+import { runProgram } from "./opencode-runtime.js";
 import type net from "node:net";
 import { launchControlCenter } from "../tray/launch.js";
 import { lstat } from "node:fs/promises";
@@ -610,6 +611,11 @@ export class CrotService {
             value: JSON.stringify(event),
           }),
       });
+      const installEnv = createChildEnvironment(
+        servicePlatform.baseEnvironment,
+        [...parsed.environment.allow, "npm_config_*", "NPM_CONFIG_*"],
+        servicePlatform.environment.caseInsensitive,
+      ).base;
       this.product = await ProductRuntime.open({
         socialAccounts: this.socialAccounts,
         publications: () => this.publications,
@@ -660,6 +666,19 @@ export class CrotService {
               { file: command, args, display: [command, ...args].join(" ") },
               { cwd, env, stdin: false },
             ),
+          // "Install and start OpenCode": the owner's npm (never one from the working directory) with the
+          // allowlisted child environment plus npm's own npm_config_* settings (registry, proxy, cache).
+          install: {
+            npm: () =>
+              servicePlatform.launcher
+                .resolveCommand("npm", [], { cwd: stateDir, env: installEnv, searchCurrentDirectory: false })
+                .then(
+                  () => true,
+                  () => false,
+                ),
+            run: (command, args, options) =>
+              runProgram(servicePlatform.launcher, command, args, { ...options, env: installEnv }),
+          },
         },
       });
       this.publications = await PublicationRuntime.open({
@@ -1302,6 +1321,8 @@ export class CrotService {
   /** Last resort when the graceful shutdown hangs: kill process trees synchronously. */
   emergency(): void {
     this.holder?.instance.terminateProcessesSync();
+    // CROT's own OpenCode server (and an installation) never outlives CROT.
+    this.product?.terminateSync();
     this.native?.closeSync();
   }
 }

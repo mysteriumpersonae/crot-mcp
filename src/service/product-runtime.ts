@@ -49,6 +49,7 @@ import { writePrivateFileAtomic } from "./secrets/backends.js";
 import { parseProduct, type ProductMethod } from "./product-protocol.js";
 import { OPENCODE_INSTALL_COMMAND, OpenCodeBridge, type OpenCodeBridgeOptions } from "./opencode-bridge.js";
 import { findOpenCodeKey } from "./opencode-local.js";
+import { OpenCodeRuntime, type OpenCodeInstallHost } from "./opencode-runtime.js";
 
 export const CONNECTOR_IDS = CONNECTOR_MANIFESTS.map((m) => m.id);
 interface Project {
@@ -166,7 +167,10 @@ export interface ProductHost {
    * The owner's local OpenCode: key discovery (OPENCODE_API_KEY, auth.json) and the managed `opencode serve`
    * bridge. Absent: CROT neither reads OpenCode's files nor starts OpenCode.
    */
-  openCode?: Omit<OpenCodeBridgeOptions, "directory" | "allowed" | "record">;
+  openCode?: Omit<OpenCodeBridgeOptions, "directory" | "allowed" | "record" | "runtime" | "pidFile"> & {
+    /** npm and the binary check for "Install and start OpenCode"; absent: CROT never installs OpenCode. */
+    install?: OpenCodeInstallHost;
+  };
 }
 /** The emergency stop, or an explicit runtime deny of starting processes, also refuses the OpenCode bridge. */
 function processDenied(core: CrotCore): boolean {
@@ -268,14 +272,41 @@ export class ProductRuntime {
   private readonly chat: ChatRuntime;
   /** CROT's local OpenCode server (`opencode serve`), when the host enables local OpenCode. */
   private readonly openCode: OpenCodeBridge | undefined;
+  /** OpenCode installed by CROT into <stateDir>/opencode-runtime, when the host can run npm. */
+  private readonly runtime: OpenCodeRuntime | undefined;
   private readonly avatars = new AccountAvatars();
   private constructor(private host: ProductHost) {
     const openCode = host.openCode;
+    const allowed = () => !processDenied(this.host.core());
+    this.runtime = openCode?.install
+      ? new OpenCodeRuntime({
+          directory: path.join(host.stateDir, "opencode-runtime"),
+          platform: openCode.local.platform,
+          arch: process.arch,
+          host: openCode.install,
+          allowed,
+          record: (outcome, reason) =>
+            void this.host
+              .recordControlEvent?.({
+                kind: "control",
+                id: newAuditEventId(),
+                timestamp: now(),
+                action: "opencode_runtime",
+                actor: { channel: "control" },
+                outcome,
+                value: "install",
+                ...(reason ? { reason } : {}),
+              })
+              .catch(() => undefined),
+        })
+      : undefined;
     this.openCode = openCode
       ? new OpenCodeBridge({
           ...openCode,
           directory: path.join(host.stateDir, "opencode-chat"),
-          allowed: () => !processDenied(this.host.core()),
+          ...(this.runtime ? { runtime: this.runtime } : {}),
+          pidFile: path.join(host.stateDir, "opencode-bridge.pid"),
+          allowed,
           record: (event, outcome) =>
             void this.host
               .recordControlEvent?.({
@@ -383,6 +414,8 @@ export class ProductRuntime {
     await r.persist();
     r.poller = setInterval(() => void r.pollProcesses().catch(() => undefined), 1200);
     r.poller.unref();
+    // An OpenCode server that a killed or crashed CROT left running (its PID file) stops now.
+    void r.openCode?.reap();
     return r;
   }
   get activeProject(): Project {
@@ -1030,6 +1063,13 @@ export class ProductRuntime {
         return this.chat.models(this.chatKey(p.provider as ChatProvider), { start: false });
       case "opencode.status":
         return { ok: true, ...(await this.openCodeStatus()) };
+      case "opencode.install": {
+        // "Install and start OpenCode": npm installs the pinned OpenCode in the background; the status
+        // reports its progress, and the owner's next Save & Test starts it.
+        if (!this.runtime) return fail("Installing OpenCode is unavailable in this host");
+        await this.runtime.start();
+        return { ok: true, ...(await this.openCodeStatus()) };
+      }
       case "opencode.stop": {
         if (this.chat.running) return fail("Stop generation before stopping OpenCode");
         const stopped = (await this.openCode?.stop()) ?? false;
@@ -1846,9 +1886,15 @@ export class ProductRuntime {
     for (const agent of this.state.agents) agent.connected = false;
     await Promise.all([...this.clients.values()].map((c) => c.close().catch(() => undefined)));
     await chatStopped;
-    // Emergency stop: CROT's own OpenCode server (its agents) stops too.
+    // Emergency stop: CROT's own OpenCode server (its agents) and a running installation stop too.
+    this.runtime?.cancel();
     await this.openCode?.stop();
     await this.persist();
+  }
+  /** Last resort (CROT's emergency and 'exit' paths): CROT's OpenCode server and installation go at once. */
+  terminateSync(): void {
+    this.openCode?.terminateSync();
+    this.runtime?.cancel();
   }
   /**
    * Local OpenCode for the owner UI: installed or not, where the Zen key comes from (never the key), and the
@@ -1857,14 +1903,19 @@ export class ProductRuntime {
   private async openCodeStatus(): Promise<Record<string, unknown>> {
     const openCode = this.host.openCode;
     if (!this.openCode || !openCode) return { available: false, installCommand: OPENCODE_INSTALL_COMMAND };
-    const [status, key] = await Promise.all([
+    const install = openCode.install;
+    const [status, key, runtime, installable] = await Promise.all([
       this.openCode.status(),
       findOpenCodeKey(openCode.local).catch(() => undefined),
+      this.runtime?.status(),
+      this.runtime && install ? install.npm().catch(() => false) : false,
     ]);
     return {
       available: true,
       installCommand: OPENCODE_INSTALL_COMMAND,
       installed: status.installed,
+      // One-click install (hosts that can run npm): possible (npm found) and its state.
+      ...(runtime ? { installable, runtime } : {}),
       ...(key ? { keySource: key.source } : {}),
       ...(status.server ? { server: status.server } : {}),
     };
@@ -1877,6 +1928,7 @@ export class ProductRuntime {
   async close(): Promise<void> {
     this.avatars.close();
     await this.chat.close();
+    await this.runtime?.close();
     await this.openCode?.close();
     clearInterval(this.poller);
     for (const controller of this.serverControllers.values()) controller.abort();

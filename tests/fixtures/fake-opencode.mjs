@@ -2,6 +2,9 @@
 // with OPENCODE_SERVER_USERNAME/OPENCODE_SERVER_PASSWORD, and a free-tier-limit mode that keeps retrying.
 // FAKE_OPENCODE_LOG: a file that gets one JSON line per request; FAKE_OPENCODE_MODE_FILE: a file holding the
 // mode ("ok" or "limit"), read at every message.
+// CROT's text tool protocol (chat-tool-protocol.ts): a new message "READ:<path>" is answered with an
+// fs_read_file call, "CALL:<tool>" with a call of that tool, and a message of tool results with a final answer
+// that quotes them.
 import { Buffer } from "node:buffer";
 import { appendFileSync, readFileSync } from "node:fs";
 import http from "node:http";
@@ -109,10 +112,18 @@ const server = http.createServer((req, res) => {
         return;
       }
       const text = body?.parts?.[0]?.text ?? "";
-      return send(res, 200, {
-        info: { id: "msg_1", role: "assistant" },
-        parts: [{ type: "text", text: `Local answer from ${body?.model?.modelID} (${text.length} chars)` }],
-      });
+      const answer = (reply) =>
+        send(res, 200, { info: { id: "msg_1", role: "assistant" }, parts: [{ type: "text", text: reply }] });
+      // Only the new message counts, not the earlier turns CROT sends along.
+      const latest = text.slice(text.lastIndexOf("New message:\n") + 1);
+      const call = (tool, args) =>
+        answer(`Using ${tool}.\n\`\`\`crot-tool\n${JSON.stringify({ tool, arguments: args })}\n\`\`\``);
+      if (text.startsWith("```crot-tool-result")) return answer(`Final answer from the tool results:\n${text}`);
+      const read = /^READ:(\S+)/m.exec(latest)?.[1];
+      if (read) return call("fs_read_file", { path: read });
+      const tool = /^CALL:(\S+)/m.exec(latest)?.[1];
+      if (tool) return call(tool, {});
+      return answer(`Local answer from ${body?.model?.modelID} (${text.length} chars)`);
     }
     return send(res, 404, { error: "not found" });
   });

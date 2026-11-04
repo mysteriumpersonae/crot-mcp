@@ -8,6 +8,7 @@
  * respected by checking permissions.runtime before each fetch.
  */
 import {
+  OpenCodeSession,
   openCodeReply,
   workspaceInventory,
   workspaceReply,
@@ -21,9 +22,16 @@ import { CORE_VERSION, type CrotCore } from "../core/crot-core.js";
 import type { OpenCodeKey } from "./opencode-local.js";
 import { basicAuthorization, type OpenCodeServer } from "./opencode-bridge.js";
 import { CrotError } from "../core/errors.js";
-import { TOOLS } from "../adapters/mcp/tools.js";
+import { TOOLS, type ToolDefinition } from "../adapters/mcp/tools.js";
 import { invokeTool } from "../adapters/mcp/invoke.js";
 import { ChatEventStream } from "./chat-stream.js";
+import {
+  MAX_TEXT_TOOL_CALLS,
+  parseToolCalls,
+  toolProtocolPrompt,
+  toolResultsMessage,
+  type TextToolResult,
+} from "./chat-tool-protocol.js";
 /**
  * Check whether the runtime has explicitly denied network.request for this core.
  * Returns true if the request must be blocked; false if it may proceed via native fetch().
@@ -112,7 +120,13 @@ import {
   type ChatProvider,
   type ChatStart,
 } from "./chat-protocol.js";
-import { projectPrompt, projectToolDefinitions, type ChatProject } from "./chat-project-tools.js";
+import {
+  DEFAULT_PROJECT_TOOL_NAMES,
+  PROJECT_SEARCH_TOOL_NAME,
+  projectPrompt,
+  projectToolDefinitions,
+  type ChatProject,
+} from "./chat-project-tools.js";
 
 export interface ProviderDiagnostic {
   code: string;
@@ -334,7 +348,9 @@ export function chatFailure(error: unknown): string | undefined {
   if (d.reason === "opencode_refused")
     return "Starting local OpenCode is blocked by the emergency stop or the runtime policy.";
   if (d.reason === "local_text_only")
-    return "Local OpenCode answers text only: CROT tools and images are not forwarded. Turn them off or enter an OpenCode Zen API key.";
+    return "Local OpenCode takes text only: images are not forwarded. Remove them or enter an OpenCode Zen API key.";
+  if (d.reason === "local_read_only_tools")
+    return "Through local OpenCode the model can only read the open project (list, read and search files); other CROT tools are not forwarded. Turn them off or enter an OpenCode Zen API key.";
   if (error.code === "PERMISSION_DENIED") return "Network access is blocked by the runtime policy.";
   if (!Number.isInteger(status)) return undefined;
   if (status === 401) return "The provider rejected the credential (HTTP 401). Check the API key or token.";
@@ -554,6 +570,10 @@ const MAX_TOOL_DISPLAY = 2_000;
 const CHAT_READ_LENGTH = 20_000;
 const clip = (value: string, max: number): string =>
   value.length > max ? `${value.slice(0, max)}\n…[truncated]` : value;
+/** The only CROT tools offered through local OpenCode: reading the open project (list, read, stat, search). */
+const LOCAL_TOOL_NAMES: ReadonlySet<string> = new Set([...DEFAULT_PROJECT_TOOL_NAMES, PROJECT_SEARCH_TOOL_NAME]);
+/** Whether local OpenCode can serve the turn's tool selection (read-only project tools only). */
+const localTools = (p: { tools: readonly string[] }): boolean => p.tools.every((name) => LOCAL_TOOL_NAMES.has(name));
 const parseArguments = (value: string): Record<string, unknown> | undefined => {
   try {
     const parsed: unknown = JSON.parse(value || "{}");
@@ -1146,32 +1166,135 @@ export class ChatRuntime {
   }
   /**
    * The message of a turn with an agent server: agents start a new session per message, so earlier turns
-   * travel in the message itself, followed by the new message and its text attachments.
+   * travel in the message itself, followed by the new message and its text attachments. `limit`: the newest
+   * characters of the earlier turns (Cloud LLM through local OpenCode: the whole remembered thread).
    */
-  private transcript(c: Conversation, p: ChatStart): string {
+  private transcript(c: Conversation, p: ChatStart, limit = 24000): string {
     const transcript = c.history
       .map((m) => `${m.role === "user" ? "Owner" : "Assistant"}: ${m.content}`)
       .join("\n\n")
-      .slice(-24000);
+      .slice(-limit);
     return (
       (transcript ? `Conversation so far:\n${transcript}\n\nNew message:\n` : "") +
       p.message +
       p.attachments.map((a) => `\n[${a.name}]\n${Buffer.from(a.data, "base64").toString("utf8")}`).join("")
     );
   }
-  /** One OpenCode Zen turn through local OpenCode: the model answers with every OpenCode tool turned off. */
+  /**
+   * One OpenCode Zen turn through local OpenCode. OpenCode's own tools stay off (they would act outside Core).
+   * The model gets the whole remembered thread, the open project's prompt and only CROT's read-only project
+   * tools (LOCAL_TOOL_NAMES) through the text protocol of chat-tool-protocol: their calls run through Core like
+   * native tool calls, and the results go back as the next message of the same ephemeral OpenCode session.
+   */
   private async localTurn(c: Conversation, p: ChatStart, context: AuthContext, server: OpenCodeServer): Promise<void> {
-    if (p.tools.length || p.attachments.some((a) => a.mime !== "text/plain"))
+    if (p.attachments.some((a) => a.mime !== "text/plain"))
       throw new CrotError("OPERATION_FAILED", "Local OpenCode answers text only", { reason: "local_text_only" });
-    const reply = await openCodeReply(
-      `opencode/${p.model}`,
-      this.transcript(c, p),
-      context.signal,
-      ...this.openCodeCalls(this.localTarget(server), context),
-      { answerOnly: true, ephemeral: true },
-    );
-    c.blocks.push({ type: "assistant", text: reply });
+    if (!localTools(p))
+      throw new CrotError("OPERATION_FAILED", "Local OpenCode offers read-only project tools only", {
+        reason: "local_read_only_tools",
+      });
+    const project = this.host.project?.();
+    // Read-only by now: the owner's selection is within LOCAL_TOOL_NAMES, the automatic ones are read-only.
+    const definitions = this.turnTools(p, !!project);
+    const system =
+      [
+        project
+          ? await projectPrompt(
+              this.host.core(),
+              context,
+              project,
+              definitions.map((d) => d.name),
+            )
+          : "",
+        definitions.length ? toolProtocolPrompt(definitions) : "",
+      ]
+        .filter(Boolean)
+        .join("\n\n") || undefined;
+    const session = await OpenCodeSession.open(...this.openCodeCalls(this.localTarget(server), context), {
+      answerOnly: true,
+      ephemeral: true,
+      ...(system ? { system } : {}),
+    });
+    try {
+      let message = this.transcript(c, p, MAX_HISTORY_CHARS);
+      for (let round = 0; round < 8; round++) {
+        if (context.signal?.aborted || this.closed) return bad("Generation cancelled");
+        const reply = await session.send(`opencode/${p.model}`, message, context.signal);
+        const { text: answer, calls } = definitions.length ? parseToolCalls(reply) : { text: reply, calls: [] };
+        if (answer) {
+          c.blocks.push({ type: "assistant", text: answer });
+          this.bounded(c);
+        }
+        if (!calls.length) return;
+        const results: TextToolResult[] = [];
+        for (const [index, call] of calls.entries()) {
+          if (context.signal?.aborted || this.closed) return bad("Generation cancelled");
+          const refused = call.invalid ?? (index >= MAX_TEXT_TOOL_CALLS ? "Too many tool calls in one answer" : "");
+          results.push({
+            name: call.name,
+            ...(refused
+              ? { output: JSON.stringify({ isError: true, message: refused }), failed: true }
+              : await this.runTool(c, definitions, call, context)),
+          });
+        }
+        message = toolResultsMessage(results);
+      }
+      return bad("Chat tool round limit reached");
+    } finally {
+      await session.close();
+    }
+  }
+  /** The tools of a turn: the owner's selection, plus the open project's read-only tools unless turned off. */
+  private turnTools(p: ChatStart, project: boolean): ToolDefinition[] {
+    const automatic =
+      project && p.projectTools ? projectToolDefinitions().filter((t) => !p.tools.includes(t.name)) : [];
+    return [...TOOLS.filter((t) => p.tools.includes(t.name)), ...automatic];
+  }
+  /**
+   * One tool call of the model through Core, shown as a tool block: only a tool offered for the turn runs;
+   * the result (or why it did not run) as JSON text for the model, bounded by MAX_TOOL_OUTPUT.
+   */
+  private async runTool(
+    c: Conversation,
+    definitions: readonly ToolDefinition[],
+    call: { name: string; arguments: string },
+    context: AuthContext,
+  ): Promise<{ output: string; failed: boolean }> {
+    const block: Block = {
+      type: "tool",
+      name: call.name,
+      status: "running",
+      text: clip(call.arguments, MAX_TOOL_DISPLAY),
+    };
+    c.blocks.push(block);
     this.bounded(c);
+    const definition = definitions.find((d) => d.name === call.name);
+    const args = parseArguments(call.arguments);
+    // A large file arrives in parts: the model continues with offset (see the read result's 'truncated').
+    if (args && call.name === "fs_read_file" && args.length === undefined) args.length = CHAT_READ_LENGTH;
+    const result = !definition
+      ? { isError: true, content: [{ type: "text", text: "Tool was not enabled by the user" }] }
+      : !args
+        ? { isError: true, content: [{ type: "text", text: "Tool arguments must be a JSON object" }] }
+        : await invokeTool(this.host.core(), () => context, {
+            definition,
+            args,
+            request: {},
+            signal: context.signal,
+          });
+    if (context.signal?.aborted) return bad("Generation cancelled");
+    const serialized = JSON.stringify(result);
+    const tooLarge = serialized.length > MAX_TOOL_OUTPUT;
+    const output = !tooLarge
+      ? serialized
+      : JSON.stringify({
+          isError: true,
+          message: `Tool result exceeded the chat transfer limit (${MAX_TOOL_OUTPUT} characters). Read files in parts with a smaller length and an offset, or list a narrower path with fewer maxEntries.`,
+        });
+    block.status = result.isError || tooLarge ? "failed" : "completed";
+    block.text += `\n${clip(output, MAX_TOOL_DISPLAY)}`;
+    this.bounded(c);
+    return { output, failed: !!result.isError || tooLarge };
   }
   private async generate(c: Conversation, p: ChatStart, context: AuthContext): Promise<void> {
     if (isWorkspaceProvider(p.provider)) {
@@ -1214,9 +1337,7 @@ export class ChatRuntime {
     }
     const project = this.host.project?.();
     // The open project's read-only tools are on by default; the owner's tool selection adds to them.
-    const automatic =
-      project && p.projectTools ? projectToolDefinitions().filter((t) => !p.tools.includes(t.name)) : [];
-    let definitions = [...TOOLS.filter((t) => p.tools.includes(t.name)), ...automatic];
+    let definitions = this.turnTools(p, !!project);
     const encode = () =>
       definitions.map((t) => {
         const schema = z.toJSONSchema(t.inputSchema, { io: "input", unrepresentable: "any" });
@@ -1238,7 +1359,7 @@ export class ChatRuntime {
     const history = c.history.map((m) => ({ role: m.role, content: m.content }));
     const messages: unknown[] = [...history, { role: "user", content }];
     // A server that rejects tool definitions (many local models) still gets the conversation once without them.
-    let toolFallback = automatic.length > 0 && p.tools.length === 0;
+    let toolFallback = definitions.length > 0 && p.tools.length === 0;
     // Where the latest round's messages start: its tool outputs are kept whole (compactTurn).
     let latest = messages.length;
     for (let round = 0; round < 8; round++) {
@@ -1357,6 +1478,8 @@ export class ChatRuntime {
           zen &&
           (streamStatus === 429 || streamStatus === 403) &&
           this.zenFree.has(p.model) &&
+          localTools(p) &&
+          p.attachments.every((a) => a.mime === "text/plain") &&
           c.blocks.every((b) => b.type === "user" || (b.type === "assistant" && !b.text))
         ) {
           const server = await this.host.openCode?.bridge.ensure(context.signal).catch(() => undefined);
@@ -1402,46 +1525,13 @@ export class ChatRuntime {
       const results: unknown[] = [];
       for (const call of ordered) {
         if (context.signal?.aborted || this.closed) return bad("Generation cancelled");
-        const block: Block = {
-          type: "tool",
-          name: call.name,
-          status: "running",
-          text: clip(call.arguments, MAX_TOOL_DISPLAY),
-        };
-        c.blocks.push(block);
-        this.bounded(c);
-        const definition = definitions.find((d) => d.name === call.name);
-        const args = parseArguments(call.arguments);
-        // A large file arrives in parts: the model continues with offset (see the read result's 'truncated').
-        if (args && call.name === "fs_read_file" && args.length === undefined) args.length = CHAT_READ_LENGTH;
-        const result = !definition
-          ? { isError: true, content: [{ type: "text", text: "Tool was not enabled by the user" }] }
-          : !args
-            ? { isError: true, content: [{ type: "text", text: "Tool arguments must be a JSON object" }] }
-            : await invokeTool(this.host.core(), () => context, {
-                definition,
-                args,
-                request: {},
-                signal: context.signal,
-              });
-        if (context.signal?.aborted) return bad("Generation cancelled");
-        const serialized = JSON.stringify(result);
-        const tooLarge = serialized.length > MAX_TOOL_OUTPUT;
-        const output = !tooLarge
-          ? serialized
-          : JSON.stringify({
-              isError: true,
-              message: `Tool result exceeded the chat transfer limit (${MAX_TOOL_OUTPUT} characters). Read files in parts with a smaller length and an offset, or list a narrower path with fewer maxEntries.`,
-            });
-        block.status = result.isError || tooLarge ? "failed" : "completed";
-        block.text += `\n${clip(output, MAX_TOOL_DISPLAY)}`;
-        this.bounded(c);
+        const { output, failed } = await this.runTool(c, definitions, call, context);
         if (anthropic)
           results.push({
             type: "tool_result",
             tool_use_id: call.id,
             content: output,
-            is_error: !!result.isError || tooLarge,
+            is_error: failed,
           });
         else messages.push({ role: "tool", tool_call_id: call.id, content: output });
       }

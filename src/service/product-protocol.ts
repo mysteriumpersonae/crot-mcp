@@ -87,6 +87,7 @@ export const PRODUCT_SCHEMAS = {
   "chat.stop": z.object({ id }).strict(),
   "chat.reset": z.object({ thread: z.string().uuid().optional() }).strict(),
   "opencode.status": z.object({}).strict(),
+  "opencode.install": z.object({}).strict(),
   "opencode.stop": z.object({}).strict(),
   "tokens.list": z.object({}).strict(),
   "tokens.issue": TokenIssueSchema,
