@@ -70,18 +70,38 @@ is reachable even if the user has a custom config that omits the default list.
 - `NETWORK_GUARD_BLOCKED` — ExecutionGuard blocked the request (PERMISSION_DENIED)
 - `AUTH_INVALID_KEY` — server returned HTTP 401 or 403
 - `LOCAL_SERVER_OFFLINE` — ECONNREFUSED on a loopback address
-- `FREE_USAGE_LIMIT` — OpenCode Zen refused anonymous free use (HTTP 429 `FreeUsageLimitError`)
+- `FREE_USAGE_LIMIT` — OpenCode Zen refused free use (HTTP 429 `FreeUsageLimitError`)
 - `FREE_TIER_LIMIT` — local OpenCode reached OpenCode's own free tier limit (its session
   status turned to a retry with `free_tier_limit`, or a retry minutes ahead)
 - `OPENCODE_NOT_INSTALLED`, `OPENCODE_START_FAILED`, `OPENCODE_START_REFUSED` — the local
   OpenCode bridge could not be used (no CLI, the server did not become healthy, the
   emergency stop or an explicit runtime deny of process.start)
-- `OPERATION_FAILED` — other network or protocol error
+- `OPERATION_FAILED` — other network or protocol error (stage `local` when local OpenCode
+  answered with an error)
+
+A diagnostic of local OpenCode (or of an OpenCode server of the Workspaces provider) also
+carries `model` (the model the request was for) and `detail`: OpenCode's own explanation —
+an error answer's `name: data.message (ref …)`, `{error}` or text, a refused turn's
+`info.error`, a retry's message and link — as one line of at most 300 characters, control
+characters removed and anything that looks like a credential (Bearer/Basic values, `sk-…`
+keys, long tokens) redacted (`openCodeDetail`). No other provider's text is ever kept.
 
 A failed chat turn shows a fixed message chosen by the provider's HTTP status (401,
-403, 404, 429, 400/422, 5xx, free usage limit, local OpenCode), never the provider's own text.
+403, 404, 429, 400/422, 5xx, free usage limit, local OpenCode); after a failure of local
+OpenCode `chat.poll` adds `errorDetail` (`<model> · HTTP <status>: <OpenCode's words>`,
+e.g. `glm-5.3-flash-free · HTTP 500: UnknownError: Unexpected server error. … (ref err_…)`),
+which the chat shows after the fixed message.
 
-The UI maps these to actionable messages without exposing credentials or URLs.
+The UI maps these to actionable messages without exposing credentials or URLs: the message,
+then `[code · HTTP status · network code · model]`, then ` — ` and OpenCode's detail. There
+is no generic "connection failed" text. When the tray itself cannot get an answer it says
+why (`src/tray/product-failure.ts`): `SERVICE_TIMEOUT` (the service did not answer in time),
+`SERVICE_UNAVAILABLE` (the control connection is closed) or `REQUEST_REFUSED` (the service
+refused the request; for `chat.*` and `opencode.*` with the service's own one-line reason,
+bounded and redacted). Requests that wait for providers or programs — Save & Test
+(`chat.testConnection`, which may first start local OpenCode), `chat.models`, `opencode.*`,
+projects, connectors, MCP servers, tasks, monitoring and agents — get 180 s on the control
+connection instead of 10 s.
 
 ### Cloud LLM
 OpenAI/Anthropic/Gemini/OpenRouter/River use their actual model-list and generation
@@ -89,14 +109,19 @@ APIs. Save & Test stores credentials in the existing encrypted vault, checks an
 actual nonempty inventory via Core and persists check time/status/default model.
 
 **OpenCode (Free & Zen)** (`https://opencode.ai/zen/v1`): the API key field and
-Save & Test are always shown; the key is optional (empty = free models). Before
-the first check the form lists OpenCode Zen's free models; Save & Test loads the
-live inventory (`/models`): without a key the free models only, with a key every
-model CROT can talk to (chat completions, and Claude/Qwen over `/messages`; models
-that need the Responses or Gemini API are left out). Without a key Save & Test also
-sends one tiny completion, so a refused anonymous use (OpenCode's free usage limit
-per network address) is reported at once: enter a Zen API key from
-`opencode.ai/zen`, or use OpenCode in Workspaces (`opencode serve`).
+Save & Test are always shown; the key is optional (empty = free models through local
+OpenCode). Save & Test and "Auto-connect via local OpenCode" are the same check: a key
+(typed, stored, or the owner's own OpenCode key) goes to the Zen API, which lists every
+model CROT can talk to (`/models`: chat completions, and Claude/Qwen over `/messages`;
+models that need the Responses or Gemini API are left out); no key goes to local
+OpenCode, which lists its models itself (`/provider`). The model is chosen from that live
+list: the saved one while the list still has it, else the first free model (OpenCode's
+default, `big-pickle`, first), else the first model. The card is connected (green
+"Connected") as soon as the list is there. Through local OpenCode Save & Test then sends
+one tiny request with the chosen model (`verify`, at most about 8 s): its outcome is
+returned and kept as `modelCheck` (`{model, ok, diagnostic?}`), and a refusal (OpenCode's
+free tier limit, a model it rejects) is shown as a warning under the status with
+OpenCode's exact reason — never instead of the connection. With a key nothing is sent.
 
 How CROT reaches OpenCode Zen, in this order (`zenRoute`):
 1. the key saved in the form (vault);
@@ -123,10 +148,14 @@ How CROT reaches OpenCode Zen, in this order (`zenRoute`):
    with `serve --hostname 127.0.0.1 --port <port>` (`/proc`, `ps`, or `Win32_Process` on
    Windows; a reused PID of another program is never touched) — and the file is removed. Its
    start/stop/exit and a stopped left-behind server are audited (`opencode_bridge`, no secrets);
-4. anonymously (OpenCode not installed): Zen usually refuses clients other than OpenCode
-   with `FREE_USAGE_LIMIT`. While OpenCode is not installed and the card is not connected, the
-   form shows "Get a free or paid API key at opencode.ai/zen", **Install and start OpenCode
-   (1 click)** and the install command `npm i -g opencode-ai` with a copy button.
+4. never anonymously: Zen refuses clients other than OpenCode without a key. Without a key
+   and without OpenCode, Save & Test and a chat turn fail with `OPENCODE_NOT_INSTALLED`
+   ("Local OpenCode CLI was not found. Click “Install and start OpenCode (1 click)” or enter
+   an OpenCode Zen API key.") and Zen is not asked; listing the models shows the bundled
+   catalog (`installed: false`). While OpenCode is not installed and the card is not
+   connected, the form shows "Get a free or paid API key at opencode.ai/zen", **Install and
+   start OpenCode (1 click)** and the install command `npm i -g opencode-ai` with a copy
+   button.
 
 **Install and start OpenCode (1 click)** (`opencode.install`, no parameters): the service runs
 the owner's npm (found on PATH, never in the working directory; allowlisted child environment
@@ -163,12 +192,14 @@ model that Zen refuses (429/403) before any answer is answered once more through
 OpenCode. Every direct Zen request carries `User-Agent: CROT/<version>` and a random session ID
 (`x-opencode-session`, `x-session-id`) that stays the same within a chat thread.
 
-Before the first check the picker shows a bundled catalog: free models (`big-pickle`,
-`glm-5.3-flash-free`, `deepseek-v4-flash-free`, `minimax-m2.5-free`, `mimo-v2-pro-free`,
-`qwen3.6-plus-free`, `nemotron-3-ultra-free`, labelled "(free)") and models that need a key
-(`glm-5.3`, `glm-5.3-flash`, `deepseek-v4-pro`, `claude-sonnet-4-6`, `gpt-5.5`, `kimi-k2.5`,
-labelled "(Zen / Go)"). OpenCode rotates its free models, so the live inventory (Zen's
-`/models`, or local OpenCode's `/provider`) replaces the catalog after Save & Test.
+Before the first check, and while local OpenCode is not running, the picker shows a bundled
+catalog: exactly the free models OpenCode 1.19.5 lists without a key (`big-pickle` — its
+default — then `beam-free`, `crouton-alpha-free`, `deepseek-v4.1-flash-free`,
+`flint-40b-free`, `glm-5.3-flash-free`, `mimo-v2.6-flash-free`,
+`nemotron-3.5-lightning-free`, `nemotron-3.5-super-vl-free`, `pulse-alpha-free`, labelled
+"(free)"). Models that need a key come from Zen's live `/models` only. OpenCode rotates its
+free models, so the live inventory (Zen's `/models`, or local OpenCode's `/provider`,
+OpenCode's default first) replaces the catalog after Save & Test.
 
 `opencode.status` reports `{available, installed, installCommand, installable?, runtime?:
 {state, version?, reason?}, keySource?, server?: {url, managed, version?}}` (never a key or

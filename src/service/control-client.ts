@@ -10,6 +10,16 @@ import { secretCredentialStore, isListening, serviceEndpoint, type CredentialSto
 import { parseControlEvent, parseControlResponse, type ControlEvent, type ControlMethod } from "./protocol.js";
 
 const REQUEST_TIMEOUT_MS = 10_000;
+const LONG_REQUEST_TIMEOUT_MS = 180_000;
+/**
+ * Requests that wait for servers, providers or programs: projects, connectors, MCP servers, tasks, monitoring,
+ * agents, OpenCode, and the provider checks of the chat (Save & Test starts local OpenCode — its first start
+ * alone can take longer than REQUEST_TIMEOUT_MS — and then asks it for its models).
+ */
+export const longRequest = (method: string): boolean =>
+  /^(projects|connectors|mcpServers|tasks|monitoring|agents|opencode)\./.test(method) ||
+  method === "chat.testConnection" ||
+  method === "chat.models";
 
 export class ControlClient {
   /** Events of a subscribed connection (approvals.subscribe). */
@@ -75,7 +85,7 @@ export class ControlClient {
           this.waiting.delete(id);
           reject(new ChannelError("timeout", `The CROT service did not answer '${method}'.`));
         },
-        /^(projects|connectors|mcpServers|tasks|monitoring|agents)\./.test(method) ? 180000 : REQUEST_TIMEOUT_MS,
+        longRequest(method) ? LONG_REQUEST_TIMEOUT_MS : REQUEST_TIMEOUT_MS,
       );
       this.waiting.set(id, {
         resolve: (v) => {

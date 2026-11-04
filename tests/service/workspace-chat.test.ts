@@ -1,5 +1,38 @@
 import { describe, expect, it } from "vitest";
-import { workspaceInventory, workspaceReply, type WorkspaceRequest } from "../../src/service/workspace-chat.js";
+import {
+  openCodeBodyDetail,
+  openCodeDetail,
+  workspaceInventory,
+  workspaceReply,
+  type WorkspaceRequest,
+} from "../../src/service/workspace-chat.js";
+describe("OpenCode's own explanation of a failure", () => {
+  it("keeps OpenCode's error name, message and ref as one bounded line", () => {
+    expect(
+      openCodeBodyDetail(
+        JSON.stringify({
+          name: "UnknownError",
+          data: { message: "Unexpected server error. Check server logs for details.", ref: "err_7f3a" },
+        }),
+      ),
+    ).toBe("UnknownError: Unexpected server error. Check server logs for details. (ref err_7f3a)");
+    expect(openCodeBodyDetail(JSON.stringify({ error: "unauthorized" }))).toBe("unauthorized");
+    expect(openCodeBodyDetail(JSON.stringify({ error: { message: "Model not found: x" } }))).toBe("Model not found: x");
+    expect(openCodeBodyDetail("Service Unavailable")).toBe("Service Unavailable");
+    expect(openCodeBodyDetail("")).toBeUndefined();
+    // A ref that is not a plain id is left out.
+    expect(openCodeBodyDetail(JSON.stringify({ name: "E", data: { message: "m", ref: "<script>" } }))).toBe("E: m");
+  });
+  it("removes control characters and redacts what looks like a credential", () => {
+    expect(
+      openCodeDetail(`bad\nline\u0007 Bearer abc.def Basic b3BlbmNvZGU6eA== sk-0123456789abcdef key ${"A".repeat(48)}`),
+    ).toBe("bad line Bearer [redacted] Basic [redacted] [redacted] key [redacted]");
+    const long = openCodeDetail("word ".repeat(100))!;
+    expect(long).toHaveLength(300);
+    expect(long.endsWith("…")).toBe(true);
+    expect(openCodeDetail(" \n\t ")).toBeUndefined();
+  });
+});
 describe("native workspace agent adapters", () => {
   it("lists only connected OpenCode model providers and checks native health", async () => {
     const routes: string[] = [];

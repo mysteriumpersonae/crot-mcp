@@ -1,7 +1,8 @@
 // A stand-in for `opencode serve` (tests of the local OpenCode bridge): the routes CROT uses, HTTP Basic auth
 // with OPENCODE_SERVER_USERNAME/OPENCODE_SERVER_PASSWORD, and a free-tier-limit mode that keeps retrying.
 // FAKE_OPENCODE_LOG: a file that gets one JSON line per request; FAKE_OPENCODE_MODE_FILE: a file holding the
-// mode ("ok" or "limit"), read at every message.
+// mode ("ok" or "limit"), read at every message. Like OpenCode 1.19.5, a message for a model it does not list
+// fails with HTTP 500 (UnknownError), and the free tier limit is a retry status with OpenCode's Go link.
 // CROT's text tool protocol (chat-tool-protocol.ts): a new message "READ:<path>" is answered with an
 // fs_read_file call, "CALL:<tool>" with a call of that tool, and a message of tool results with a final answer
 // that quotes them.
@@ -100,12 +101,23 @@ const server = http.createServer((req, res) => {
       return send(res, 200, true);
     }
     if (req.method === "POST" && action === "/message") {
+      const known = provider.all.find((p) => p.id === body?.model?.providerID)?.models[body?.model?.modelID];
+      if (!known)
+        return send(res, 500, {
+          name: "UnknownError",
+          data: { message: "Unexpected server error. Check server logs for details.", ref: "err_fake1" },
+        });
       if (mode() === "limit") {
         statuses[id] = {
           type: "retry",
           attempt: 1,
-          message: "Free usage exceeded, subscribe to Go https://opencode.ai/go",
-          action: { reason: "free_tier_limit", title: "Free limit reached" },
+          message: "Free usage exceeded, subscribe to Go",
+          action: {
+            reason: "free_tier_limit",
+            title: "Free limit reached",
+            message: "Subscribe to OpenCode Go for reliable access to the best open-source models.",
+            link: "https://opencode.ai/go",
+          },
           next: Date.now() + 3_600_000,
         };
         pending.set(id, (value) => send(res, 200, value));

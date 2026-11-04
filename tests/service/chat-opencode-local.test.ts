@@ -23,6 +23,7 @@ import {
   runtimePackages,
   type OpenCodeInstallHost,
 } from "../../src/service/opencode-runtime.js";
+import { OPENCODE_FREE_MODELS } from "../../src/service/chat-runtime.js";
 import { ProductRuntime, type ProductHost } from "../../src/service/product-runtime.js";
 import { prepareSecretStore } from "../../src/service/secrets/store.js";
 import { createTestCore, isAlive, makeTempDirs, waitFor } from "../helpers.js";
@@ -395,8 +396,14 @@ describe("OpenCode through the local bridge", () => {
         labels: { "big-pickle": "Big Pickle (free)", "glm-5.3-flash-free": "GLM-5.3-Flash (free)" },
         defaultModel: "big-pickle",
         server: { url: `http://127.0.0.1:${options.port}`, managed: true },
+        // The chosen model answered OpenCode's test request.
+        modelCheck: { model: "big-pickle", ok: true },
       });
-      expect(await listed(ZEN)).toMatchObject({ connectionStatus: "connected", route: "local" });
+      expect(await listed(ZEN)).toMatchObject({
+        connectionStatus: "connected",
+        route: "local",
+        modelCheck: { model: "big-pickle", ok: true },
+      });
       // The running server's PID file, so a later CROT can stop it if this one is killed.
       const pidFile = path.join(t.stateDir, "opencode-bridge.pid");
       expect(JSON.parse(await readFile(pidFile, "utf8"))).toMatchObject({
@@ -439,25 +446,56 @@ describe("OpenCode through the local bridge", () => {
       const image = await chat(ZEN, "big-pickle", { attachments: [{ name: "a.png", mime: "image/png", data: png }] });
       expect(image).toMatchObject({ state: "failed", error: expect.stringContaining("takes text only") });
 
-      // OpenCode's free tier limit (OpenCode keeps retrying): stopped at once with a fixed message.
+      // OpenCode's free tier limit (OpenCode keeps retrying): stopped at once with a fixed message, followed by
+      // OpenCode's own words (the model, the status, its reason and link).
       await writeFile(options.mode, "limit");
       const limited = await chat(ZEN, "big-pickle");
-      expect(limited).toMatchObject({ state: "failed", error: expect.stringContaining("free usage limit is reached") });
-      expect(JSON.stringify(limited)).not.toContain("subscribe");
+      expect(limited).toMatchObject({
+        state: "failed",
+        error: expect.stringContaining("free usage limit is reached"),
+        errorDetail: "big-pickle · HTTP 429: Free usage exceeded, subscribe to Go (https://opencode.ai/go)",
+      });
+      expect(limited.error).not.toContain("subscribe");
       const after = await readLog(options.log);
       expect(after.filter((l) => l.path === "/session/ses_3/abort")).toHaveLength(1);
       expect(after.filter((l) => l.method === "DELETE" && l.path === "/session/ses_3")).toHaveLength(1);
+      // Save & Test still connects (OpenCode is up and lists its models); the refused model is reported with it.
       const refused = await rpc("chat.testConnection", { provider: ZEN });
+      const tierLimit = {
+        code: "FREE_TIER_LIMIT",
+        stage: "local",
+        httpStatus: 429,
+        model: "big-pickle",
+        detail: "Free usage exceeded, subscribe to Go (https://opencode.ai/go)",
+      };
       expect(refused).toMatchObject({
-        ok: false,
-        diagnostic: { code: "FREE_TIER_LIMIT", httpStatus: 429 },
-        openCode: { installed: true, server: { managed: true } },
+        ok: true,
+        route: "local",
+        models: ["big-pickle", "glm-5.3-flash-free"],
+        modelCheck: { model: "big-pickle", ok: false, diagnostic: tierLimit },
       });
       expect(await listed(ZEN)).toMatchObject({
-        connectionStatus: "failed",
-        connectionError: { code: "FREE_TIER_LIMIT" },
+        connectionStatus: "connected",
+        modelCheck: { model: "big-pickle", ok: false, diagnostic: tierLimit },
       });
+      expect((await listed(ZEN)).connectionError).toBeUndefined();
       await writeFile(options.mode, "ok");
+
+      // A saved model that OpenCode no longer lists: Save & Test picks its first free model instead; a chat
+      // with the old one shows OpenCode's exact refusal (HTTP 500, UnknownError) after the fixed message.
+      await rpc("chat.configure", { provider: ZEN, endpoint: t.endpoint, defaultModel: "retired-free" });
+      expect(await rpc("chat.testConnection", { provider: ZEN })).toMatchObject({
+        ok: true,
+        defaultModel: "big-pickle",
+        modelCheck: { model: "big-pickle", ok: true },
+      });
+      const retired = await chat(ZEN, "retired-free");
+      expect(retired).toMatchObject({
+        state: "failed",
+        error: "Local OpenCode refused the request.",
+        errorDetail:
+          "retired-free · HTTP 500: UnknownError: Unexpected server error. Check server logs for details. (ref err_fake1)",
+      });
 
       // Disconnecting stops CROT's server; connecting again starts a new one, and closing CROT stops it.
       await rpc("chat.remove", { provider: ZEN });
@@ -709,6 +747,22 @@ describe("OpenCode through the local bridge", () => {
         installable: true,
         runtime: { state: "missing" },
       });
+      // Without a key and without OpenCode: the bundled free models, and Save & Test says at once that OpenCode is
+      // missing (with the one-click install) instead of asking Zen anonymously.
+      await rpc("chat.configure", { provider: ZEN, endpoint: t.endpoint });
+      expect(await rpc("chat.models", { provider: ZEN })).toMatchObject({
+        ok: true,
+        models: [...OPENCODE_FREE_MODELS],
+        route: "local",
+        idle: true,
+        installed: false,
+      });
+      expect(await rpc("chat.testConnection", { provider: ZEN })).toMatchObject({
+        ok: false,
+        diagnostic: { code: "OPENCODE_NOT_INSTALLED", stage: "local" },
+        openCode: { installed: false, installable: true, runtime: { state: "missing" } },
+      });
+      expect(t.zen.seen).toHaveLength(0);
       expect(await rpc("opencode.install")).toMatchObject({
         ok: true,
         installed: false,

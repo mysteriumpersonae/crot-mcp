@@ -1,6 +1,7 @@
 /**
- * OpenCode (Free & Zen): the live inventory (free models without a key), the anonymous-use probe of
- * Save & Test, Anthropic-protocol models, fixed owner-facing failures and disconnecting.
+ * OpenCode (Free & Zen): the bundled catalog (the free models of OpenCode 1.19.5), never anonymous use of Zen
+ * (without a key and without local OpenCode the owner is told to install OpenCode), the live inventory with a
+ * key, Anthropic-protocol models, fixed owner-facing failures with OpenCode's own detail, and disconnecting.
  */
 import http from "node:http";
 import path from "node:path";
@@ -10,9 +11,10 @@ import type { CrotCore } from "../../src/core/crot-core.js";
 import { createPrivateFileProtection } from "../../src/core/platform/private-files.js";
 import {
   chatFailure,
+  chatFailureDetail,
+  OPENCODE_DEFAULT_MODEL,
   OPENCODE_FREE_MODELS,
   OPENCODE_MODEL_LABELS,
-  OPENCODE_PAID_MODELS,
   providerDiagnostic,
   zenInventory,
 } from "../../src/service/chat-runtime.js";
@@ -42,7 +44,7 @@ const INVENTORY = {
 };
 
 describe("zenInventory", () => {
-  it("keeps chat-completions and messages models, free first, with labels", () => {
+  it("keeps chat-completions and messages models, Big Pickle and the free ones first, with labels", () => {
     expect(zenInventory(INVENTORY)).toEqual([
       { id: "big-pickle", label: "Big Pickle (free)", free: true, protocol: "openai" },
       { id: "glm-5.3-flash-free", label: "GLM-5.3-Flash (free)", free: true, protocol: "openai" },
@@ -72,9 +74,22 @@ describe("zenInventory", () => {
       { id: "legacy", label: "legacy (Zen / Go)", free: false, protocol: "openai" },
     ]);
     expect(zenInventory(undefined)).toEqual([]);
+    // The bundled catalog: exactly the free models OpenCode 1.19.5 lists without a key, its default first.
+    expect(OPENCODE_DEFAULT_MODEL).toBe("big-pickle");
+    expect(OPENCODE_FREE_MODELS).toEqual([
+      "big-pickle",
+      "beam-free",
+      "crouton-alpha-free",
+      "deepseek-v4.1-flash-free",
+      "flint-40b-free",
+      "glm-5.3-flash-free",
+      "mimo-v2.6-flash-free",
+      "nemotron-3.5-lightning-free",
+      "nemotron-3.5-super-vl-free",
+      "pulse-alpha-free",
+    ]);
     expect(OPENCODE_FREE_MODELS.every((id) => OPENCODE_MODEL_LABELS[id]?.endsWith("(free)"))).toBe(true);
-    expect(OPENCODE_PAID_MODELS.every((id) => OPENCODE_MODEL_LABELS[id]?.endsWith("(Zen / Go)"))).toBe(true);
-    expect(Object.keys(OPENCODE_MODEL_LABELS)).toEqual([...OPENCODE_FREE_MODELS, ...OPENCODE_PAID_MODELS]);
+    expect(Object.keys(OPENCODE_MODEL_LABELS)).toEqual([...OPENCODE_FREE_MODELS]);
   });
 
   it("maps provider failures to fixed messages and diagnostics, never provider text", () => {
@@ -118,10 +133,52 @@ describe("zenInventory", () => {
       stage: "local",
     });
     expect(chatFailure(local("OPERATION_FAILED", "free_tier_limit", 429))).toContain("free usage limit is reached");
-    expect(chatFailure(local("NOT_FOUND", "opencode_not_installed"))).toContain("npm i -g opencode-ai");
+    expect(chatFailure(local("NOT_FOUND", "opencode_not_installed"))).toBe(
+      "Local OpenCode CLI was not found. Click “Install and start OpenCode (1 click)” or enter an OpenCode Zen API key.",
+    );
     expect(chatFailure(local("OPERATION_FAILED", "opencode_start_failed"))).toContain("could not be started");
     expect(chatFailure(local("PERMISSION_DENIED", "opencode_refused"))).toContain("emergency stop");
     expect(chatFailure(local("OPERATION_FAILED", "local_text_only"))).toContain("text only");
+    // OpenCode's own explanation: kept with the model and the exact status, for the owner only.
+    const refused = new CrotError("OPERATION_FAILED", "x", {
+      stage: "local",
+      httpStatus: 500,
+      model: "glm-5.3-flash-free",
+      detail: "UnknownError: Unexpected server error. Check server logs for details. (ref err_1)",
+    });
+    expect(providerDiagnostic(refused)).toEqual({
+      code: "OPERATION_FAILED",
+      stage: "local",
+      httpStatus: 500,
+      model: "glm-5.3-flash-free",
+      detail: "UnknownError: Unexpected server error. Check server logs for details. (ref err_1)",
+    });
+    expect(chatFailure(refused)).toBe("Local OpenCode refused the request.");
+    expect(chatFailureDetail(refused)).toBe(
+      "glm-5.3-flash-free · HTTP 500: UnknownError: Unexpected server error. Check server logs for details. (ref err_1)",
+    );
+    const tier = new CrotError("OPERATION_FAILED", "x", {
+      stage: "local",
+      httpStatus: 429,
+      reason: "free_tier_limit",
+      model: "big-pickle",
+      detail: "Free usage exceeded, subscribe to Go (https://opencode.ai/go)",
+    });
+    expect(providerDiagnostic(tier)).toEqual({
+      code: "FREE_TIER_LIMIT",
+      stage: "local",
+      httpStatus: 429,
+      model: "big-pickle",
+      detail: "Free usage exceeded, subscribe to Go (https://opencode.ai/go)",
+    });
+    // Without OpenCode's detail (every other provider) there is none, and nothing else is reflected.
+    expect(chatFailureDetail(limit)).toBeUndefined();
+    expect(chatFailureDetail(new Error("provider said secret"))).toBeUndefined();
+    expect(providerDiagnostic(new CrotError("OPERATION_FAILED", "x", { httpStatus: 500, body: "secret" }))).toEqual({
+      code: "OPERATION_FAILED",
+      stage: "network",
+      httpStatus: 500,
+    });
   });
 });
 
@@ -133,10 +190,10 @@ interface Seen {
   body?: Record<string, unknown>;
 }
 
-/** OpenCode Zen: /models, /chat/completions and /messages; anonymous use answers per `anonymous`. */
+/** OpenCode Zen: /models, /chat/completions and /messages; `limit` refuses every completion (free usage limit). */
 function zenServer() {
   const seen: Seen[] = [];
-  const state = { anonymous: "limit" as "limit" | "ok" };
+  const state = { limit: false };
   const server = http.createServer((req, res) => {
     const chunks: Buffer[] = [];
     req.on("data", (c: Buffer) => chunks.push(c));
@@ -154,8 +211,7 @@ function zenServer() {
       const json = (status: number, value: unknown) =>
         res.writeHead(status, { "content-type": "application/json" }).end(JSON.stringify(value));
       if (url === "/zen/v1/models") return json(200, INVENTORY);
-      const keyed = req.headers.authorization === "Bearer zen-key" || req.headers["x-api-key"] === "zen-key";
-      if (!keyed && state.anonymous === "limit")
+      if (state.limit)
         return json(429, {
           type: "error",
           error: { type: "FreeUsageLimitError", message: "Free usage limit reached. provider-text-do-not-show" },
@@ -181,7 +237,7 @@ function zenServer() {
 }
 
 describe("OpenCode (Free & Zen) connection and chat", () => {
-  it("checks anonymous free use, chats with free and Zen models and disconnects", async () => {
+  it("never uses Zen anonymously; with a key lists and chats with free and Zen models, then disconnects", async () => {
     const dirs = await makeTempDirs();
     const { seen, state, server } = zenServer();
     await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
@@ -217,60 +273,80 @@ describe("OpenCode (Free & Zen) connection and chat", () => {
     };
     const probes = () => seen.filter((s) => s.body?.max_tokens === 1);
     try {
-      // Before any check: no key needed, the free models are suggested.
+      // Before any check: no key needed, the bundled free models are suggested.
       expect(await listed()).toMatchObject({
         credentialRequired: false,
         configured: false,
-        suggestedModels: [...OPENCODE_FREE_MODELS, ...OPENCODE_PAID_MODELS],
+        suggestedModels: [...OPENCODE_FREE_MODELS],
         suggestedLabels: OPENCODE_MODEL_LABELS,
       });
       await rpc("chat.configure", { provider: ZEN, endpoint });
 
-      // Save & Test without a key: the live inventory, then one tiny completion with a free model.
-      const refused = await rpc("chat.testConnection", { provider: ZEN });
-      expect(refused).toMatchObject({ ok: false, diagnostic: { code: "FREE_USAGE_LIMIT", httpStatus: 429 } });
-      expect(JSON.stringify(refused)).not.toContain("provider-text-do-not-show");
-      expect(probes()).toHaveLength(1);
-      expect(probes()[0]).toMatchObject({
-        url: "/zen/v1/chat/completions",
-        body: { model: "big-pickle", stream: false },
-      });
-      expect(probes()[0]!.authorization).toBeUndefined();
+      // Save & Test without a key and without local OpenCode: the owner is told to install OpenCode or enter a
+      // key; Zen is never asked anonymously.
+      const missing = await rpc("chat.testConnection", { provider: ZEN });
+      expect(missing).toMatchObject({ ok: false, diagnostic: { code: "OPENCODE_NOT_INSTALLED", stage: "local" } });
+      expect(seen).toHaveLength(0);
       expect(await listed()).toMatchObject({
         connectionStatus: "failed",
-        connectionError: { code: "FREE_USAGE_LIMIT" },
+        connectionError: { code: "OPENCODE_NOT_INSTALLED" },
       });
-
-      // Anonymous free use accepted: connected with the free models only.
-      state.anonymous = "ok";
-      const free = await rpc("chat.testConnection", { provider: ZEN });
-      expect(free).toMatchObject({
+      // Listing the models shows the bundled catalog (OpenCode is missing) without asking anyone.
+      expect(await rpc("chat.models", { provider: ZEN })).toEqual({
         ok: true,
-        models: ["big-pickle", "glm-5.3-flash-free"],
-        free: ["big-pickle", "glm-5.3-flash-free"],
-        labels: { "big-pickle": "Big Pickle (free)", "glm-5.3-flash-free": "GLM-5.3-Flash (free)" },
-        defaultModel: "big-pickle",
+        models: [...OPENCODE_FREE_MODELS],
+        labels: { ...OPENCODE_MODEL_LABELS },
+        free: [...OPENCODE_FREE_MODELS],
+        route: "local",
+        idle: true,
+        installed: false,
       });
-      expect(await listed()).toMatchObject({ connectionStatus: "connected" });
-      expect((await listed()).connectionError).toBeUndefined();
-      const answered = await chat("glm-5.3-flash-free");
-      expect(answered.state).toBe("completed");
-      expect(JSON.stringify(answered.blocks)).toContain("Answer from glm-5.3-flash-free");
+      const keyless = await chat("big-pickle");
+      expect(keyless).toMatchObject({
+        state: "failed",
+        error:
+          "Local OpenCode CLI was not found. Click “Install and start OpenCode (1 click)” or enter an OpenCode Zen API key.",
+      });
+      expect(keyless.errorDetail).toBeUndefined();
+      expect(seen).toHaveLength(0);
 
-      // The free limit during a chat: a fixed, actionable message.
-      state.anonymous = "limit";
-      const limited = await chat("big-pickle");
-      expect(limited).toMatchObject({ state: "failed", error: expect.stringContaining("free usage limit") });
-      expect(JSON.stringify(limited)).not.toContain("provider-text-do-not-show");
-
-      // With a Zen API key: every supported model, no anonymous probe; Claude/Qwen over /messages.
+      // With a Zen API key: Zen's live inventory (every supported model), no test request; Claude/Qwen over
+      // /messages. Without a saved model the first free one (OpenCode's default, Big Pickle) is chosen.
       await rpc("chat.configure", { provider: ZEN, endpoint, credential: "zen-key" });
       const keyed = await rpc("chat.testConnection", { provider: ZEN });
       expect(keyed).toMatchObject({
         ok: true,
         models: ["big-pickle", "glm-5.3-flash-free", "claude-haiku-4-5", "kimi-k2.6", "qwen3.6-plus"],
+        free: ["big-pickle", "glm-5.3-flash-free"],
+        labels: { "big-pickle": "Big Pickle (free)", "glm-5.3-flash-free": "GLM-5.3-Flash (free)" },
+        route: "zen",
+        keySource: "stored",
+        defaultModel: "big-pickle",
       });
-      expect(probes()).toHaveLength(2);
+      expect(keyed.modelCheck).toBeUndefined();
+      expect(probes()).toHaveLength(0);
+      expect(seen.map((s) => s.url)).toEqual(["/zen/v1/models"]);
+      expect(seen[0]!.authorization).toBe("Bearer zen-key");
+      expect(await listed()).toMatchObject({ connectionStatus: "connected", route: "zen", keySource: "stored" });
+      expect((await listed()).connectionError).toBeUndefined();
+      const answered = await chat("glm-5.3-flash-free");
+      expect(answered.state).toBe("completed");
+      expect(JSON.stringify(answered.blocks)).toContain("Answer from glm-5.3-flash-free");
+      expect(seen.at(-1)).toMatchObject({ url: "/zen/v1/chat/completions", authorization: "Bearer zen-key" });
+      // A saved model that the live inventory still has is kept.
+      await rpc("chat.configure", { provider: ZEN, endpoint, defaultModel: "kimi-k2.6" });
+      expect(await rpc("chat.testConnection", { provider: ZEN })).toMatchObject({
+        ok: true,
+        defaultModel: "kimi-k2.6",
+      });
+
+      // Zen's free usage limit during a chat: a fixed, actionable message, never Zen's own text.
+      state.limit = true;
+      const limited = await chat("big-pickle");
+      expect(limited).toMatchObject({ state: "failed", error: expect.stringContaining("free usage limit") });
+      expect(JSON.stringify(limited)).not.toContain("provider-text-do-not-show");
+      state.limit = false;
+
       const claude = await chat("claude-haiku-4-5");
       expect(claude.state).toBe("completed");
       expect(JSON.stringify(claude.blocks)).toContain("Answer from claude-haiku-4-5");
