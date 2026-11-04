@@ -1,4 +1,5 @@
 import { websiteUrl } from "./website.js";
+import { externalLink } from "./external-links.js";
 import { ProviderSettings } from "../desktop-auth/providers.js";
 import { DesktopAuth } from "../desktop-auth/store.js";
 import { mailDelivery } from "../desktop-auth/config.js";
@@ -233,7 +234,12 @@ function harden(): void {
     contents.on("will-navigate", (event) => event.preventDefault());
     contents.on("will-redirect", (event) => event.preventDefault());
     contents.on("will-attach-webview", (event) => event.preventDefault());
-    contents.setWindowOpenHandler(() => ({ action: "deny" }));
+    // Nothing opens inside the app; allowlisted HTTPS pages (opencode.ai/zen, integrations) open in the browser.
+    contents.setWindowOpenHandler(({ url }) => {
+      const target = smokeReport ? undefined : externalLink(url);
+      if (target) void shell.openExternal(target);
+      return { action: "deny" };
+    });
   });
 }
 

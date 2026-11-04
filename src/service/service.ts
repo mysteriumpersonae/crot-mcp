@@ -31,7 +31,9 @@ import { ProductRuntime, productPaths } from "./product-runtime.js";
 import type net from "node:net";
 import { launchControlCenter } from "../tray/launch.js";
 import { lstat } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
+import { createChildEnvironment } from "../core/platform/child-environment.js";
 import { DEFAULT_HTTP_TOKEN_FILE_NAME, LocalTokenVerifier, loadOrCreateLocalToken } from "../adapters/http/auth.js";
 import { CrotHttpServer } from "../adapters/http/server.js";
 import { localContextResolver } from "../adapters/mcp/context.js";
@@ -643,6 +645,21 @@ export class CrotService {
         selectWorkspace: async (root) => {
           await control.selectWorkspace(root);
           activeWorkspace = root;
+        },
+        // Local OpenCode: its key in the owner's environment and files, and CROT's own `opencode serve`
+        // (allowlisted child environment plus OpenCode's own OPENCODE_* settings; no CROT service secrets).
+        openCode: {
+          local: { env: servicePlatform.baseEnvironment, home: os.homedir(), platform: process.platform },
+          env: createChildEnvironment(
+            servicePlatform.baseEnvironment,
+            [...parsed.environment.allow, "OPENCODE_*"],
+            servicePlatform.environment.caseInsensitive,
+          ).base,
+          launch: (command, args, { cwd, env }) =>
+            servicePlatform.launcher.launch(
+              { file: command, args, display: [command, ...args].join(" ") },
+              { cwd, env, stdin: false },
+            ),
         },
       });
       this.publications = await PublicationRuntime.open({

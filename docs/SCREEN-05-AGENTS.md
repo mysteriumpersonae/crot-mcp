@@ -71,10 +71,15 @@ is reachable even if the user has a custom config that omits the default list.
 - `AUTH_INVALID_KEY` — server returned HTTP 401 or 403
 - `LOCAL_SERVER_OFFLINE` — ECONNREFUSED on a loopback address
 - `FREE_USAGE_LIMIT` — OpenCode Zen refused anonymous free use (HTTP 429 `FreeUsageLimitError`)
+- `FREE_TIER_LIMIT` — local OpenCode reached OpenCode's own free tier limit (its session
+  status turned to a retry with `free_tier_limit`, or a retry minutes ahead)
+- `OPENCODE_NOT_INSTALLED`, `OPENCODE_START_FAILED`, `OPENCODE_START_REFUSED` — the local
+  OpenCode bridge could not be used (no CLI, the server did not become healthy, the
+  emergency stop or an explicit runtime deny of process.start)
 - `OPERATION_FAILED` — other network or protocol error
 
 A failed chat turn shows a fixed message chosen by the provider's HTTP status (401,
-403, 404, 429, 400/422, 5xx, free usage limit), never the provider's own text.
+403, 404, 429, 400/422, 5xx, free usage limit, local OpenCode), never the provider's own text.
 
 The UI maps these to actionable messages without exposing credentials or URLs.
 
@@ -93,13 +98,61 @@ sends one tiny completion, so a refused anonymous use (OpenCode's free usage lim
 per network address) is reported at once: enter a Zen API key from
 `opencode.ai/zen`, or use OpenCode in Workspaces (`opencode serve`).
 
+How CROT reaches OpenCode Zen, in this order (`zenRoute`):
+1. the key saved in the form (vault);
+2. the owner's own OpenCode key: `OPENCODE_API_KEY`, else an `"type": "api"` entry
+   (`opencode`, `zen` or `console`) of OpenCode's `auth.json` (`$XDG_DATA_HOME/opencode`,
+   `~/.local/share/opencode`, on Windows also `%LOCALAPPDATA%\opencode` and
+   `%USERPROFILE%\.local\share\opencode`, then `~/.config/opencode`). Read only; the key
+   is sent only to OpenCode Zen (`https://opencode.ai`, or a loopback test server), never
+   stored, logged, returned to the UI or passed to a child process. The UI shows its source
+   ("Key from OpenCode (auth.json)");
+3. without a key, through **local OpenCode**: the owner's `opencode serve` on
+   127.0.0.1:4096 when it answers without a password, else CROT's own bridge
+   (`OpenCodeBridge`): `opencode serve --hostname 127.0.0.1 --port 4096` (any free port when
+   4096 is taken) with a random `OPENCODE_SERVER_PASSWORD` (HTTP Basic), the allowlisted
+   child environment plus `OPENCODE_*` (no CROT service secrets) and the empty, CROT-owned
+   working directory `<state>/opencode-chat`. It starts on Save & Test or the first chat turn
+   ("Auto-connect via local OpenCode"), never when the UI only lists models, and stops when
+   the provider is removed, on the emergency stop and when CROT exits (a SIGKILLed service
+   can leave it running). Its start/stop/exit are audited (`opencode_bridge`, no secrets);
+4. anonymously (OpenCode not installed): Zen usually refuses clients other than OpenCode
+   with `FREE_USAGE_LIMIT`; the form then shows "Get a free or paid API key at
+   opencode.ai/zen" and the install command `npm i -g opencode-ai` with a copy button.
+
+Turns through local OpenCode are model-only: a new OpenCode session per turn with every
+OpenCode tool turned off (`tools: {"*": false, …}`), the session deleted afterwards; CROT
+tools and images need a Zen key (`local_text_only`). While a turn is pending CROT watches
+`/session/status`: OpenCode retries a refused free model instead of failing, so a retry with
+`free_tier_limit` (or minutes ahead) aborts the turn at once with `FREE_TIER_LIMIT`. A free
+model that Zen refuses (429/403) before any answer is answered once more through local
+OpenCode. Every direct Zen request carries `User-Agent: CROT/<version>` and a random session ID
+(`x-opencode-session`, `x-session-id`) that stays the same within a chat thread.
+
+Before the first check the picker shows a bundled catalog: free models (`big-pickle`,
+`glm-5.3-flash-free`, `deepseek-v4-flash-free`, `minimax-m2.5-free`, `mimo-v2-pro-free`,
+`qwen3.6-plus-free`, `nemotron-3-ultra-free`, labelled "(free)") and models that need a key
+(`glm-5.3`, `glm-5.3-flash`, `deepseek-v4-pro`, `claude-sonnet-4-6`, `gpt-5.5`, `kimi-k2.5`,
+labelled "(Zen / Go)"). OpenCode rotates its free models, so the live inventory (Zen's
+`/models`, or local OpenCode's `/provider`) replaces the catalog after Save & Test.
+
+`opencode.status` reports `{available, installed, installCommand, keySource?, server?:
+{url, managed, version?}}` (never a key or password); `opencode.stop` stops CROT's own server
+(refused while a generation runs). In Electron, links of the Agents screen open in the
+system browser only for allowlisted HTTPS hosts (`opencode.ai`, Notion, Claude, n8n).
+
 ### Local Models
 Ollama defaults to http://127.0.0.1:11434 (explicit IP required for loopback allow).
 LM Studio defaults to 127.0.0.1:1234; preset buttons fill either URL. Test loads
 the server's models into the model selector. OpenCode is in Workspaces.
 
 ### Workspaces
-- **OpenCode server**: native adapter at http://127.0.0.1:4096
+- **OpenCode server**: native adapter at http://127.0.0.1:4096. **Start and connect
+  OpenCode** (after a warning) starts CROT's own server as above and connects to it
+  (`managed: true`, no stored password); its status line shows "Running on 127.0.0.1:<port>"
+  and Stop. OpenCode's agents then work in the open project (`x-opencode-directory`) with
+  OpenCode's own permissions; CROT tool grants are not forwarded and CROT never approves
+  their actions. A server the owner runs in a terminal is used with Save & Test as before.
 - **Notion Agents API**: PAT or connection token with agent interaction capability
 
 ## Verification boundary

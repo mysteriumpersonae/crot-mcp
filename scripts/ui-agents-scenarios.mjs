@@ -130,7 +130,7 @@ export async function runAgentsScenarios({
   // OpenCode (Free & Zen): the optional key field, its hint and Save & Test stay visible; free models are listed.
   await evaluate("document.querySelectorAll('.agents-accordion')[0].open=true");
   const zen = await evaluate(
-    `(async()=>{const select=document.querySelector('select[aria-label="Chat provider"]');select.value='OpenCode (Free & Zen)';select.dispatchEvent(new Event('change'));await new Promise(r=>setTimeout(r,300));const visible=el=>!!el&&el.getClientRects().length>0;const key=document.querySelector('[data-cloud-key]');return {label:document.querySelector('[data-cloud-key-field]').firstChild.textContent,placeholder:key.placeholder,key:visible(key),test:visible(document.querySelector('[data-cloud-test]')),hint:visible(document.querySelector('[data-zen-hint]')),models:[...document.querySelector('select[aria-label="Default cloud model"]').options].map(o=>o.value)};})()`,
+    `(async()=>{const select=document.querySelector('select[aria-label="Chat provider"]');select.value='OpenCode (Free & Zen)';select.dispatchEvent(new Event('change'));await new Promise(r=>setTimeout(r,300));const visible=el=>!!el&&el.getClientRects().length>0;const key=document.querySelector('[data-cloud-key]');return {label:document.querySelector('[data-cloud-key-field]').firstChild.textContent,placeholder:key.placeholder,key:visible(key),test:visible(document.querySelector('[data-cloud-test]')),hint:visible(document.querySelector('[data-zen-hint]')),actions:visible(document.querySelector('[data-zen-actions]')),keyLink:document.querySelector('[data-zen-actions] [data-zen-key-link]')?.getAttribute('href'),auto:visible(document.querySelector('[data-opencode-auto]')),models:[...document.querySelector('select[aria-label="Default cloud model"]').options].map(o=>o.value)};})()`,
   );
   assert(
     zen.label === "API Key (optional for Free / Zen API Key)" &&
@@ -138,13 +138,16 @@ export async function runAgentsScenarios({
       zen.key &&
       zen.test &&
       zen.hint &&
+      zen.actions &&
+      zen.keyLink === "https://opencode.ai/zen" &&
+      zen.auto &&
       zen.models.includes("big-pickle"),
     "OpenCode (Free & Zen) form: " + JSON.stringify(zen),
   );
   await screenshot("agents-opencode-zen-free");
   // Every cloud provider keeps its key field and Save & Test; Local and Workspaces keep their checks.
   const forms = await evaluate(
-    `(async()=>{const select=document.querySelector('select[aria-label="Chat provider"]');const visible=el=>!!el&&el.getClientRects().length>0;const out={};for(const value of [...select.options].map(o=>o.value)){select.value=value;select.dispatchEvent(new Event('change'));await new Promise(r=>setTimeout(r,80));out[value]=visible(document.querySelector('[data-cloud-test]'))&&visible(document.querySelector('[data-cloud-key]'))&&(value==='OpenCode (Free & Zen)')===visible(document.querySelector('[data-zen-hint]'));}select.value='OpenAI';select.dispatchEvent(new Event('change'));await new Promise(r=>setTimeout(r,80));return out;})()`,
+    `(async()=>{const select=document.querySelector('select[aria-label="Chat provider"]');const visible=el=>!!el&&el.getClientRects().length>0;const out={};for(const value of [...select.options].map(o=>o.value)){select.value=value;select.dispatchEvent(new Event('change'));await new Promise(r=>setTimeout(r,80));out[value]=visible(document.querySelector('[data-cloud-test]'))&&visible(document.querySelector('[data-cloud-key]'))&&(value==='OpenCode (Free & Zen)')===visible(document.querySelector('[data-zen-hint]'))&&(value==='OpenCode (Free & Zen)')===visible(document.querySelector('[data-zen-actions]'));}select.value='OpenAI';select.dispatchEvent(new Event('change'));await new Promise(r=>setTimeout(r,80));return out;})()`,
   );
   assert(
     Object.keys(forms).length === 6 && Object.values(forms).every(Boolean),
@@ -206,6 +209,14 @@ export async function runAgentsScenarios({
     await until("document.querySelector('.chat-popover:popover-open')");
     await evaluate(
       `[...document.querySelectorAll('.chat-popover:popover-open button')].find(b=>b.textContent.replace('✓','').trim()===${JSON.stringify(provider)}).click()`,
+    );
+    // OpenCode: CROT can start its own server ("Start and connect OpenCode"); Notion Agents has no such row.
+    assert(
+      (await evaluate(
+        "(()=>{const b=document.querySelector('[data-opencode-start]');return !!b&&b.getClientRects().length>0})()",
+      )) ===
+        (provider === "OpenCode"),
+      "Start and connect OpenCode visibility for " + provider,
     );
     const origin = new URL(state.endpoint).origin;
     await evaluate(

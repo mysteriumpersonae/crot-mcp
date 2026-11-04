@@ -230,10 +230,62 @@ describe("Other authorization methods and provider checks", () => {
       "API Key (optional for Free / Zen API Key)",
       "Leave empty for free OpenCode Zen models or enter a key from opencode.ai/zen.",
       "Optional: OpenCode Zen API key",
-      "OpenCode Zen refused free use without a key (free usage limit). Enter an OpenCode Zen API key in Cloud LLM, or use OpenCode in Workspaces (opencode serve).",
+      "OpenCode Zen refused free use without a key (free usage limit). Enter an OpenCode Zen API key, or connect through local OpenCode (Auto-connect).",
     ]) {
       expect(messages[key]?.length, key).toBe(5);
       expect(messages[key]![1], key).not.toBe(key);
+    }
+  });
+
+  it("offers a Zen key link, auto-connect through local OpenCode, the install command and a managed server", () => {
+    // Cloud LLM: the key page opens in the browser; auto-connect is Save & Test without a key.
+    expect(AGENTS_CENTER_RENDERER).toContain(
+      "const zenKeyLink=externalLink('Get a Zen key ↗','https://opencode.ai/zen','agents-light-button agents-link-button');",
+    );
+    expect(AGENTS_CENTER_RENDERER).toContain(
+      "const zenAuto=button('Auto-connect via local OpenCode',()=>checkProvider('OpenCode (Free & Zen)',cloudEndpoint.input.value||defaults['OpenCode (Free & Zen)'],'',cloudState,checked,cloudModel),'agents-light-button');",
+    );
+    expect(AGENTS_CENTER_RENDERER).toContain("a.setAttribute('rel','noopener noreferrer')");
+    expect(AGENTS_CENTER_RENDERER).toContain("zenAuto.dataset.opencodeAuto=''");
+    expect(AGENTS_CENTER_RENDERER).toContain("copyInstall.dataset.copyInstall=''");
+    expect(AGENTS_CENTER_RENDERER).toContain("openCodeInfo=await rpc('opencode.status')");
+    // Workspaces: CROT's own server after a warning, its status and Stop.
+    expect(AGENTS_CENTER_RENDERER).toContain(
+      "await checkProvider('OpenCode','http://127.0.0.1:4096','',workspaceState,workspaceChecked,workspaceModel,{managed:true});",
+    );
+    expect(AGENTS_CENTER_RENDERER).toContain("wsStart.dataset.opencodeStart=''");
+    expect(AGENTS_CENTER_RENDERER).toContain("await rpc('opencode.stop')");
+    expect(AGENTS_CENTER_RENDERER).toContain("t('Running on')+' '+server.url.replace('http://','')");
+    for (const [key, ru] of [
+      ["Get a Zen key ↗", "Получить ключ Zen ↗"],
+      ["Auto-connect via local OpenCode", "Авто-подключение через локальный OpenCode"],
+      ["Get a free or paid API key at opencode.ai/zen ↗", "Получить бесплатный/платный API-ключ на opencode.ai/zen ↗"],
+      ["Start and connect OpenCode", "Запустить и подключить OpenCode"],
+      ["Running on", "Запущен на"],
+    ] as [string, string][])
+      expect(messages[key]?.[1], key).toBe(ru);
+    for (const key of [
+      "Or install OpenCode CLI (npm i -g opencode-ai) so CROT starts the local bridge to the free models automatically.",
+      "Install OpenCode CLI (npm i -g opencode-ai) so CROT can start it.",
+      "Through local OpenCode",
+      "Key from OpenCode (auth.json)",
+      "Key from OPENCODE_API_KEY",
+      "started by CROT",
+      "already running",
+      "started outside CROT",
+      "CROT starts opencode serve on 127.0.0.1 with a random password and connects to it. OpenCode agents act in the open project with their own permissions (files, commands); CROT tool grants are not forwarded and CROT never auto-approves their actions.",
+      "OpenCode's free usage limit is reached (OpenCode suggests its Go subscription). Try again later, or enter an OpenCode Zen API key.",
+      "OpenCode CLI is not installed. Install it (npm i -g opencode-ai) or enter an OpenCode Zen API key.",
+      "Local OpenCode could not be started. Check the OpenCode installation.",
+      "Starting local OpenCode is blocked by the emergency stop or the runtime policy.",
+      "Local OpenCode answers text only: CROT tools and images are not forwarded. Turn them off or enter an OpenCode Zen API key.",
+    ]) {
+      expect(messages[key]?.length, key).toBe(5);
+      expect(messages[key]![1], key).not.toBe(key);
+      expect(
+        AGENTS_CENTER_RENDERER.includes(key.replace("'", "\\'")) || key.startsWith("Local OpenCode answers"),
+        key,
+      ).toBe(true);
     }
   });
 });

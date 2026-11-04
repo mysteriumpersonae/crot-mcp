@@ -63,6 +63,7 @@ export const CONTROL_AUDIT_ACTIONS = [
   "project_secret_access",
   "token_issue",
   "chat_provider",
+  "opencode_bridge",
   "social_account",
   "publication",
   "token_rotate",
