@@ -14,15 +14,23 @@ export interface RelayLimits {
   readonly sourceHandshakes: number;
   readonly counterKeys: number;
 }
+/**
+ * Defaults sized for one relay node in commercial use. An active MCP client (Notion, Claude) sends bursts
+ * of several requests per second and keeps a GET stream open, so client and device rates leave headroom
+ * (10 and 50 requests per second on average). Connection limits count per peer address: behind a
+ * TLS-terminating proxy every client and every device tunnel shares the proxy's address, so they allow
+ * many concurrent connections. Concurrency per client and per device stays bounded by the tunnel's flow
+ * control (INITIAL_CONNECTION_WINDOW / INITIAL_STREAM_WINDOW) and the device's maxStreams as well.
+ */
 export const DEFAULT_RELAY_LIMITS: RelayLimits = {
-  clientRequests: { max: 120, windowMs: 60_000 },
-  deviceRequests: { max: 600, windowMs: 60_000 },
+  clientRequests: { max: 600, windowMs: 60_000 },
+  deviceRequests: { max: 3000, windowMs: 60_000 },
   accountRegistrations: { max: 10, windowMs: 60_000 },
-  globalConcurrency: 64,
+  globalConcurrency: 1024,
   clientConcurrency: 4,
   deviceConcurrency: 32,
-  sourceConnections: 64,
-  sourceHandshakes: 8,
+  sourceConnections: 1024,
+  sourceHandshakes: 64,
   counterKeys: 10_000,
 };
 export function relayLimits(value: unknown = {}): RelayLimits {

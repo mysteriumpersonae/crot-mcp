@@ -171,3 +171,69 @@ describe("Agents provider list, connection note and tunnel status", () => {
     );
   });
 });
+
+describe("Other authorization methods and provider checks", () => {
+  const messages = JSON.parse(UI_MESSAGES_JSON) as Record<string, string[]>;
+
+  it("shows Basic, API-key and OAuth details of the self-registered URL with copy buttons, translated", () => {
+    expect(() => new Script(CONTROL_CENTER_RENDERER)).not.toThrow();
+    // Only for the self-registered crot.network URL (a paired relay URL accepts OAuth Bearer tokens only).
+    expect(AGENTS_CENTER_RENDERER).toContain("if(!remoteUrl&&view.localDeviceId){");
+    expect(AGENTS_CENTER_RENDERER).toContain("methods.dataset.authMethods=''");
+    expect(AGENTS_CENTER_RENDERER).toContain("authRow('Username','crot','basic-username')");
+    expect(AGENTS_CENTER_RENDERER).toContain("authRow('Password',undefined,'basic-password')");
+    expect(AGENTS_CENTER_RENDERER).toContain("authRow('Header name','X-API-Key','api-key-header')");
+    expect(AGENTS_CENTER_RENDERER).toContain("authRow('OAuth Client ID','crot-'+view.localDeviceId,'oauth-client-id')");
+    expect(AGENTS_CENTER_RENDERER).toContain("authRow('OAuth Client Secret',undefined,'oauth-client-secret')");
+    // Token rows copy the visible token, or generate one exactly as "Copy token" does.
+    expect(AGENTS_CENTER_RENDERER).toContain(
+      "if(value!==undefined){await copy(value,c);return;}if(token.input.value){await copy(token.input.value,c);return;}tokenCopy.click();",
+    );
+    expect(AGENTS_CENTER_CSS).toContain(".agents-auth-group h3");
+    expect(messages["Other authorization methods (Basic, API Key, OAuth)"]?.[1]).toBe(
+      "Другие способы авторизации (Basic, API Key, OAuth)",
+    );
+    for (const key of [
+      "Other authorization methods (Basic, API Key, OAuth)",
+      "Use these when the MCP client has no Bearer token option. Every method carries the same token.",
+      "Same as the Bearer token",
+      "API Key (header)",
+      "Header name",
+      "Header value",
+      "Username",
+      "Password",
+      "Redirect URL: any https callback of the client. Scope: mcp (or leave empty). The client finds the authorization and token endpoints from the MCP Server URL; approve the request on the crot.network page that opens.",
+    ]) {
+      expect(messages[key]?.length, key).toBe(5);
+      expect(messages[key]![1], key).not.toBe(key);
+    }
+  });
+
+  it("keeps the OpenCode key optional with Save & Test visible, and a check for every provider", () => {
+    expect(AGENTS_CENTER_RENDERER).toContain("apiKey.wrap.hidden=false;");
+    expect(AGENTS_CENTER_RENDERER).not.toMatch(/apiKey\.wrap\.hidden=(?!false)/);
+    expect(AGENTS_CENTER_RENDERER).toContain(
+      "text(apiKeyLabel,zen?'API Key (optional for Free / Zen API Key)':'API Key');zenHint.hidden=!zen;",
+    );
+    expect(AGENTS_CENTER_RENDERER).toContain("zenHint.dataset.zenHint=''");
+    // Save & Test sits in the key row, which is never hidden; Local and Workspaces have their own checks.
+    expect(AGENTS_CENTER_RENDERER).toContain("keyRow.append(keyInput,saveTest,cloudRemove)");
+    expect(AGENTS_CENTER_RENDERER).toContain("saveTest.dataset.cloudTest=''");
+    expect(AGENTS_CENTER_RENDERER).toContain(".dataset.localTest=''");
+    expect(AGENTS_CENTER_RENDERER).toContain(".dataset.workspaceTest=''");
+    // Free models before the first check; Ollama and LM Studio presets.
+    expect(AGENTS_CENTER_RENDERER).toContain("config?.suggestedModels||[]");
+    expect(AGENTS_CENTER_RENDERER).toContain(
+      "[['Ollama','http://127.0.0.1:11434'],['LM Studio','http://127.0.0.1:1234']]",
+    );
+    for (const key of [
+      "API Key (optional for Free / Zen API Key)",
+      "Leave empty for free OpenCode Zen models or enter a key from opencode.ai/zen.",
+      "Optional: OpenCode Zen API key",
+      "OpenCode Zen refused free use without a key (free usage limit). Enter an OpenCode Zen API key in Cloud LLM, or use OpenCode in Workspaces (opencode serve).",
+    ]) {
+      expect(messages[key]?.length, key).toBe(5);
+      expect(messages[key]![1], key).not.toBe(key);
+    }
+  });
+});

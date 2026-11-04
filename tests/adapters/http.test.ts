@@ -283,6 +283,30 @@ describe("HTTP transport: MCP over HTTP", () => {
     expect(JSON.stringify(missing)).not.toContain(token);
   });
 
+  it("accepts the token as Basic or an API-key header and refuses conflicting credentials", async () => {
+    const basic = (pair: string) => ({ Authorization: `Basic ${Buffer.from(pair).toString("base64")}` });
+    for (const headers of [
+      basic(`crot:${token}`),
+      basic(`${token}:`),
+      { "X-API-Key": token },
+      { "Api-Key": token },
+      { "X-CROT-Token": `Bearer ${token}` },
+    ] as Record<string, string>[])
+      expect((await raw({ body: INITIALIZE, headers })).status, Object.keys(headers).join()).toBe(200);
+    const wrong = "wrong-token-wrong-token-wrong-token";
+    for (const headers of [
+      basic(`crot:${wrong}`),
+      { "X-API-Key": wrong },
+      { ...auth(), "X-API-Key": wrong },
+      { Authorization: "Bearer" },
+    ]) {
+      const refused = await raw({ body: INITIALIZE, headers });
+      expect(refused.status).toBe(401);
+      expect(refused.headers["www-authenticate"]).toContain("Bearer");
+    }
+    expect(JSON.stringify(audit.events)).not.toContain(token);
+  });
+
   it("rejects invalid requests with clean errors", async () => {
     const badJson = await raw({ body: "{ not json", headers: auth() });
     expect(badJson.status).toBe(400);

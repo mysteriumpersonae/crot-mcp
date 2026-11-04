@@ -53,6 +53,13 @@ interface Options {
   failClosed(): void;
   clock?: () => number;
 }
+/** An active client token, as an OAuth grant sees it (expiresAt in milliseconds). */
+export interface GrantParent {
+  readonly id: string;
+  readonly generation: string;
+  readonly scopes: readonly string[];
+  readonly expiresAt: number;
+}
 export class ClientTokenRegistry {
   private tokens: TokenRecord[] = [];
   private queue: Promise<unknown> = Promise.resolve();
@@ -184,6 +191,22 @@ export class ClientTokenRegistry {
         expiresAt: Math.floor(record.expiresAt / 1000),
         extra: { subject, authMethod: "scoped-token", tokenId: record.id, tokenGeneration: record.generation },
       };
+    });
+  }
+  /**
+   * The client token an OAuth grant was made with (oauth-grants.ts), while it is active and unexpired at
+   * the same generation: rotating, revoking or expiring the token ends its grants. `touch` records the
+   * use, as a Bearer use of the token does.
+   */
+  grantParent(id: string, generation: string, touch = true): Promise<GrantParent | undefined> {
+    return this.serial(async () => {
+      const record = this.tokens.find((t) => t.id === id && t.generation === generation);
+      if (this.broken || !record?.active || record.expiresAt <= this.clock()) return undefined;
+      if (touch) {
+        record.lastUsedAt = this.clock();
+        await this.save();
+      }
+      return { id: record.id, generation: record.generation, scopes: [...record.scopes], expiresAt: record.expiresAt };
     });
   }
   /** Called within ExecutionGuard, again after approval; never accepts client-supplied names/scopes. */

@@ -43,6 +43,8 @@ import {
   isRelayHost,
   protectedResourceMetadataUrl,
 } from "../identity/device-id.js";
+import { presentedCredential } from "../adapters/http/credentials.js";
+import { SELF_OAUTH_SCOPES, SelfOAuth, type ForwardedTokenRequest } from "./self-oauth.js";
 import { isClientId } from "../identity/environment.js";
 import type { SigningKeySource } from "../identity/jwks.js";
 import { checkAccessToken } from "../identity/verifier.js";
@@ -271,6 +273,7 @@ function writeRefusal(res: ServerResponse, refusal: Refusal, extra: Record<strin
   res.end(body);
 }
 
+/** The pairing registration's Bearer token (AD-22 point 4): exactly one RFC 6750 b64token. */
 function bearerToken(req: IncomingMessage): string | undefined | null {
   const values: string[] = [];
   for (let i = 0; i + 1 < req.rawHeaders.length; i += 2)
@@ -317,6 +320,8 @@ export class CloudRelay {
   private readonly expiryTimer: NodeJS.Timeout;
 
   private readonly downloads: ReleaseDownloads;
+  /** OAuth of self-registered devices' relay URLs (self-oauth.ts), when self-registration is on. */
+  private readonly selfOAuth: SelfOAuth | undefined;
 
   constructor(private readonly options: CloudRelayOptions) {
     this.downloads = new ReleaseDownloads({
@@ -370,6 +375,24 @@ export class CloudRelay {
       discard: (req) => this.discard(req),
       log: (status, code) => this.log({ event: "account.request", status, code }),
     });
+    let issuerHost: string | undefined;
+    try {
+      issuerHost = new URL(options.issuer).host;
+    } catch {
+      issuerHost = undefined;
+    }
+    this.selfOAuth = options.selfRegistration
+      ? new SelfOAuth({
+          relayHost: options.relayHost,
+          // The relay-wide issuer only where the relay's host is not the paired issuer's own.
+          root: issuerHost !== options.relayHost,
+          now: this.now,
+          isSelfDevice: async (id) => this.isSelf(await this.record(id)),
+          forward: (req, res, request) => this.forwardToken(req, res, request),
+          discard: (req) => this.discard(req),
+          log: (record) => this.log(record),
+        })
+      : undefined;
   }
 
   /** Listen (HTTPS when `tls` is given; plain HTTP behind a TLS-terminating load balancer otherwise). */
@@ -492,6 +515,9 @@ export class CloudRelay {
     if ((m = DEREGISTER_PATH.exec(pathname))) return this.deregister(req, res, m[1]!);
     if ((m = REGISTER_PATH.exec(pathname))) return this.register(req, res, m[1]!);
     if ((m = SELF_REGISTER_PATH.exec(pathname))) return this.selfRegister(req, res, m[1]!);
+    // OAuth of self-registered devices (`/d/<id>/oauth/*`, their metadata, and the relay-wide issuer).
+    const oauth = this.selfOAuth?.match(pathname);
+    if (oauth) return this.selfOAuth!.handle(req, res, oauth);
     if (DEVICE_PREFIX.test(pathname)) {
       // Device-scoped account routes (`/d/<id>/account`, `/d/<id>/clients/<client>/revoke`) belong to the
       // account service; anything else under `/d/` is a plain 404, never a download/page response.
@@ -546,18 +572,27 @@ export class CloudRelay {
     return record && this.accounts.deviceState(record.accountId, deviceId) !== "device_revoked" ? record : undefined;
   }
 
-  /** PRM (AD-21 point 6): only for registered devices. */
+  /**
+   * PRM (AD-21 point 6): only for registered devices. A self-registered device names its own issuer
+   * `https://<relay>/d/<deviceId>` (self-oauth.ts); a paired device the configured issuer.
+   */
   private async metadata(req: IncomingMessage, res: ServerResponse, deviceId: string): Promise<void> {
     this.discard(req);
     if (req.method !== "GET") return writeRefusal(res, REFUSALS.method_not_allowed, { allow: "GET" });
-    if (!(await this.record(deviceId))) return writeRefusal(res, REFUSALS.not_found);
+    const record = await this.record(deviceId);
+    if (!record) return writeRefusal(res, REFUSALS.not_found);
+    const self = this.isSelf(record);
     const body = JSON.stringify({
       resource: canonicalDeviceUri(this.options.relayHost, deviceId),
-      authorization_servers: [this.options.issuer],
+      authorization_servers: [self ? `https://${this.options.relayHost}/d/${deviceId}` : this.options.issuer],
       bearer_methods_supported: ["header"],
-      scopes_supported: ["offline_access"],
+      scopes_supported: self ? SELF_OAUTH_SCOPES : ["offline_access"],
     });
-    res.writeHead(200, { "content-type": "application/json", "cache-control": "max-age=300" });
+    res.writeHead(200, {
+      "content-type": "application/json",
+      "cache-control": "max-age=300",
+      ...(self ? { "access-control-allow-origin": "*" } : {}),
+    });
     res.end(body);
   }
 
@@ -620,7 +655,11 @@ export class CloudRelay {
       return writeRefusal(res, REFUSALS.method_not_allowed, { allow: "POST" });
     }
     const source = req.socket.remoteAddress ?? "unknown";
-    if (this.registrationRates.take(`self:${source}`) !== undefined) {
+    // An id that is already registered creates nothing (its key gets 200, another key 409): its repeated
+    // registrations (every remote-mode start and check) count per device, so devices behind one proxy
+    // address never share one budget. New ids count per source address.
+    const known = isDeviceId(deviceId) && (await this.options.registry.get(deviceId)) !== undefined;
+    if (this.registrationRates.take(known ? `self-device:${deviceId}` : `self:${source}`) !== undefined) {
       this.discard(req);
       return writeRefusal(res, { ...REFUSALS.busy, status: 429, code: "registration_rate_limited" });
     }
@@ -848,20 +887,22 @@ export class CloudRelay {
     if (!record) return refuse(REFUSALS.unknown_device);
     if (method !== "POST" && method !== "GET" && method !== "DELETE")
       return refuse(REFUSALS.method_not_allowed, { allow: "GET, POST, DELETE" });
-    const token = bearerToken(req);
-    if (!token) {
+    // Self-registered device: the token is the device's own (tokens.issue), presented as Bearer, Basic or
+    // an API-key header; the relay forwards the request unchanged through the device's authenticated tunnel
+    // and the device validates it (owner-approved). A paired device accepts only an OAuth Bearer token.
+    const self = this.isSelf(record);
+    const presented = presentedCredential(req.rawHeaders, { bearerOnly: !self });
+    if (typeof presented === "string") {
       this.discard(req);
       this.log({
         ...summary,
         status: 401,
         outcome: "not_executed",
-        code: token === undefined ? "no_token" : "malformed",
+        code: presented === "missing" ? "no_token" : "malformed",
       });
-      return this.unauthorized(res, deviceId, token !== undefined);
+      return this.unauthorized(res, deviceId, presented === "malformed");
     }
-    // Self-registered device: the Bearer token is the device's own (tokens.issue); the relay forwards it
-    // unchanged through the device's authenticated tunnel and the device validates it (owner-approved).
-    const self = this.isSelf(record);
+    const token = presented.token;
     let clientId: string;
     if (self) {
       clientId = "bearer:" + createHash("sha256").update(token).digest("hex").slice(0, 16);
@@ -881,7 +922,92 @@ export class CloudRelay {
     }
     // Persistence above can yield to a concurrent downgrade; admission is rechecked immediately before forwarding.
     if ((await this.entitled(record)) !== "entitled") return refuse(REFUSALS.not_entitled);
-    if (req.destroyed || res.destroyed) return;
+    return this.forward(req, res, {
+      deviceId,
+      record,
+      clientId,
+      summary,
+      started,
+      refuse,
+      method,
+      path: req.url ?? "",
+    });
+  }
+
+  /**
+   * A self-OAuth token request the relay composed (self-oauth.ts), forwarded to the device's
+   * `/d/<deviceId>/oauth/token` with the same admission as an exchange; the device's answer is returned.
+   */
+  private async forwardToken(req: IncomingMessage, res: ServerResponse, t: ForwardedTokenRequest): Promise<void> {
+    const started = this.now();
+    const summary: Summary = { event: "oauth.token", deviceId: t.deviceId, method: "POST" };
+    const refuse = (refusal: Refusal, extra: Record<string, string> = {}) => {
+      this.discard(req);
+      if (!res.headersSent && !res.destroyed) {
+        const body = JSON.stringify({ error: "temporarily_unavailable", error_description: refusal.message });
+        res.writeHead(refusal.status, {
+          "content-type": "application/json",
+          "content-length": String(Buffer.byteLength(body)),
+          "cache-control": "no-store",
+          "access-control-allow-origin": "*",
+          ...refusal.headers,
+          ...extra,
+        });
+        res.end(body);
+      }
+      this.log({ ...summary, status: refusal.status, code: refusal.code, durationMs: this.now() - started });
+    };
+    const record = await this.record(t.deviceId);
+    if (!record || !this.isSelf(record)) return refuse(REFUSALS.device_offline);
+    return this.forward(req, res, {
+      deviceId: t.deviceId,
+      record,
+      clientId: t.clientKey,
+      summary,
+      started,
+      refuse,
+      method: "POST",
+      path: `/d/${t.deviceId}/oauth/token`,
+      composed: {
+        headers: [
+          ["host", this.options.relayHost],
+          ["content-type", "application/x-www-form-urlencoded"],
+          ["content-length", String(t.body.length)],
+          ["accept", "application/json"],
+          ["authorization", t.authorization],
+        ],
+        body: t.body,
+        responseHeaders: [["access-control-allow-origin", "*"]],
+      },
+    });
+  }
+
+  /**
+   * Admission (device online, rates, concurrency) and forwarding over the device's tunnel: the client's
+   * own request (exchange), or one the relay composed whose body it has already read (`composed`).
+   */
+  private async forward(
+    req: IncomingMessage,
+    res: ServerResponse,
+    f: {
+      readonly deviceId: string;
+      readonly record: DeviceRecord;
+      readonly clientId: string;
+      readonly summary: Summary;
+      readonly started: number;
+      readonly refuse: (refusal: Refusal, extra?: Record<string, string>) => void;
+      readonly method: string;
+      readonly path: string;
+      readonly composed?: {
+        readonly headers: HeaderList;
+        readonly body: Buffer;
+        readonly responseHeaders?: HeaderList;
+      };
+    },
+  ): Promise<void> {
+    const { deviceId, record, clientId, refuse } = f;
+    // A composed request's client body was already read (a fully read request reports destroyed).
+    if (res.destroyed || (!f.composed && req.destroyed)) return;
     const admissionTunnel = this.routes.get(deviceId);
     if (!admissionTunnel?.routable || this.revokedRecords.has(record)) return refuse(REFUSALS.device_offline);
     const clientKey = JSON.stringify([deviceId, clientId]);
@@ -913,14 +1039,14 @@ export class CloudRelay {
     res.once("finish", release);
     try {
       const admittedAt = this.now();
-      const declared = req.headers["content-length"];
+      const declared = f.composed ? undefined : req.headers["content-length"];
       const length = declared === undefined ? undefined : Number(declared);
       if (length !== undefined && (!Number.isSafeInteger(length) || length < 0)) return refuse(REFUSALS.bad_request);
       if (length !== undefined && length > MAX_REQUEST_BODY_BYTES) return refuse(REFUSALS.request_too_large);
-      const headers = endToEndHeaders(req.rawHeaders);
+      const headers = f.composed ? f.composed.headers : endToEndHeaders(req.rawHeaders);
       // A body without a length is read completely first, so the size limit is enforced before forwarding.
-      let buffered: Buffer | undefined;
-      if (length === undefined && req.headers["transfer-encoding"] !== undefined) {
+      let buffered: Buffer | undefined = f.composed?.body;
+      if (!f.composed && length === undefined && req.headers["transfer-encoding"] !== undefined) {
         // Within the exchange deadline (AD-22 point 12), which starts at admission.
         const body = await readBody(
           req,
@@ -939,9 +1065,17 @@ export class CloudRelay {
       const tunnel = this.routes.get(deviceId);
       if (!tunnel || !tunnel.routable || tunnel !== admissionTunnel || this.revokedRecords.has(record))
         return refuse(REFUSALS.device_offline);
-      const ex = new Exchange(res, summary, started, this.log, this.now, this.stallMs);
+      const ex = new Exchange(
+        res,
+        f.summary,
+        f.started,
+        this.log,
+        this.now,
+        this.stallMs,
+        f.composed?.responseHeaders ?? [],
+      );
       const opened = tunnel.open(
-        { method, path: req.url ?? "", headers, deadlineMs: this.deadlineMs - (this.now() - admittedAt) },
+        { method: f.method, path: f.path, headers, deadlineMs: this.deadlineMs - (this.now() - admittedAt) },
         noBody,
         ex,
       );
@@ -1183,6 +1317,8 @@ class Exchange {
     private readonly log: RelayLogger,
     private readonly now: () => number,
     private readonly stallMs: number,
+    /** Added to the device's response head (CORS of the self-OAuth token endpoint). */
+    private readonly responseHeaders: HeaderList = [],
   ) {
     res.on("close", () => {
       if (this.finished) return;
@@ -1231,6 +1367,7 @@ class Exchange {
     if (this.finished) return;
     const flat: string[] = [];
     for (const [name, value] of headers) if (!isHopByHop(name)) flat.push(name, value);
+    for (const [name, value] of this.responseHeaders) flat.push(name, value);
     try {
       this.res.writeHead(status, flat);
       this.res.flushHeaders();

@@ -208,6 +208,64 @@ describe("owner chat threads and project access", () => {
     expect(() => chat.poll(after.id)).toThrow(/Unknown conversation/);
   });
 
+  it("keeps the system prompt and the first exchange while later turns slide out of a long thread", async () => {
+    let thread: string | undefined;
+    for (let i = 0; i < 22; i++) {
+      const next = await turn(`turn ${i}`, thread ? { thread } : {});
+      expect(next.result.state).toBe("completed");
+      thread = next.thread;
+    }
+    const last = bodies.at(-1)!.messages;
+    // System prompt + the first exchange (the goal) + the 19 latest exchanges + the new message.
+    expect(last).toHaveLength(42);
+    expect(last[0]!.role).toBe("system");
+    expect(last.slice(1, 5).map((m) => m.content)).toEqual(["turn 0", "Answer 1", "turn 2", "Answer 3"]);
+    expect(last.slice(-3, -1).map((m) => m.content)).toEqual(["turn 20", "Answer 21"]);
+    expect(last.at(-1)!.content).toEqual([{ type: "text", text: "turn 21" }]);
+    expect(last.some((m) => m.content === "turn 1")).toBe(false);
+  });
+
+  it("bounds a thread by size and keeps its first exchange", async () => {
+    const big = (i: number) => `${i}:${"x".repeat(30_000)}`;
+    let thread: string | undefined;
+    for (let i = 0; i < 5; i++) thread = (await turn(big(i), thread ? { thread } : {})).thread;
+    // Four 30 000-character turns exceed the 120 000-character history: the second exchange went.
+    expect(
+      bodies
+        .at(-1)!
+        .messages.slice(1, -1)
+        .map((m) => String(m.content).split(":")[0]),
+    ).toEqual(["0", "Answer 1", "2", "Answer 3", "3", "Answer 4"]);
+  });
+
+  it("forgets the least recently used thread beyond the thread count", async () => {
+    const first = await turn("keep me");
+    const second = await turn("drop me");
+    for (let i = 0; i < 14; i++) await turn(`filler ${i}`);
+    await turn("touch", { thread: first.thread });
+    await turn("one more");
+    // 17 threads: the least recently used one (not the first, touched again) is forgotten.
+    expect((await turn("again", { thread: second.thread })).threadReset).toBe(true);
+    const kept = await turn("still here", { thread: first.thread });
+    expect(kept.threadReset).toBeUndefined();
+    expect(kept.thread).toBe(first.thread);
+  });
+
+  it("forgets the least recently used threads beyond the total remembered size", async () => {
+    // Twelve threads of three 30 000-character turns exceed the 1 000 000 characters kept in total.
+    const threads: string[] = [];
+    for (let t = 0; t < 12; t++) {
+      let thread: string | undefined;
+      for (let i = 0; i < 3; i++)
+        thread = (await turn(`${t}.${i}:${"y".repeat(30_000)}`, thread ? { thread } : {})).thread;
+      threads.push(thread!);
+    }
+    expect((await turn("lost", { thread: threads[0] })).threadReset).toBe(true);
+    const remembered = await turn("remembered", { thread: threads[1] });
+    expect(remembered.threadReset).toBeUndefined();
+    expect(bodies.at(-1)!.messages).toHaveLength(8);
+  });
+
   it("uses the Anthropic system parameter and history", async () => {
     const one = await turn("hello", {}, "Anthropic");
     await turn("again", { thread: one.thread }, "Anthropic");

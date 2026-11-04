@@ -7,7 +7,9 @@
  * entry point of the existing HTTP pipeline (AD-15, AD-21). The only checks
  * this module replaces are the two AD-22 point 7 names: the loopback Host
  * check (the request must name the pinned relay host) and the `/mcp` path
- * check (the request must name `/d/<own deviceId>/mcp`). Everything else —
+ * check (the request must name `/d/<own deviceId>/mcp`, or the OAuth token
+ * endpoint `/d/<own deviceId>/oauth/token` of a self-registered device's
+ * relay URL, forwarded to the loopback `/oauth/token`). Everything else —
  * OAuth token verification, device/account binding, admission, sessions,
  * ExecutionGuard, PermissionEngine, approvals, audit — runs unchanged in the
  * pipeline behind the loopback hop. Nothing here reads a JSON-RPC body or
@@ -525,14 +527,14 @@ export class DeviceTunnel {
       this.answerLocally(s, checked.status, checked.error);
       return;
     }
-    this.forward(s, checked.method, checked.query, checked.headers);
+    this.forward(s, checked.method, checked.path, checked.headers);
   }
 
   /** AD-22 point 7, the two checks that replace the loopback ones, plus well-formedness. */
   private checkHead(
     head: Record<string, unknown>,
   ):
-    | { method: string; query: string; headers: OutgoingHttpHeaders; length?: number }
+    | { method: string; path: string; headers: OutgoingHttpHeaders; length?: number }
     | { status: number; error: string } {
     const method = head.method;
     if (typeof method !== "string" || !ALLOWED_METHODS.has(method)) return { status: 405, error: "method_not_allowed" };
@@ -541,7 +543,15 @@ export class DeviceTunnel {
     const target = typeof head.path === "string" ? head.path : "";
     const q = target.indexOf("?");
     const pathname = q < 0 ? target : target.slice(0, q);
-    if (pathname !== `/d/${this.options.credential.deviceId}/mcp`) return { status: 404, error: "not_found" };
+    // The device's MCP URL, and the OAuth token endpoint of a self-registered device's relay URL (its
+    // loopback entry answers it; a paired device's relay entry has none and answers 404).
+    const local =
+      pathname === `/d/${this.options.credential.deviceId}/mcp`
+        ? (this.options.target.path ?? "/mcp")
+        : pathname === `/d/${this.options.credential.deviceId}/oauth/token`
+          ? "/oauth/token"
+          : undefined;
+    if (local === undefined) return { status: 404, error: "not_found" };
     const counts = new Map<string, number>();
     for (const [name] of headers) counts.set(name, (counts.get(name) ?? 0) + 1);
     for (const name of SINGLETON_HEADERS)
@@ -563,9 +573,8 @@ export class DeviceTunnel {
       out[name] = prev === undefined ? value : Array.isArray(prev) ? [...prev, value] : [String(prev), value];
     }
     out.host = `${this.options.target.host}:${this.options.target.port}`;
-    return length === undefined
-      ? { method, query: q < 0 ? "" : target.slice(q), headers: out }
-      : { method, query: q < 0 ? "" : target.slice(q), headers: out, length };
+    const path = local + (q < 0 ? "" : target.slice(q));
+    return length === undefined ? { method, path, headers: out } : { method, path, headers: out, length };
   }
 
   /** An ordinary HTTP error for a request that never reached the pipeline. */
@@ -586,14 +595,14 @@ export class DeviceTunnel {
     this.pump(s);
   }
 
-  private forward(s: Stream, method: string, query: string, headers: OutgoingHttpHeaders): void {
+  private forward(s: Stream, method: string, path: string, headers: OutgoingHttpHeaders): void {
     const length = headers["content-length"];
     if (typeof length === "string") s.declaredLength = Number(length);
     const req = httpRequest({
       host: this.options.target.host,
       port: this.options.target.port,
       method,
-      path: (this.options.target.path ?? "/mcp") + query,
+      path,
       headers,
       agent: false,
     });
