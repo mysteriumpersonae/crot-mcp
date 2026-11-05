@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   openCodeBodyDetail,
   openCodeDetail,
+  openCodeV2Refusal,
   workspaceInventory,
   workspaceReply,
   type WorkspaceRequest,
@@ -22,6 +23,31 @@ describe("OpenCode's own explanation of a failure", () => {
     expect(openCodeBodyDetail("")).toBeUndefined();
     // A ref that is not a plain id is left out.
     expect(openCodeBodyDetail(JSON.stringify({ name: "E", data: { message: "m", ref: "<script>" } }))).toBe("E: m");
+  });
+  it("reads OpenCode 2's tagged errors: the refused model call's own status, and its free usage limit", () => {
+    const limit = JSON.stringify({
+      _tag: "ProviderRequestError",
+      providerID: "opencode",
+      reason: "rate_limit",
+      message:
+        "Free usage limit reached. Free models work in OpenCode (https://opencode.ai); subscribe to OpenCode Go to keep going: https://opencode.ai/go",
+      status: 429,
+      retryAfterMs: 1000,
+    });
+    expect(openCodeV2Refusal(limit)).toEqual({ httpStatus: 429, free: true });
+    expect(openCodeBodyDetail(limit)).toBe(
+      "ProviderRequestError: Free usage limit reached. Free models work in OpenCode (https://opencode.ai); subscribe to OpenCode Go to keep going: https://opencode.ai/go",
+    );
+    const auth = JSON.stringify({ _tag: "UnauthorizedError", message: "Authentication required" });
+    expect(openCodeV2Refusal(auth)).toEqual({ free: false });
+    expect(openCodeBodyDetail(auth)).toBe("UnauthorizedError: Authentication required");
+    expect(
+      openCodeV2Refusal(JSON.stringify({ _tag: "ProviderRequestError", status: 401, message: "Invalid API key" })),
+    ).toEqual({ httpStatus: 401, free: false });
+    // OpenCode 1.x errors, plain text and a tag that is not a plain name are not OpenCode 2 refusals.
+    expect(openCodeV2Refusal(JSON.stringify({ name: "UnknownError", data: { message: "m" } }))).toBeUndefined();
+    expect(openCodeV2Refusal("Bad Gateway")).toBeUndefined();
+    expect(openCodeBodyDetail(JSON.stringify({ _tag: "<b>x</b>", message: "m" }))).toBe("m");
   });
   it("removes control characters and redacts what looks like a credential", () => {
     expect(

@@ -1937,6 +1937,8 @@ export class ProductRuntime {
       ...(status.server ? { server: status.server } : {}),
       // Why local OpenCode did not start last time: the UI offers CROT's verified OpenCode.
       ...(status.problem ? { problem: status.problem } : {}),
+      // CROT's own copy serves: why the owner's own OpenCode is not used (not found, or why it did not start).
+      ...(status.ownerProblem ? { ownerProblem: status.ownerProblem } : {}),
     };
   }
   /** Whether a configured provider uses CROT's own OpenCode server. */
