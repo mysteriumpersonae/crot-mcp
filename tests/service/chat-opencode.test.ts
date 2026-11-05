@@ -203,6 +203,68 @@ describe("zenInventory", () => {
       httpStatus: 500,
     });
   });
+
+  it("names why a request got no answer and whose OpenCode hit the free tier, never the socket message", () => {
+    // fetch() rejects with TypeError "fetch failed" and the socket error as its cause.
+    const failed = (cause: unknown) => Object.assign(new TypeError("fetch failed"), { cause });
+    const socket = (code: string) => Object.assign(new Error(`connect ${code} 10.0.0.7:11434 secret`), { code });
+    expect(providerDiagnostic(failed(socket("ECONNREFUSED")))).toEqual({
+      code: "LOCAL_SERVER_OFFLINE",
+      stage: "network",
+      networkCode: "ECONNREFUSED",
+    });
+    // Every address of a name refused: an AggregateError of socket errors.
+    expect(providerDiagnostic(failed(new AggregateError([socket("ECONNREFUSED"), socket("ECONNREFUSED")])))).toEqual({
+      code: "LOCAL_SERVER_OFFLINE",
+      stage: "network",
+      networkCode: "ECONNREFUSED",
+    });
+    expect(providerDiagnostic(failed(socket("ENOTFOUND")))).toEqual({
+      code: "OPERATION_FAILED",
+      stage: "network",
+      networkCode: "ENOTFOUND",
+    });
+    expect(providerDiagnostic(failed(socket("UND_ERR_CONNECT_TIMEOUT")))).toEqual({
+      code: "TIMEOUT",
+      stage: "network",
+      networkCode: "ETIMEDOUT",
+    });
+    expect(providerDiagnostic(new DOMException("The operation was aborted due to timeout", "TimeoutError"))).toEqual({
+      code: "TIMEOUT",
+      stage: "network",
+    });
+    // Anything else stays generic: no message, no address, no unknown code.
+    expect(providerDiagnostic(failed(socket("EWHATEVER")))).toEqual({ code: "OPERATION_FAILED", stage: "network" });
+    expect(providerDiagnostic(new Error("provider said secret"))).toEqual({
+      code: "OPERATION_FAILED",
+      stage: "network",
+    });
+    expect(JSON.stringify(providerDiagnostic(failed(socket("ECONNREFUSED"))))).not.toContain("10.0.0.7");
+    // A server that answered without a single model.
+    expect(
+      providerDiagnostic(new CrotError("OPERATION_FAILED", "x", { stage: "inventory", reason: "no_models" })),
+    ).toEqual({ code: "NO_MODELS", stage: "inventory" });
+    // OpenCode's free tier refusing the copy CROT installed (not signed in), not the owner's own OpenCode.
+    const tier = (source?: string) =>
+      new CrotError("OPERATION_FAILED", "x", {
+        stage: "local",
+        httpStatus: 429,
+        reason: "free_tier_limit",
+        ...(source ? { source } : {}),
+      });
+    expect(providerDiagnostic(tier("crot"))).toEqual({
+      code: "FREE_TIER_LIMIT",
+      stage: "local",
+      httpStatus: 429,
+      source: "crot",
+    });
+    expect(providerDiagnostic(tier("owner"))).toEqual({ code: "FREE_TIER_LIMIT", stage: "local", httpStatus: 429 });
+    expect(chatFailure(tier("crot"))).toBe(
+      "OpenCode's anonymous free limit is used up: CROT's own OpenCode copy is not signed in (your OpenCode was not found or did not start). Enter an OpenCode Zen API key (opencode.ai/zen): free models work with it too.",
+    );
+    expect(chatFailure(tier("owner"))).toContain("free usage limit is reached");
+    expect(chatFailure(tier())).toContain("free usage limit is reached");
+  });
 });
 
 interface Seen {

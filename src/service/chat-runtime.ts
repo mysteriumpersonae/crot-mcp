@@ -138,23 +138,55 @@ export interface ProviderDiagnostic {
   model?: string;
   /** Local OpenCode: its own one-line explanation (see openCodeDetail), shown to the owner as text. */
   detail?: string;
+  /** Local OpenCode's free tier: refused for the copy CROT installed (not signed in), not the owner's own. */
+  source?: "owner" | "crot";
 }
 
 /**
  * Diagnostic codes for UI display:
  * NETWORK_GUARD_BLOCKED – CROT network policy blocked the request (add host to permissions.network.allow)
  * AUTH_INVALID_KEY      – server rejected the credential (HTTP 401/403)
- * LOCAL_SERVER_OFFLINE  – local service not running (ECONNREFUSED on loopback)
+ * LOCAL_SERVER_OFFLINE  – nothing listens at the address (connection refused)
+ * NO_MODELS             – the server answered but lists no models
+ * TIMEOUT               – no answer in time
  * OPERATION_FAILED      – other network or protocol error
  */
+/** Socket errors worth naming to the owner (never a message or an address). */
+const NETWORK_CODES = [
+  "ENOTFOUND",
+  "EAI_AGAIN",
+  "ECONNRESET",
+  "ETIMEDOUT",
+  "EHOSTUNREACH",
+  "ENETUNREACH",
+  "CERT_HAS_EXPIRED",
+  "DEPTH_ZERO_SELF_SIGNED_CERT",
+  "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+  "ERR_TLS_CERT_ALTNAME_INVALID",
+];
+/**
+ * A request that never got an answer: fetch() rejects with TypeError "fetch failed" and the socket error as its
+ * cause (an AggregateError when every address of a name failed), AbortSignal.timeout() with a TimeoutError.
+ */
+function fetchDiagnostic(error: unknown): ProviderDiagnostic {
+  const e = error as { name?: unknown; code?: unknown; cause?: unknown } | null | undefined;
+  const cause = (e?.cause ?? undefined) as { name?: unknown; code?: unknown; errors?: unknown } | undefined;
+  if (e?.name === "TimeoutError" || cause?.name === "TimeoutError") return { code: "TIMEOUT", stage: "network" };
+  const first = Array.isArray(cause?.errors) ? (cause.errors[0] as { code?: unknown } | undefined) : undefined;
+  const code = String(cause?.code ?? first?.code ?? e?.code ?? "");
+  if (code === "ECONNREFUSED") return { code: "LOCAL_SERVER_OFFLINE", stage: "network", networkCode: code };
+  if (code === "UND_ERR_CONNECT_TIMEOUT" || code === "ETIMEDOUT")
+    return { code: "TIMEOUT", stage: "network", networkCode: "ETIMEDOUT" };
+  return { code: "OPERATION_FAILED", stage: "network", ...(NETWORK_CODES.includes(code) ? { networkCode: code } : {}) };
+}
 /**
  * Never expose provider bodies, arbitrary thrown messages, URLs or credentials as diagnostics. The one exception
  * is an OpenCode server's own explanation of its failure (`detail`, `model`): CROT's local bridge and the OpenCode
- * servers of the Workspaces provider produce them already bounded and redacted (openCodeDetail), so the owner sees
+ * servers of the OpenCode workspace provider produce them already bounded and redacted (openCodeDetail), so the owner sees
  * which model OpenCode refused and why.
  */
 export function providerDiagnostic(error: unknown): ProviderDiagnostic {
-  if (!(error instanceof CrotError)) return { code: "OPERATION_FAILED", stage: "network" };
+  if (!(error instanceof CrotError)) return fetchDiagnostic(error);
   const d = error.details,
     status = Number(d?.httpStatus),
     errno = String(d?.errno ?? "");
@@ -176,13 +208,22 @@ export function providerDiagnostic(error: unknown): ProviderDiagnostic {
   // OpenCode Zen without a key: anonymous free use refused (FreeUsageLimitError).
   if (d?.reason === "free_usage_limit") return { code: "FREE_USAGE_LIMIT", stage: "probe", httpStatus: 429 };
   // The local OpenCode bridge: OpenCode's own free tier exhausted, not installed or not startable.
-  if (d?.reason === "free_tier_limit") return { code: "FREE_TIER_LIMIT", stage: "local", httpStatus: 429, ...local };
+  if (d?.reason === "free_tier_limit")
+    return {
+      code: "FREE_TIER_LIMIT",
+      stage: "local",
+      httpStatus: 429,
+      ...local,
+      ...(d.source === "crot" ? { source: "crot" as const } : {}),
+    };
   if (d?.reason === "opencode_not_installed") return { code: "OPENCODE_NOT_INSTALLED", stage: "local" };
   // Why it did not start (exit code and OpenCode's last error line, HTTP status, the wait), and an OpenCode
   // too old for CROT (0.x has none of the API CROT uses): the UI offers CROT's verified OpenCode.
   if (d?.reason === "opencode_start_failed") return { code: "OPENCODE_START_FAILED", stage: "local", ...local };
   if (d?.reason === "opencode_too_old") return { code: "OPENCODE_TOO_OLD", stage: "local", ...local };
-  // ECONNREFUSED on a loopback address → local server not running.
+  // The server answered without a single model.
+  if (d?.reason === "no_models") return { code: "NO_MODELS", stage: "inventory" };
+  // ECONNREFUSED: nothing listens at the address (a local server that is not running).
   if (errno === "ECONNREFUSED") {
     return { code: "LOCAL_SERVER_OFFLINE", stage: "network", networkCode: errno };
   }
@@ -199,18 +240,7 @@ export function providerDiagnostic(error: unknown): ProviderDiagnostic {
     stage: ["models", "workspace", "inventory", "local"].includes(String(d?.stage)) ? String(d?.stage) : "network",
     ...(Number.isInteger(status) && status >= 100 && status <= 599 ? { httpStatus: status } : {}),
     ...local,
-    ...([
-      "ENOTFOUND",
-      "EAI_AGAIN",
-      "ECONNRESET",
-      "ETIMEDOUT",
-      "CERT_HAS_EXPIRED",
-      "DEPTH_ZERO_SELF_SIGNED_CERT",
-      "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
-      "ERR_TLS_CERT_ALTNAME_INVALID",
-    ].includes(errno)
-      ? { networkCode: errno }
-      : {}),
+    ...(NETWORK_CODES.includes(errno) ? { networkCode: errno } : {}),
   };
 }
 
@@ -231,7 +261,7 @@ export interface ChatProviderConfig {
   keySource?: "stored" | "env" | "auth.json";
   /** OpenCode (Free & Zen) through local OpenCode: the latest check's request with the chosen model. */
   modelCheck?: ModelCheck;
-  /** OpenCode (Workspaces): CROT starts and stops the server itself (`opencode serve`, random password). */
+  /** OpenCode workspace agent (earlier connections): CROT starts and stops the server itself (`opencode serve`, random password). */
   managed?: boolean;
 }
 
@@ -357,6 +387,16 @@ function providerHttpError(status: number, body: string, stage: string): CrotErr
 }
 
 /**
+ * OpenCode's free tier refusing the copy CROT installed: that copy has its own settings and is not signed in, so
+ * the owner's own OpenCode (signed in) may still work. The error says which one was refused.
+ */
+function serverSource(error: unknown, server: OpenCodeServer): unknown {
+  if (!(error instanceof CrotError) || error.details?.reason !== "free_tier_limit" || server.source !== "crot")
+    return error;
+  return new CrotError(error.code, error.message, { ...error.details, source: "crot" }, { cause: error });
+}
+
+/**
  * The owner-facing message of a failed chat turn: fixed, translatable text chosen by the provider's
  * status (never the provider's own text), or undefined for the generic message.
  */
@@ -367,7 +407,9 @@ export function chatFailure(error: unknown): string | undefined {
   if (d.reason === "free_usage_limit")
     return "OpenCode Zen refused free use without a key (free usage limit). Enter an OpenCode Zen API key, or connect through local OpenCode (Auto-connect).";
   if (d.reason === "free_tier_limit")
-    return "OpenCode's free usage limit is reached (OpenCode suggests its Go subscription). Try again later, or enter an OpenCode Zen API key.";
+    return d.source === "crot"
+      ? "OpenCode's anonymous free limit is used up: CROT's own OpenCode copy is not signed in (your OpenCode was not found or did not start). Enter an OpenCode Zen API key (opencode.ai/zen): free models work with it too."
+      : "OpenCode's free usage limit is reached (OpenCode suggests its Go subscription). Try again later, or enter an OpenCode Zen API key.";
   if (d.reason === "opencode_not_installed")
     return "Local OpenCode CLI was not found. Click “Install and start OpenCode (1 click)” or enter an OpenCode Zen API key.";
   if (d.reason === "opencode_start_failed")
@@ -872,6 +914,13 @@ export class ChatRuntime {
         `${endpoint}/models${base === "Anthropic" ? `?limit=100${cursor ? `&after_id=${encodeURIComponent(cursor)}` : ""}` : ""}`,
         { headers, timeoutMs: 30000, signal: this.host.context().signal },
       );
+      // A local server without /models at this address is not an OpenAI-compatible API there (usually /v1 is
+      // missing): the owner is told so instead of an empty list.
+      if (response.status === 404 && base === "Local HTTP")
+        throw new CrotError("OPERATION_FAILED", "Model inventory endpoint not found", {
+          stage: "models",
+          httpStatus: 404,
+        });
       // 404 or non-200 on /models is common for custom servers — treat as empty (user enters model manually).
       if (response.status === 404 || (base === "Custom API" && response.status !== 200))
         return { ok: true, models: [] };
@@ -921,7 +970,7 @@ export class ChatRuntime {
       );
       return { model, ok: true };
     } catch (error) {
-      return { model, ok: false, diagnostic: { ...providerDiagnostic(error), model } };
+      return { model, ok: false, diagnostic: { ...providerDiagnostic(serverSource(error, route.server)), model } };
     }
   }
   /**
@@ -984,7 +1033,7 @@ export class ChatRuntime {
       },
     };
   }
-  /** CROT's own OpenCode server of the Workspaces provider when the owner chose "Start and connect". */
+  /** CROT's own OpenCode server of an earlier OpenCode workspace connection made with "Start and connect". */
   private managedServer(provider: ChatProvider): OpenCodeServer | undefined {
     return provider === "OpenCode" && this.host.configuration(provider)?.managed
       ? this.host.openCode?.bridge.current()
@@ -1262,6 +1311,18 @@ export class ChatRuntime {
    * native tool calls, and the results go back as the next message of the same ephemeral OpenCode session.
    */
   private async localTurn(c: Conversation, p: ChatStart, context: AuthContext, server: OpenCodeServer): Promise<void> {
+    try {
+      await this.localExchange(c, p, context, server);
+    } catch (error) {
+      throw serverSource(error, server);
+    }
+  }
+  private async localExchange(
+    c: Conversation,
+    p: ChatStart,
+    context: AuthContext,
+    server: OpenCodeServer,
+  ): Promise<void> {
     if (p.attachments.some((a) => a.mime !== "text/plain"))
       throw new CrotError("OPERATION_FAILED", "Local OpenCode answers text only", { reason: "local_text_only" });
     if (!localTools(p))

@@ -1,7 +1,8 @@
 /**
  * The local OpenCode bridge: CROT's own `opencode serve` on 127.0.0.1, started when the owner connects
- * OpenCode without a key (Cloud LLM "OpenCode (Free & Zen)") or chooses "Start and connect OpenCode"
- * (Workspaces), and stopped with CROT. A random password protects it (OPENCODE_SERVER_PASSWORD, HTTP Basic).
+ * OpenCode without a key (Cloud LLM "OpenCode (Free & Zen)") or uses an OpenCode workspace agent connected
+ * with a managed server, and stopped with CROT. A random password protects it (OPENCODE_SERVER_PASSWORD, HTTP
+ * Basic).
  * An OpenCode server the owner already runs on the default port without a password is used as is and
  * never stopped by CROT.
  *
@@ -10,9 +11,10 @@
  * the emergency stop or an explicit runtime deny of process.start refuses it. Of its output only a short tail
  * is kept, for the owner's explanation of a failed start (one redacted line, see openCodeDetail).
  *
- * Which OpenCode: the owner's own `opencode` first; when it does not start (too old, broken installation,
- * crash, no answer), the copy CROT installed (opencode-runtime.ts) in its own config, data, state and cache
- * folders, so it never touches the owner's OpenCode. Why the last start failed stays in status() (`problem`):
+ * Which OpenCode: the owner's own `opencode` first (every one found: PATH, then the usual install places);
+ * when none starts (too old, broken installation, crash, no answer), the copy CROT installed
+ * (opencode-runtime.ts) in its own config, data, state and cache folders, so it never touches the owner's
+ * OpenCode (and is not signed in to it). Why the last start failed stays in status() (`problem`):
  * the UI offers the one-click install of CROT's verified OpenCode with the exact reason.
  *
  * It never outlives CROT: close() stops it (the service's shutdown on SIGINT/SIGTERM/SIGHUP), terminateSync()
@@ -27,7 +29,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { CrotError } from "../core/errors.js";
 import { createEnvironmentPolicy } from "../core/platform/environment.js";
 import type { ExitStatus, ManagedProcess } from "../core/platform/types.js";
-import { findOpenCodeBinary, type OpenCodeLocal } from "./opencode-local.js";
+import { findOpenCodeBinaries, type OpenCodeLocal } from "./opencode-local.js";
 import { BridgePidFile, nodeBridgeProcesses, type BridgeProcesses } from "./opencode-pid.js";
 import { openCodeDetail } from "./workspace-chat.js";
 
@@ -228,20 +230,38 @@ export class OpenCodeBridge {
   private get port(): number {
     return this.options.port ?? OPENCODE_DEFAULT_PORT;
   }
-  /** The OpenCode programs to start, in order: the owner's own `opencode`, then the copy CROT installed. */
+  /**
+   * The OpenCode programs to start, in order: every `opencode` of the owner (PATH first, then the usual install
+   * places), then the copy CROT installed. The owner's OpenCode keeps the owner's settings and sign-in; CROT's
+   * copy has its own and is not signed in.
+   */
   async commands(): Promise<OpenCodeCommand[]> {
-    const own = this.options.command
-      ? await this.options.command()
-      : await findOpenCodeBinary(this.options.local).then((binary) =>
-          binary ? { command: binary, args: [] } : undefined,
-        );
+    const owner = this.options.command
+      ? await this.options.command().then((own) => (own ? [own] : []))
+      : await this.ownerCommands();
     const crot = this.options.runtimeCommand
       ? await this.options.runtimeCommand()
       : await this.options.runtime?.binary().then((binary) => (binary ? { command: binary, args: [] } : undefined));
-    const out: OpenCodeCommand[] = own ? [{ ...own, source: "owner" }] : [];
-    const same = own && crot && own.command === crot.command && own.args.join("\0") === crot.args.join("\0");
+    const out: OpenCodeCommand[] = owner.map((own) => ({ ...own, source: "owner" }));
+    const same =
+      crot && owner.some((own) => own.command === crot.command && own.args.join("\0") === crot.args.join("\0"));
     if (crot && !same) out.push({ ...crot, source: "crot", env: this.runtimeEnvironment() });
     return out;
+  }
+  /**
+   * The owner's OpenCode programs, each with its own folder first on PATH: an npm installation (`#!/usr/bin/env
+   * node`) then finds the Node.js it was installed with (nvm, fnm, ...) even when CROT was started from the
+   * desktop with a short PATH.
+   */
+  private async ownerCommands(): Promise<OpenCodeCommand[]> {
+    const windows = this.options.local.platform === "win32",
+      p = windows ? path.win32 : path.posix,
+      inherited = createEnvironmentPolicy(windows).get(this.options.env, "PATH");
+    return (await findOpenCodeBinaries(this.options.local)).map((binary) => ({
+      command: binary,
+      args: [],
+      env: { PATH: inherited ? `${p.dirname(binary)}${p.delimiter}${inherited}` : p.dirname(binary) },
+    }));
   }
   /** The command that starts OpenCode first, or undefined when OpenCode is not installed. */
   async command(): Promise<OpenCodeCommand | undefined> {

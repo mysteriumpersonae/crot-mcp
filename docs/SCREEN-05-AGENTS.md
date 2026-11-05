@@ -2,12 +2,17 @@
 
 Only the central Agents route is changed. Sidebar/shared header remain unchanged.
 Two desktop columns use 1fr 1fr and a 24px gap. Both columns have usable vertical
-scrolling as a fallback, not clipped content. Outbound accordions start with Cloud
-open. Opening a section closes other open sections only when the column cannot
-fit them. Resize and nested advanced expansion re-evaluate fit. An unusually tall
-single section remains scrollable; essential controls are never hidden by overflow.
-Inputs and custom select popovers share Unified Chat control geometry, menu rows,
-keyboard navigation, and subtle gray input focus treatment.
+scrolling as a fallback, not clipped content. The outbound column has two accordions,
+**Cloud LLM** (open first) and **Local models**; exactly one is open at a time
+(opening one closes the other). An unusually tall section remains scrollable;
+essential controls are never hidden by overflow. Both columns use one compact form
+style: 13px field labels, 12px notes, 16px gaps inside a card; logical groups (the
+remote tunnel, the OpenCode Zen key hint and installation, the local server's setup
+hint) are shaded panels (`--bg-sunken`), saved connections are bordered lists with
+their actions on the row. Every action appears once: Disconnect lives only on the
+row of the connection it removes. Inputs and custom select popovers share Unified
+Chat control geometry, menu rows, keyboard navigation, and subtle gray input focus
+treatment.
 
 ## Inbound: connecting CROT as Custom MCP
 
@@ -69,17 +74,28 @@ is reachable even if the user has a custom config that omits the default list.
 `providerDiagnostic` now returns distinct codes:
 - `NETWORK_GUARD_BLOCKED` — ExecutionGuard blocked the request (PERMISSION_DENIED)
 - `AUTH_INVALID_KEY` — server returned HTTP 401 or 403
-- `LOCAL_SERVER_OFFLINE` — ECONNREFUSED on a loopback address
+- `LOCAL_SERVER_OFFLINE` — nothing listens at the address (ECONNREFUSED, from the network
+  guard or from fetch's socket error)
+- `NO_MODELS` — the server answered but lists no models (`reason: "no_models"`)
+- `TIMEOUT` — no answer in time (fetch's `TimeoutError`, a connect timeout; `networkCode`
+  `ETIMEDOUT`)
 - `FREE_USAGE_LIMIT` — OpenCode Zen refused free use (HTTP 429 `FreeUsageLimitError`)
 - `FREE_TIER_LIMIT` — local OpenCode reached OpenCode's own free tier limit (its session
-  status turned to a retry with `free_tier_limit`, or a retry minutes ahead)
+  status turned to a retry with `free_tier_limit`, or a retry minutes ahead). With
+  `source: "crot"` the refused server was the copy CROT installed: it is not signed in to
+  OpenCode, so it has only OpenCode's anonymous free allowance, even when the owner's own
+  OpenCode (signed in) still works in a terminal. The UI then says so: "OpenCode's
+  anonymous free limit is used up: CROT's own OpenCode copy is not signed in (your OpenCode
+  was not found or did not start). Enter an OpenCode Zen API key (opencode.ai/zen): free
+  models work with it too."
 - `OPENCODE_NOT_INSTALLED`, `OPENCODE_START_FAILED`, `OPENCODE_START_REFUSED` — the local
   OpenCode bridge could not be used (no CLI, the server did not become healthy, the
   emergency stop or an explicit runtime deny of process.start)
 - `OPERATION_FAILED` — other network or protocol error (stage `local` when local OpenCode
-  answered with an error)
+  answered with an error; `httpStatus: 404` when a local server has no `/models` at the
+  address)
 
-A diagnostic of local OpenCode (or of an OpenCode server of the Workspaces provider) also
+A diagnostic of local OpenCode (or of an earlier OpenCode workspace connection) also
 carries `model` (the model the request was for) and `detail`: OpenCode's own explanation —
 an error answer's `name: data.message (ref …)`, `{error}` or text, a refused turn's
 `info.error`, a retry's message and link — as one line of at most 300 characters, control
@@ -153,12 +169,21 @@ How CROT reaches OpenCode Zen, in this order (`zenRoute`):
    ("Local OpenCode CLI was not found. Click “Install and start OpenCode (1 click)” or enter
    an OpenCode Zen API key.") and Zen is not asked; listing the models shows the bundled
    catalog (`installed: false`). While OpenCode is not installed and the card is not
-   connected, the form shows "Get a free or paid API key at opencode.ai/zen", **Install and
-   start OpenCode (1 click)** and the install command `npm i -g opencode-ai` with a copy
-   button.
+   connected, the form shows **Install and start OpenCode (1 click)** and the install
+   command `npm i -g opencode-ai` with a copy button; the key link is the one of the Zen
+   hint above (one link, not two).
 
 **Which OpenCode starts, and why it did not.** The bridge tries the owner's own `opencode`
-first, then the copy CROT installed (below), which runs with its own `XDG_CONFIG_HOME`,
+first. CROT usually runs from the desktop, whose PATH lacks the folders a terminal adds, so
+besides PATH it looks in the usual install folders (`~/.opencode/bin`, `~/.local/bin`,
+Homebrew and Linuxbrew, `/usr/local/bin`, `/usr/bin`, bun, the npm prefix
+(`NPM_CONFIG_PREFIX`, `~/.npm-global`), pnpm, Yarn, Volta; on Windows `%APPDATA%\npm`,
+`NVM_SYMLINK`, `Program Files\nodejs`, pnpm, Scoop, WinGet links and Chocolatey) and in
+Node version managers (nvm, fnm, mise, asdf, nvm-windows; newest version first, at most 16
+folders). Every owner binary found is tried in turn (one file reached through several links
+once), each with its own folder first on PATH: an npm launcher (`#!/usr/bin/env node`)
+installed with nvm then finds its Node even when the desktop PATH has none. Only then comes
+the copy CROT installed (below), which runs with its own `XDG_CONFIG_HOME`,
 `XDG_DATA_HOME`, `XDG_STATE_HOME` and `XDG_CACHE_HOME` under `<state>/opencode-runtime/home`
 and so never touches the owner's OpenCode settings, sessions or keys. An OpenCode that failed
 to start is skipped while it is unchanged (same path, size and change time) and another one
@@ -199,8 +224,7 @@ plus `npm_config_*`: the owner's registry and proxy) installs the same version w
 `progress` 0–99, `installed` with `version`, `failed` with `opencode_refused`,
 `download_failed`, `integrity_mismatch`, `install_failed`, `binary_not_found` or `cancelled`
 and a short `detail`) and then runs Save & Test: on the Zen card the same check as
-Auto-connect, in Workspaces the managed server after the owner confirms the same warning as
-Start and connect OpenCode. The emergency stop cancels a running installation, an explicit
+Auto-connect. The emergency stop cancels a running installation, an explicit
 runtime deny of starting processes refuses it, and every outcome is audited
 (`opencode_runtime`, reason only, no output).
 
@@ -234,25 +258,42 @@ OpenCode's default first) replaces the catalog after Save & Test.
 `opencode.status` reports `{available, installed, installCommand, installable?, runtime?:
 {state, version?, reason?, progress?, detail?}, keySource?, server?: {url, managed, version?,
 source?}, problem?}` (never a key or password); `opencode.install` starts the one-click installation and returns the same status;
-`opencode.stop` stops CROT's own server (refused while a generation runs). In Electron, links of the Agents screen open in the
+`opencode.stop` stops CROT's own server (refused while a generation runs; the tray calls it
+when it quits). In Electron, links of the Agents screen open in the
 system browser only for allowlisted HTTPS hosts (`opencode.ai`, Notion, Claude, n8n).
 
-### Local Models
-Ollama defaults to http://127.0.0.1:11434 (explicit IP required for loopback allow).
-LM Studio defaults to 127.0.0.1:1234; preset buttons fill either URL. Test loads
-the server's models into the model selector. OpenCode is in Workspaces.
+### Local models
+Any OpenAI-compatible server on this computer or in the local network (provider
+`Local HTTP`). One **Server URL** field (default `http://127.0.0.1:11434`) and a chip per
+popular server that fills its default address: Ollama `:11434`, LM Studio `:1234`,
+llama.cpp (`llama-server`) `:8080`, vLLM `:8000`, Jan `:1337`. The chip of the server on the
+entered port is highlighted, with a one-line setup hint and its start command (copy button):
+`ollama pull llama3.2`, `lms server start`, `llama-server -m model.gguf --port 8080`,
+`vllm serve …`; Jan needs its Local API Server and key.
 
-### Workspaces
-- **OpenCode server**: native adapter at http://127.0.0.1:4096. **Start and connect
-  OpenCode** (after a warning) starts CROT's own server as above and connects to it
-  (`managed: true`, no stored password); its status line shows "Running on 127.0.0.1:<port>"
-  and Stop. Without an installed OpenCode the card offers **Install and start OpenCode
-  (1 click)** (after the same warning) and the install command; when the owner's OpenCode
-  does not start, **Install verified OpenCode into CROT (1 click)**, as on the Zen card.
-  OpenCode's agents then work in the open project (`x-opencode-directory`) with
-  OpenCode's own permissions; CROT tool grants are not forwarded and CROT never approves
-  their actions. A server the owner runs in a terminal is used with Save & Test as before.
-- **Notion Agents API**: PAT or connection token with agent interaction capability
+What the owner types is normalized before the check and shown as the exact endpoint CROT
+calls ("API endpoint: http://127.0.0.1:11434/v1"): a bare port (`11434`) means
+127.0.0.1; a missing scheme means `http://`; `0.0.0.0` (a server's listen address) becomes
+127.0.0.1; Ollama's native `/api` path and an empty path become `/v1`; anything after `/v1`
+(`/v1/chat/completions`) is dropped. Only http/https without user info is accepted.
+
+**Save & Test** saves the endpoint (its host:port is added to the network allow list, as for
+every provider) and the optional API key (vault), then lists `/models` and picks the
+default model. Failures say what to do: an invalid address (nothing is saved), nothing
+listening at the address (`LOCAL_SERVER_OFFLINE`), no model loaded (`NO_MODELS`), a key
+required (HTTP 401/403), no OpenAI-compatible API at the address (HTTP 404: the address
+usually ends with /v1), an unknown host, a timeout (a server busy loading a model), each with
+`[code · HTTP status · network code]`. The saved server is shown as one row (its name by
+port, endpoint and model) with Disconnect, which removes it and its key. OpenCode is not a
+local server here: it is the Cloud LLM provider **OpenCode (Free & Zen)**.
+
+### Earlier workspace connections
+The Workspaces section (OpenCode server, Notion Agents API) was removed from Agents. Their
+native adapters stay in the service, so connections made before keep working in Chat:
+they are listed under **Connected providers** as "Workspace agent (earlier connection)"
+with Disconnect only (after confirmation; removes the configuration and its vault secret).
+A managed OpenCode server of such a connection is still started on demand and stopped with
+CROT. New ones are not offered in the UI; `chat.configure` still accepts them.
 
 ## Verification boundary
 Real Chromium/CrotService tests cover guarded requests, encrypted credential

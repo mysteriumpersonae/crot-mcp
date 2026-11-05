@@ -58,7 +58,7 @@ export const ChatConfigureSchema = z
       .optional(),
     /** Protocol format for Custom API: "openai" (default) or "anthropic" */
     protocol: z.enum(["openai", "anthropic"]).optional(),
-    /** OpenCode (Workspaces): CROT starts and stops its own `opencode serve` instead of using `endpoint`. */
+    /** OpenCode workspace agent (earlier connections): CROT starts and stops its own `opencode serve` instead of using `endpoint`. */
     managed: z.boolean().optional(),
     /** Display name of a custom profile ("River"); derived from the endpoint host when omitted. */
     label: z

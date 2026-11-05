@@ -39,7 +39,10 @@ describe("scoped Agents center", () => {
     expect(AGENTS_CENTER_RENDERER).not.toContain("GitHub");
     expect(AGENTS_CENTER_RENDERER).toContain("['OpenCode','Notion Agents']");
     expect(AGENTS_CENTER_RENDERER).toContain("chat.remove");
-    expect(AGENTS_CENTER_RENDERER).toContain("fitAccordions");
+    // One accordion open at a time (Cloud LLM, Local models); the Workspaces section is gone from the setup.
+    expect(AGENTS_CENTER_RENDERER).toContain("for(const d of accordions)d.open=d===details&&open;");
+    expect(AGENTS_CENTER_RENDERER).not.toContain("Workspaces (OpenCode, Notion Agents)");
+    expect(AGENTS_CENTER_RENDERER).not.toContain("wsStart");
     expect(AGENTS_CENTER_RENDERER).toContain("pop.setAttribute('popover','auto')");
     expect(AGENTS_CENTER_CSS).toContain("overflow-y:auto");
     expect(CONTROL_CENTER_RENDERER).toContain("next.resourceUri,next.localMcpUrl,next.pairing");
@@ -80,10 +83,12 @@ describe("MCP Server Access remote tunnel toggle", () => {
     );
     expect(AGENTS_CENTER_RENDERER).toContain("api.action('remote.setMode',{enabled})");
     expect(AGENTS_CENTER_RENDERER).toContain("remoteToggle.input.dataset.remoteMode=''");
-    // Every provider card has an explicit Disconnect button that calls chat.remove.
-    expect(AGENTS_CENTER_RENDERER).toContain("cloudRemove.dataset.cloudRemove=''");
+    // Every saved provider has one Disconnect button that calls chat.remove: in Connected providers (cloud and
+    // earlier workspace connections) and beside the saved local server, never a second one beside Save & Test.
+    expect(AGENTS_CENTER_RENDERER).toContain("remove.dataset.connectedRemove=''");
+    expect(AGENTS_CENTER_RENDERER).toContain("legacyRemove.dataset.legacyRemove=''");
     expect(AGENTS_CENTER_RENDERER).toContain("localRemove.dataset.localRemove=''");
-    expect(AGENTS_CENTER_RENDERER).toContain("wsRemove.dataset.workspaceRemove=''");
+    expect(AGENTS_CENTER_RENDERER).not.toContain("cloudRemove");
     expect(AGENTS_CENTER_RENDERER.match(/button\('Disconnect',/g)?.length).toBeGreaterThanOrEqual(3);
     expect(AGENTS_CENTER_RENDERER).toContain("rpc('chat.remove',{provider:'Local HTTP'})");
     expect(AGENTS_CENTER_RENDERER).toContain("let remoteOn=view.remoteMode===true");
@@ -216,16 +221,27 @@ describe("Other authorization methods and provider checks", () => {
       "text(apiKeyLabel,zen?'API Key (optional for Free / Zen API Key)':'API Key');zenHint.hidden=!zen;",
     );
     expect(AGENTS_CENTER_RENDERER).toContain("zenHint.dataset.zenHint=''");
-    // Save & Test sits in the key row, which is never hidden; Local and Workspaces have their own checks.
-    expect(AGENTS_CENTER_RENDERER).toContain("keyRow.append(keyInput,saveTest,cloudRemove)");
+    // Save & Test sits in the key row, which is never hidden; Local models have their own check.
+    expect(AGENTS_CENTER_RENDERER).toContain("keyRow.append(keyInput,saveTest);");
     expect(AGENTS_CENTER_RENDERER).toContain("saveTest.dataset.cloudTest=''");
     expect(AGENTS_CENTER_RENDERER).toContain(".dataset.localTest=''");
-    expect(AGENTS_CENTER_RENDERER).toContain(".dataset.workspaceTest=''");
-    // Free models before the first check; Ollama and LM Studio presets.
+    expect(AGENTS_CENTER_RENDERER).not.toContain("workspaceTest");
+    // Free models before the first check; presets of the usual local servers on their default ports.
     expect(AGENTS_CENTER_RENDERER).toContain("config?.suggestedModels||[]");
-    expect(AGENTS_CENTER_RENDERER).toContain(
-      "[['Ollama','http://127.0.0.1:11434'],['LM Studio','http://127.0.0.1:1234']]",
-    );
+    const presets = /const LOCAL_PRESETS=(\[[^\n]*?\]\]);/.exec(AGENTS_CENTER_RENDERER)?.[1];
+    expect(presets).toBeDefined();
+    const local = new Function(`return ${presets};`)() as [string, string, string, string][];
+    expect(local.map(([name, url]) => [name, url])).toEqual([
+      ["Ollama", "http://127.0.0.1:11434"],
+      ["LM Studio", "http://127.0.0.1:1234"],
+      ["llama.cpp", "http://127.0.0.1:8080"],
+      ["vLLM", "http://127.0.0.1:8000"],
+      ["Jan", "http://127.0.0.1:1337"],
+    ]);
+    for (const [, , , hint] of local) {
+      expect(messages[hint]?.length, hint).toBe(5);
+      expect(messages[hint]![1], hint).not.toBe(hint);
+    }
     for (const key of [
       "API Key (optional for Free / Zen API Key)",
       "Leave empty for free OpenCode Zen models or enter a key from opencode.ai/zen.",
@@ -241,10 +257,10 @@ describe("Other authorization methods and provider checks", () => {
     // Cloud LLM: the key page opens in the browser; Auto-connect is the same check as Save & Test (a typed,
     // stored or OpenCode-found key goes to the Zen API, no key to local OpenCode).
     expect(AGENTS_CENTER_RENDERER).toContain(
-      "const zenKeyLink=externalLink('Get a Zen key ↗','https://opencode.ai/zen','agents-light-button agents-link-button');",
+      "const zenKeyLink=externalLink('Get a Zen key ↗','https://opencode.ai/zen','agents-button agents-link-button');",
     );
     expect(AGENTS_CENTER_RENDERER).toContain(
-      "const zenAuto=button('Auto-connect via local OpenCode',()=>saveAndTest(),'agents-light-button');",
+      "const zenAuto=button('Auto-connect via local OpenCode',()=>saveAndTest(),'agents-button');",
     );
     expect(AGENTS_CENTER_RENDERER).toContain("const saveTest=button('Save & Test',saveAndTest,'primary');");
     expect(AGENTS_CENTER_RENDERER).toContain(
@@ -254,32 +270,23 @@ describe("Other authorization methods and provider checks", () => {
     expect(AGENTS_CENTER_RENDERER).toContain("zenAuto.dataset.opencodeAuto=''");
     expect(AGENTS_CENTER_RENDERER).toContain("copyInstall.dataset.copyInstall=''");
     expect(AGENTS_CENTER_RENDERER).toContain("openCodeInfo=await rpc('opencode.status')");
-    // Workspaces: CROT's own server after a warning, its status and Stop.
-    expect(AGENTS_CENTER_RENDERER).toContain(
-      "await checkProvider('OpenCode','http://127.0.0.1:4096','',workspaceState,workspaceChecked,workspaceModel,{managed:true});",
-    );
-    expect(AGENTS_CENTER_RENDERER).toContain("wsStart.dataset.opencodeStart=''");
-    expect(AGENTS_CENTER_RENDERER).toContain("await rpc('opencode.stop')");
-    expect(AGENTS_CENTER_RENDERER).toContain("t('Running on')+' '+server.url.replace('http://','')");
+    // One key link only (no second "Get a free or paid API key" link in the install box); no Workspaces server.
+    expect(AGENTS_CENTER_RENDERER).not.toContain("Get a free or paid API key");
+    expect(AGENTS_CENTER_RENDERER).not.toContain("opencode.stop");
     for (const [key, ru] of [
       ["Get a Zen key ↗", "Получить ключ Zen ↗"],
-      ["Auto-connect via local OpenCode", "Авто-подключение через локальный OpenCode"],
-      ["Get a free or paid API key at opencode.ai/zen ↗", "Получить бесплатный/платный API-ключ на opencode.ai/zen ↗"],
-      ["Start and connect OpenCode", "Запустить и подключить OpenCode"],
-      ["Running on", "Запущен на"],
+      ["Auto-connect via local OpenCode", "Подключить через локальный OpenCode"],
     ] as [string, string][])
       expect(messages[key]?.[1], key).toBe(ru);
     for (const key of [
       "Or install OpenCode CLI (npm i -g opencode-ai) so CROT starts the local bridge to the free models automatically.",
-      "Install OpenCode CLI (npm i -g opencode-ai) so CROT can start it.",
       "Through local OpenCode",
       "Key from OpenCode (auth.json)",
       "Key from OPENCODE_API_KEY",
       "started by CROT",
       "already running",
-      "started outside CROT",
-      "CROT starts opencode serve on 127.0.0.1 with a random password and connects to it. OpenCode agents act in the open project with their own permissions (files, commands); CROT tool grants are not forwarded and CROT never auto-approves their actions.",
       "OpenCode's free usage limit is reached (OpenCode suggests its Go subscription). Try again later, or enter an OpenCode Zen API key.",
+      "OpenCode's anonymous free limit is used up: CROT's own OpenCode copy is not signed in (your OpenCode was not found or did not start). Enter an OpenCode Zen API key (opencode.ai/zen): free models work with it too.",
       "Local OpenCode CLI was not found. Click “Install and start OpenCode (1 click)” or enter an OpenCode Zen API key.",
       "Local OpenCode refused the request.",
       "Local OpenCode could not be started. Install the verified OpenCode into CROT with one click (your own OpenCode stays as it is), or enter an OpenCode Zen API key.",
@@ -300,12 +307,11 @@ describe("Other authorization methods and provider checks", () => {
       "OpenCode could not be installed. Check the network, proxy and free disk space, then try again.",
       "No OpenCode build for this system runs here. Install OpenCode with the command below.",
       "The installation was stopped.",
-      "CROT downloads the verified OpenCode into its own folder, then starts opencode serve on 127.0.0.1 with a random password and connects to it. OpenCode agents act in the open project with their own permissions (files, commands); CROT tool grants are not forwarded and CROT never auto-approves their actions.",
     ]) {
       expect(messages[key]?.length, key).toBe(5);
       expect(messages[key]![1], key).not.toBe(key);
       expect(
-        AGENTS_CENTER_RENDERER.includes(key.replace("'", "\\'")) ||
+        AGENTS_CENTER_RENDERER.includes(key.replaceAll("'", "\\'")) ||
           key.startsWith("Local OpenCode takes") ||
           key.startsWith("Through local OpenCode the model"),
         key,
@@ -379,7 +385,7 @@ describe("Other authorization methods and provider checks", () => {
     // Green "Connected" once OpenCode is up and lists its models; a refused test request is a warning beside it.
     expect(AGENTS_CENTER_RENDERER).toContain("baseOf(provider.provider)==='OpenCode (Free & Zen)'?'Connected'");
     expect(AGENTS_CENTER_RENDERER).toContain(
-      "cloud.append(endpointSection,modelRow,cloudStatus,zenCheck,zenRoute,zenInstall);",
+      "cloud.append(connected,providerField,protocolField,endpointSection,apiKey.wrap,zenHint,zenActions,cloudStatus,zenCheck,zenRoute,zenInstall,modelField);",
     );
     expect(AGENTS_CENTER_RENDERER).toContain("c.modelCheck?.ok===false&&c.modelCheck.model===c.defaultModel");
     expect(AGENTS_CENTER_RENDERER).toContain("keySource:r.keySource,modelCheck:r.modelCheck}");
@@ -417,7 +423,108 @@ describe("Other authorization methods and provider checks", () => {
     }
   });
 
-  it("installs and starts OpenCode in one click on the Zen card and in Workspaces", () => {
+  it("checks local servers at their OpenAI-compatible address and says what to do about the usual failures", () => {
+    const fn = (name: string) =>
+      new RegExp(`function ${name}\\([^)]*\\)\\{[^\\n]*\\}\\n`).exec(AGENTS_CENTER_RENDERER)?.[0] ?? "";
+    const normalizeLocalUrl = new Function(`${fn("normalizeLocalUrl")}return normalizeLocalUrl;`)() as (
+      value: string,
+    ) => string | undefined;
+    // A port, a host or a full address: always the /v1 API of that server (Ollama's native /api included).
+    expect(normalizeLocalUrl("11434")).toBe("http://127.0.0.1:11434/v1");
+    expect(normalizeLocalUrl(":1234")).toBe("http://127.0.0.1:1234/v1");
+    expect(normalizeLocalUrl("localhost:1234")).toBe("http://localhost:1234/v1");
+    expect(normalizeLocalUrl("http://127.0.0.1:11434/api")).toBe("http://127.0.0.1:11434/v1");
+    expect(normalizeLocalUrl("http://0.0.0.0:8000/v1/chat/completions")).toBe("http://127.0.0.1:8000/v1");
+    expect(normalizeLocalUrl("http://192.168.1.20:1337/v1/")).toBe("http://192.168.1.20:1337/v1");
+    expect(normalizeLocalUrl("https://gpu.lan/openai/")).toBe("https://gpu.lan/openai/v1");
+    for (const bad of ["", "   ", "ftp://host", "http://user:pw@127.0.0.1:11434", "http://"])
+      expect(normalizeLocalUrl(bad), bad).toBeUndefined();
+    const [diagnosticText, localDiagnosticText] = new Function(
+      "t",
+      `${fn("diagnosticText")}${fn("localDiagnosticText")}return [diagnosticText,localDiagnosticText];`,
+    )((value: string) => value) as ((d: Record<string, unknown>, lead?: string) => string)[];
+    const local = (d: Record<string, unknown>) => localDiagnosticText!(d);
+    expect(local({ code: "INVALID_URL", stage: "input" })).toBe(
+      "Enter a valid server address, for example http://127.0.0.1:11434.",
+    );
+    expect(local({ code: "LOCAL_SERVER_OFFLINE", stage: "network", networkCode: "ECONNREFUSED" })).toBe(
+      "Nothing answers at this address. Start the server and check the port. [LOCAL_SERVER_OFFLINE · ECONNREFUSED]",
+    );
+    expect(local({ code: "NO_MODELS", stage: "inventory" })).toBe(
+      "The server answers but lists no models. Download or load a model in it, then check again. [NO_MODELS]",
+    );
+    expect(local({ code: "AUTH_INVALID_KEY", stage: "models", httpStatus: 401 })).toBe(
+      "The server requires a valid API key. Enter the key from its settings. [AUTH_INVALID_KEY · HTTP 401]",
+    );
+    expect(local({ code: "OPERATION_FAILED", stage: "models", httpStatus: 404 })).toBe(
+      "No OpenAI-compatible API at this address. The address usually ends with /v1. [OPERATION_FAILED · HTTP 404]",
+    );
+    expect(local({ code: "OPERATION_FAILED", stage: "network", networkCode: "ENOTFOUND" })).toBe(
+      "The host name could not be resolved. Check the server address. [OPERATION_FAILED · ENOTFOUND]",
+    );
+    expect(local({ code: "TIMEOUT", stage: "network", networkCode: "ETIMEDOUT" })).toBe(
+      "The server did not answer in time. Check that it is running and not busy loading a model. [TIMEOUT · ETIMEDOUT]",
+    );
+    // Anything else: the common explanation, never a provider's own text.
+    expect(local({ code: "OPERATION_FAILED", stage: "models", httpStatus: 500 })).toBe(
+      "Provider connection failed. [OPERATION_FAILED · HTTP 500]",
+    );
+    // The cloud card names the same failures, and whose OpenCode hit the free tier.
+    expect(diagnosticText!({ code: "NO_MODELS", stage: "inventory" })).toBe(
+      "The server answered but lists no models. [NO_MODELS]",
+    );
+    expect(diagnosticText!({ code: "LOCAL_SERVER_OFFLINE", stage: "network", networkCode: "ECONNREFUSED" })).toBe(
+      "Nothing answers at this address (connection refused). Check that the server is running. [LOCAL_SERVER_OFFLINE · ECONNREFUSED]",
+    );
+    expect(diagnosticText!({ code: "OPERATION_FAILED", stage: "network", networkCode: "ENOTFOUND" })).toBe(
+      "The server name could not be resolved. Check the address and the network. [OPERATION_FAILED · ENOTFOUND]",
+    );
+    expect(
+      diagnosticText!({
+        code: "FREE_TIER_LIMIT",
+        stage: "local",
+        httpStatus: 429,
+        source: "crot",
+        model: "big-pickle",
+      }),
+    ).toBe(
+      "OpenCode's anonymous free limit is used up: CROT's own OpenCode copy is not signed in (your OpenCode was not found or did not start). Enter an OpenCode Zen API key (opencode.ai/zen): free models work with it too. [FREE_TIER_LIMIT · HTTP 429 · big-pickle]",
+    );
+    expect(AGENTS_CENTER_RENDERER).toContain(
+      "state.textContent=(state===localState?localDiagnosticText:diagnosticText)(provider.connectionError,provider.connectionMessage);",
+    );
+    for (const key of [
+      "Cloud LLM",
+      "Local models",
+      "Models for CROT chat: cloud APIs or a local server.",
+      "OpenAI, Anthropic, Gemini, OpenRouter, OpenCode Zen or a custom API.",
+      "Ollama, LM Studio, llama.cpp, vLLM, Jan and other local servers.",
+      "Server",
+      "API endpoint:",
+      "API Key (optional)",
+      "Only if the server requires a key",
+      "Connected server",
+      "Workspace agent (earlier connection)",
+      "OpenCode server",
+      "Enter a valid server address, for example http://127.0.0.1:11434.",
+      "Nothing answers at this address. Start the server and check the port.",
+      "The server answers but lists no models. Download or load a model in it, then check again.",
+      "The server requires a valid API key. Enter the key from its settings.",
+      "No OpenAI-compatible API at this address. The address usually ends with /v1.",
+      "The host name could not be resolved. Check the server address.",
+      "The server did not answer in time. Check that it is running and not busy loading a model.",
+      "The server answered but lists no models.",
+      "Nothing answers at this address (connection refused). Check that the server is running.",
+      "The server name could not be resolved. Check the address and the network.",
+    ]) {
+      expect(messages[key]?.length, key).toBe(5);
+      expect(messages[key]![1], key).not.toBe(key);
+      expect(AGENTS_CENTER_RENDERER, key).toContain(`'${key}'`);
+    }
+    expect(messages["Local models"]?.[1]).toBe("Локальные модели");
+  });
+
+  it("installs and starts OpenCode in one click on the Zen card", () => {
     // The service installs in the background (opencode.install); the UI follows the status, then connects.
     expect(AGENTS_CENTER_RENDERER).toContain("openCodeInfo=await rpc('opencode.install')");
     expect(AGENTS_CENTER_RENDERER).toContain("run.dataset.opencodeInstallRun=''");
@@ -430,9 +537,6 @@ describe("Other authorization methods and provider checks", () => {
       "t('Installing OpenCode…')+(Number.isInteger(runtime.progress)?' '+runtime.progress+' %':'')",
     );
     expect(AGENTS_CENTER_RENDERER).toContain("const missing=zen&&!ok&&needsInstall(openCodeInfo);");
-    expect(AGENTS_CENTER_RENDERER).toContain(
-      "installHint(wsInstall,opencode&&!server&&needsInstall(openCodeInfo)?openCodeInfo:undefined,",
-    );
     const source = /function needsInstall\(info\)\{[^\n]*\}\n/.exec(AGENTS_CENTER_RENDERER)?.[0];
     expect(source).toBeDefined();
     const needsInstall = new Function(`${source}return needsInstall;`)() as (info: unknown) => boolean;
@@ -458,16 +562,11 @@ describe("Other authorization methods and provider checks", () => {
     ] as [string, string][])
       expect(AGENTS_CENTER_RENDERER).toMatch(new RegExp(`${reason}:'[^']*${text.replace(/[.]/g, "\\.")}`));
     expect(AGENTS_CENTER_RENDERER).toContain("(runtime.detail?' — '+runtime.detail:'')");
-    // Zen: the same Save & Test as Auto-connect; Workspaces: the managed server, after the owner confirms.
+    // Zen: the same Save & Test as Auto-connect.
     expect(AGENTS_CENTER_RENDERER).toContain(
-      "installHint(zenInstall,missing?openCodeInfo:undefined,true,()=>checkProvider('OpenCode (Free & Zen)',cloudEndpoint.input.value||defaults['OpenCode (Free & Zen)'],'',cloudState,checked,cloudModel));",
+      "installHint(zenInstall,missing?openCodeInfo:undefined,()=>checkProvider('OpenCode (Free & Zen)',cloudEndpoint.input.value||defaults['OpenCode (Free & Zen)'],'',cloudState,checked,cloudModel));",
     );
-    expect(AGENTS_CENTER_RENDERER).toContain(
-      "false,()=>checkProvider('OpenCode','http://127.0.0.1:4096','',workspaceState,workspaceChecked,workspaceModel,{managed:true}),'CROT downloads the verified OpenCode into its own folder",
-    );
-    expect(AGENTS_CENTER_RENDERER).toContain(
-      "warning?confirm(label,()=>installOpenCode(connect),warning):installOpenCode(connect)",
-    );
+    expect(AGENTS_CENTER_RENDERER).toContain("()=>installOpenCode(connect),'primary agents-install-run',installing)");
     // The route names CROT's copy when it serves.
     expect(AGENTS_CENTER_RENDERER).toContain(
       "t(server.managed?(server.source==='crot'?'copy installed by CROT':'started by CROT'):'already running')",

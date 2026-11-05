@@ -237,7 +237,7 @@ export async function runServiceScenarios({ real, evaluate, until, size, screens
   await real.configureChatApproval();
   await section("Agents");
   await until("document.querySelector('[data-local-test]')&&!document.querySelector('[data-provider-loading]')");
-  await fill("Server URL / Port", state.endpoint.replace("/provider-probe", "/chat-provider"));
+  await fill("Server URL", state.endpoint.replace("/provider-probe", "/chat-provider"));
   await evaluate("document.querySelector('[data-local-test]').click()");
   await until("document.querySelectorAll('.agents-connection-state.connected').length>0");
   await until(

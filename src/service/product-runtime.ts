@@ -839,7 +839,10 @@ export class ProductRuntime {
           const result = await this.chat.models(provider);
           const models = result.models as string[];
           if (!models.length)
-            throw new CrotError("OPERATION_FAILED", "Provider returned no usable models", { stage: "inventory" });
+            throw new CrotError("OPERATION_FAILED", "Provider returned no usable models", {
+              stage: "inventory",
+              reason: "no_models",
+            });
           // The saved model while the live inventory still has it, else the first free one (OpenCode's default
           // first), else the first model.
           const free = Array.isArray(result.free) ? (result.free as string[]) : [];

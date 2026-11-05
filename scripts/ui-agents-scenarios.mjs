@@ -2,6 +2,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { URL } from "node:url";
 /** Real CrotService actions with local HTTP provider fixtures; no live vendor claims. */
 import { readFile, writeFile } from "node:fs/promises";
+import { createServer } from "node:net";
 import path from "node:path";
 import { TRAY_ASSETS } from "../dist/tray/assets.js";
 export async function runAgentsScenarios({
@@ -145,7 +146,7 @@ export async function runAgentsScenarios({
     "OpenCode (Free & Zen) form: " + JSON.stringify(zen),
   );
   await screenshot("agents-opencode-zen-free");
-  // Every cloud provider keeps its key field and Save & Test; Local and Workspaces keep their checks.
+  // Every cloud provider keeps its key field and Save & Test; Local models keep their own check.
   const forms = await evaluate(
     `(async()=>{const select=document.querySelector('select[aria-label="Chat provider"]');const visible=el=>!!el&&el.getClientRects().length>0;const out={};for(const value of [...select.options].map(o=>o.value)){select.value=value;select.dispatchEvent(new Event('change'));await new Promise(r=>setTimeout(r,80));out[value]=visible(document.querySelector('[data-cloud-test]'))&&visible(document.querySelector('[data-cloud-key]'))&&(value==='OpenCode (Free & Zen)')===visible(document.querySelector('[data-zen-hint]'))&&(value==='OpenCode (Free & Zen)')===visible(document.querySelector('[data-zen-actions]'));}select.value='OpenAI';select.dispatchEvent(new Event('change'));await new Promise(r=>setTimeout(r,80));return out;})()`,
   );
@@ -153,20 +154,78 @@ export async function runAgentsScenarios({
     Object.keys(forms).length === 6 && Object.values(forms).every(Boolean),
     "A cloud provider lost its key field or Save & Test: " + JSON.stringify(forms),
   );
-  const local = await evaluate(
-    "(()=>{document.querySelectorAll('.agents-accordion')[1].open=true;const l=[...document.querySelectorAll('label')].find(l=>l.querySelector('span')?.textContent==='Server URL / Port');return {url:l.querySelector('input').value,presets:[...document.querySelectorAll('[data-local-preset]')].map(b=>b.dataset.localPreset),test:!!document.querySelector('[data-local-test]')};})()",
-  );
+  // Local models: one Server URL field, a chip per popular server, the exact API endpoint CROT will call.
+  const localForm =
+    "(()=>{const i=document.querySelector('[data-local-url]');return {label:i.closest('label')?.querySelector('span')?.textContent,url:i.value,endpoint:document.querySelector('[data-local-endpoint]').textContent,presets:[...document.querySelectorAll('[data-local-preset]')].map(b=>b.dataset.localPreset),pressed:[...document.querySelectorAll('[data-local-preset][aria-pressed=\"true\"]')].map(b=>b.dataset.localPreset),command:document.querySelector('.agents-local-hint:not([hidden]) code')?.textContent,test:!!document.querySelector('[data-local-test]')};})()";
+  const typeLocal = (value) =>
+    evaluate(
+      `(()=>{const i=document.querySelector('[data-local-url]');i.value=${JSON.stringify(value)};i.dispatchEvent(new Event('input'));})()`,
+    );
+  await evaluate("document.querySelectorAll('.agents-accordion')[1].open=true");
+  const local = await evaluate(localForm);
   assert(
-    local.url === "http://127.0.0.1:11434" && local.presets.join() === "Ollama,LM Studio" && local.test,
-    "Local LLM form: " + JSON.stringify(local),
+    local.label === "Server URL" &&
+      local.url === "http://127.0.0.1:11434" &&
+      local.endpoint === "API endpoint: http://127.0.0.1:11434/v1" &&
+      local.presets.join() === "Ollama,LM Studio,llama.cpp,vLLM,Jan" &&
+      local.pressed.join() === "Ollama" &&
+      local.command === "ollama pull llama3.2" &&
+      local.test,
+    "Local models form: " + JSON.stringify(local),
   );
-  await evaluate("(()=>{document.querySelector('[data-local-preset=\"LM Studio\"]').click();})()");
+  await evaluate("document.querySelector('[data-local-preset=\"LM Studio\"]').click()");
+  const lmStudio = await evaluate(localForm);
   assert(
-    (await evaluate(
-      "[...document.querySelectorAll('label')].find(l=>l.querySelector('span')?.textContent==='Server URL / Port').querySelector('input').value",
-    )) === "http://127.0.0.1:1234",
-    "LM Studio preset did not fill its URL",
+    lmStudio.url === "http://127.0.0.1:1234" &&
+      lmStudio.pressed.join() === "LM Studio" &&
+      lmStudio.endpoint === "API endpoint: http://127.0.0.1:1234/v1" &&
+      lmStudio.command === "lms server start",
+    "LM Studio preset: " + JSON.stringify(lmStudio),
   );
+  // A bare port, a host without a scheme and Ollama's native /api path all become the /v1 endpoint.
+  for (const [typed, expected, pressed] of [
+    ["11434", "http://127.0.0.1:11434/v1", "Ollama"],
+    ["localhost:8080", "http://localhost:8080/v1", "llama.cpp"],
+    ["http://0.0.0.0:11434/api", "http://127.0.0.1:11434/v1", "Ollama"],
+  ]) {
+    await typeLocal(typed);
+    const shown = await evaluate(localForm);
+    assert(
+      shown.endpoint === "API endpoint: " + expected && shown.pressed.join() === pressed,
+      `Local URL ${typed} normalized to: ` + JSON.stringify(shown),
+    );
+  }
+  const localState = "document.querySelectorAll('.agents-accordion')[1].querySelector('.agents-connection-state')";
+  await typeLocal("ftp://nowhere");
+  await evaluate("document.querySelector('[data-local-test]').click()");
+  await until(`${localState}.classList.contains('failed')`);
+  assert(
+    (await evaluate(`${localState}.textContent`)) ===
+      "Enter a valid server address, for example http://127.0.0.1:11434." &&
+      !(await evaluate(
+        "(async()=>(await window.crot.product('chat.providers')).providers.find(p=>p.provider==='Local HTTP')?.configured)()",
+      )),
+    "An invalid local address was saved or not explained",
+  );
+  // Nothing listening on the port (one just freed): a real refused connection, explained in plain words.
+  const closedPort = await new Promise((resolve, reject) => {
+    const probe = createServer();
+    probe.once("error", reject);
+    probe.listen(0, "127.0.0.1", () => {
+      const { port } = probe.address();
+      probe.close(() => resolve(port));
+    });
+  });
+  await typeLocal("127.0.0.1:" + closedPort);
+  await evaluate("document.querySelector('[data-local-test]').click()");
+  await until(`${localState}.classList.contains('failed')&&!${localState}.textContent.includes('…')`);
+  const offline = await evaluate(`${localState}.textContent`);
+  assert(
+    offline.startsWith("Nothing answers at this address. Start the server and check the port.") &&
+      offline.includes("LOCAL_SERVER_OFFLINE"),
+    "Offline local server diagnostic: " + offline,
+  );
+  await screenshot("agents-local-offline");
   await evaluate("document.querySelectorAll('.agents-accordion')[0].open=true");
   const state = await real.verify(),
     endpoint = state.endpoint.replace("/provider-probe", "/chat-provider/v1");
@@ -185,64 +244,32 @@ export async function runAgentsScenarios({
     "Cloud Save & Test did not persist verified status/default safely",
   );
   await evaluate("document.querySelectorAll('.agents-accordion')[1].open=true");
-  await evaluate(
-    `(()=>{const l=[...document.querySelectorAll('label')].find(l=>l.querySelector('span')?.textContent==='Server URL / Port');l.querySelector('input').value=${JSON.stringify(endpoint.replace("/v1", ""))};document.querySelector('[data-local-test]').click();})()`,
-  );
+  await typeLocal(endpoint.replace("/v1", ""));
+  await evaluate("document.querySelector('[data-local-test]').click()");
   await until("document.querySelectorAll('.agents-connection-state.connected').length===2");
-  // Native workspace agent transports, not accounts.list or workspace data connectors.
+  assert(
+    await evaluate(
+      "(()=>{const rows=document.querySelectorAll('.agents-local-saved [data-connected-provider=\"Local HTTP\"]');return rows.length===1&&!!rows[0].querySelector('[data-local-remove]')&&document.querySelector('[data-local-endpoint]').textContent.endsWith('/chat-provider/v1');})()",
+    ),
+    "The saved local server row with Disconnect is missing",
+  );
+  // Earlier workspace agent connections (an OpenCode server, Notion Agents) keep their native transports in
+  // Chat. Agents no longer offers to create them (no Workspaces section); it only lists them with Disconnect.
+  const origin = new URL(state.endpoint).origin;
+  await size(1280, 800);
   for (const [provider, prefix, secret, answer] of [
     ["OpenCode", "/native-opencode", "fixture-opencode-password", "OpenCode native fixture answer"],
     ["Notion Agents", "/native-notion/v1", "fixture-notion-agents-key", "Notion native fixture answer"],
   ]) {
     await evaluate("document.getElementById('nav-agents').click()");
-    await until("document.querySelector('[data-workspace-test]')&&!document.querySelector('[data-provider-loading]')");
-    await size(1280, 800);
-    await evaluate("document.querySelectorAll('.agents-accordion')[2].open=true");
-    await until("document.querySelectorAll('.agents-accordion[open]').length===1");
-    assert(
-      await evaluate(
-        "document.querySelector('.agents-column:last-child').scrollWidth<=document.querySelector('.agents-column:last-child').clientWidth",
-      ),
-      "Workspace accordion overflows horizontally",
-    );
-    await evaluate("document.querySelector('[aria-label=\"Workspace agent provider\"].agents-choice-trigger').click()");
-    await until("document.querySelector('.chat-popover:popover-open')");
-    await evaluate(
-      `[...document.querySelectorAll('.chat-popover:popover-open button')].find(b=>b.textContent.replace('✓','').trim()===${JSON.stringify(provider)}).click()`,
-    );
-    // OpenCode: CROT can start its own server ("Start and connect OpenCode"); Notion Agents has no such row.
-    assert(
-      (await evaluate(
-        "(()=>{const b=document.querySelector('[data-opencode-start]');return !!b&&b.getClientRects().length>0})()",
-      )) ===
-        (provider === "OpenCode"),
-      "Start and connect OpenCode visibility for " + provider,
-    );
-    const origin = new URL(state.endpoint).origin;
-    await evaluate(
-      `document.querySelector('[data-workspace-endpoint]').value=${JSON.stringify(origin)}+${JSON.stringify(prefix)};document.querySelector('[data-workspace-key]').value=${JSON.stringify(secret)};document.querySelector('[data-workspace-test]').click()`,
-    );
-    await until("document.getElementById('action-dialog').open");
-    await evaluate(
-      "[...document.querySelectorAll('#action-dialog button')].find(b=>b.textContent==='Confirm').click()",
-    );
-    await until(
-      "document.querySelectorAll('.agents-accordion')[2].querySelector('.agents-connection-state.connected')",
-    );
+    await until("document.querySelector('[data-agents-center]')&&!document.querySelector('[data-provider-loading]')");
     const saved = await evaluate(
-      `(async()=>(await window.crot.product('chat.providers')).providers.find(p=>p.provider===${JSON.stringify(provider)}))()`,
+      `(async()=>{const p=(method,params)=>window.crot.product(method,params);try{await p('chat.configure',{provider:${JSON.stringify(provider)},endpoint:${JSON.stringify(origin + prefix)},credential:${JSON.stringify(secret)},...(${JSON.stringify(provider === "OpenCode")}?{username:'opencode',managed:false}:{})});await p('chat.testConnection',{provider:${JSON.stringify(provider)}});return (await p('chat.providers')).providers.find(v=>v.provider===${JSON.stringify(provider)});}catch(error){return {error:String(error?.message||error)};}})()`,
     );
     assert(
-      saved.connectionStatus === "connected" && saved.defaultModel && saved.kind === "workspace",
-      "Native workspace agent was not saved/verified",
+      !saved.error && saved.connectionStatus === "connected" && saved.defaultModel && saved.kind === "workspace",
+      "Earlier workspace agent connection was not saved/verified: " + JSON.stringify(saved),
     );
-    assert(
-      await evaluate(
-        "(()=>{const column=document.querySelector('.agents-column:last-child'),d=column.querySelector('.agents-accordion[open]');return d.getBoundingClientRect().bottom<=column.getBoundingClientRect().bottom+1})()",
-      ),
-      "Active workspace content is clipped at desktop height",
-    );
-    await screenshot("agents-workspace-" + provider.toLowerCase().replaceAll(" ", "-"));
     await evaluate("document.getElementById('nav-chat').click()");
     await until("document.querySelectorAll('.chat-agent-pill').length>=3");
     // Provider pills (#56/#57): first click activates the provider, a click on the active pill opens its model popover.
@@ -278,7 +305,41 @@ export async function runAgentsScenarios({
     );
   }
   await evaluate("document.getElementById('nav-agents').click()");
-  await until("!document.querySelector('[data-provider-loading]')");
+  await until("document.querySelector('[data-agents-center]')&&!document.querySelector('[data-provider-loading]')");
+  const legacy = await evaluate(
+    "(()=>{const buttons=[...document.querySelectorAll('[data-legacy-remove]')];return {rows:buttons.map(b=>b.closest('[data-connected-provider]')?.dataset.connectedProvider).sort(),labels:buttons.map(b=>b.getAttribute('aria-label')).sort(),workspaceForm:!!document.querySelector('[data-workspace-test],[data-workspace-endpoint],[data-workspace-key],[data-opencode-start]'),accordions:[...document.querySelectorAll('.agents-accordion h2')].map(h=>h.textContent)};})()",
+  );
+  assert(
+    legacy.rows.join() === "Notion Agents,OpenCode" &&
+      legacy.labels.join() === "Disconnect Notion Agents,Disconnect OpenCode" &&
+      !legacy.workspaceForm &&
+      legacy.accordions.join() === "Cloud LLM,Local models",
+    "Earlier workspace connections in Agents: " + JSON.stringify(legacy),
+  );
+  await evaluate("document.querySelector('[data-connected-providers]').scrollIntoView({block:'center'})");
+  await screenshot("agents-earlier-workspace-connections");
+  // Disconnect removes the earlier connection and its vault secret, with no secret in audit.
+  for (const provider of ["OpenCode", "Notion Agents"]) {
+    await evaluate(
+      `document.querySelector('[data-connected-provider=${JSON.stringify(provider)}] [data-legacy-remove]').click()`,
+    );
+    await until("document.getElementById('action-dialog').open");
+    await evaluate(
+      "[...document.querySelectorAll('#action-dialog button')].find(b=>b.textContent==='Confirm').click()",
+    );
+    await until(`!document.querySelector('[data-connected-provider=${JSON.stringify(provider)}]')`);
+    assert(
+      await evaluate(
+        `(async()=>{const p=(await window.crot.product('chat.providers')).providers.find(p=>p.provider===${JSON.stringify(provider)});return !p.configured&&!p.credentialStored;})()`,
+      ),
+      "Disconnect kept the earlier workspace connection or its secret: " + provider,
+    );
+  }
+  const agentAudit = await readFile(path.join(real.base, "audit.jsonl"), "utf8");
+  assert(
+    !["fixture-opencode-password", "fixture-notion-agents-key"].some((key) => agentAudit.includes(key)),
+    "Workspace secret leaked into audit",
+  );
   await evaluate("window.CrotI18n.setLanguage('ru')");
   await until(
     "document.querySelectorAll('.agents-connection-state.connected').length>=2&&!document.querySelector('[data-provider-loading]')",
@@ -333,13 +394,19 @@ export async function runAgentsScenarios({
     ),
   );
   await size(1280, 800);
-  await evaluate("document.querySelectorAll('.agents-accordion')[2].open=true");
+  await evaluate("document.querySelectorAll('.agents-accordion')[1].open=true");
   await until("document.querySelectorAll('.agents-accordion[open]').length===1");
-  await screenshot("agents-workspace-ru-1280");
+  assert(
+    await evaluate(
+      "(()=>{const column=document.querySelector('.agents-outbound'),d=column.querySelector('.agents-accordion[open]');return d===document.querySelectorAll('.agents-accordion')[1]&&column.scrollWidth<=column.clientWidth;})()",
+    ),
+    "Local models overflow horizontally at 1280",
+  );
+  await screenshot("agents-local-ru-1280");
   await size(390, 844);
   await screenshot("agents-center-mobile-ru");
   await evaluate("const main=document.querySelector('main.content'); main.scrollTop=main.scrollHeight");
-  await screenshot("agents-workspace-mobile-ru");
+  await screenshot("agents-center-mobile-ru-bottom");
   // Opening Agents always starts at the top, however far the page was scrolled before.
   assert((await evaluate("document.querySelector('main.content').scrollTop")) > 0, "Mobile Agents did not scroll");
   await evaluate("document.getElementById('nav-home').click()");
@@ -355,7 +422,7 @@ export async function runAgentsScenarios({
     "Instructions masquerade as integrations",
   );
   // Switch every section repeatedly, sampling actual animation frames.
-  for (const index of [1, 2, 0, 2, 1, 0]) {
+  for (const index of [1, 0, 1, 0, 1, 0]) {
     await evaluate(`document.querySelectorAll('.agents-accordion > summary')[${index}].click()`);
     const frames = await evaluate(
       `(async()=>{const frames=[];for(let i=0;i<18;i++){await new Promise(requestAnimationFrame);const column=document.querySelector('.agents-outbound');frames.push({open:column.querySelectorAll('.agents-accordion[open]').length,width:column.clientWidth,scroll:column.scrollWidth>column.clientWidth});}return frames;})()`,
@@ -469,20 +536,6 @@ export async function runAgentsScenarios({
     ),
     "Custom server removal failed",
   );
-  // Disconnect removes provider configuration and its vault secret, with no secret in audit.
-  for (const provider of ["OpenCode", "Notion Agents"]) {
-    assert(
-      await evaluate(
-        `(async()=>{await window.crot.product('chat.remove',{provider:${JSON.stringify(provider)}});const p=(await window.crot.product('chat.providers')).providers.find(p=>p.provider===${JSON.stringify(provider)});return !p.configured&&!p.credentialStored;})()`,
-      ),
-      "Workspace disconnect retained credentials",
-    );
-  }
-  const agentAudit = await readFile(path.join(real.base, "audit.jsonl"), "utf8");
-  assert(
-    !["fixture-opencode-password", "fixture-notion-agents-key"].some((key) => agentAudit.includes(key)),
-    "Workspace secret leaked into audit",
-  );
   await writeFile(
     path.join(artifacts, "verification.json"),
     JSON.stringify(
@@ -496,10 +549,11 @@ export async function runAgentsScenarios({
         chatUsingSavedProvider: true,
         sidebarUnchanged: true,
         nativeOpenCodeAndNotionAgentChats: true,
-        conditionalAccordionFit: true,
+        legacyWorkspaceRowsWithDisconnect: true,
+        localModelPresetsAndDiagnostics: true,
         river401SafeDiagnostic: true,
         exclusiveAccordionFrames: true,
-        workspaceDisconnectRemovesSecret: true,
+        legacyWorkspaceDisconnectRemovesSecret: true,
         authorizationMethodsPanel: true,
         openCodeFreeZenForm: true,
         everyProviderHasCheck: true,

@@ -178,17 +178,18 @@ it(
         (await rpc("chat.providers")).providers.find((p: { provider: string }) => p.provider === compatible),
       ).toMatchObject({ connectionStatus: "failed", connectionError: { httpStatus: status } });
     }
-    // 404 on /models is treated as an empty inventory (manual model entry), not an HTTP failure.
+    // 404 on /models is treated as an empty inventory (manual model entry), not an HTTP failure: the owner is
+    // told that the server lists no models.
     modelStatus = 404;
     expect(await rpc("chat.testConnection", { provider: "OpenAI-compatible" })).toMatchObject({
       ok: false,
-      diagnostic: { code: "OPERATION_FAILED", stage: "inventory" },
+      diagnostic: { code: "NO_MODELS", stage: "inventory" },
     });
     modelStatus = 200;
     emptyModels = true;
     expect(await rpc("chat.testConnection", { provider: "OpenAI-compatible" })).toMatchObject({
       ok: false,
-      diagnostic: { stage: "inventory" },
+      diagnostic: { code: "NO_MODELS", stage: "inventory" },
     });
     emptyModels = false;
     expect(await rpc("chat.testConnection", { provider: "OpenAI-compatible" })).toMatchObject({ ok: true });
