@@ -157,22 +157,52 @@ How CROT reaches OpenCode Zen, in this order (`zenRoute`):
    start OpenCode (1 click)** and the install command `npm i -g opencode-ai` with a copy
    button.
 
-**Install and start OpenCode (1 click)** (`opencode.install`, no parameters): the service runs
-the owner's npm (found on PATH, never in the working directory; allowlisted child environment
-plus `npm_config_*`) as `npm install --prefix <state>/opencode-runtime --ignore-scripts
---no-audit --no-fund --no-update-notifier --loglevel=error --save-exact opencode-ai@1.19.5`
-in the background (one at a time, 15 min limit), with its own `package.json` in that folder.
-No package script runs: CROT picks the platform binary the way opencode-ai's postinstall would
-(`opencode-<os>-<arch>[-musl][-baseline]`, the first one that answers `--version`), records it
-in `crot-runtime.json` and removes the other variants (about 200 MB each). The bridge starts
-that binary when the owner has no `opencode` of their own. The UI follows
-`opencode.status.runtime` (`missing`, `installing`, `installed`, `failed` with
-`opencode_refused`, `npm_not_found`, `install_failed`, `binary_not_found` or `cancelled`) and
-then runs Save & Test: on the Zen card the same check as Auto-connect, in Workspaces the
-managed server after the owner confirms the same warning as Start and connect OpenCode.
-Without npm the box says that one-click install needs Node.js. The emergency stop cancels a
-running installation, an explicit runtime deny of starting processes refuses it, and every
-outcome is audited (`opencode_runtime`, reason only, no npm output).
+**Which OpenCode starts, and why it did not.** The bridge tries the owner's own `opencode`
+first, then the copy CROT installed (below), which runs with its own `XDG_CONFIG_HOME`,
+`XDG_DATA_HOME`, `XDG_STATE_HOME` and `XDG_CACHE_HOME` under `<state>/opencode-runtime/home`
+and so never touches the owner's OpenCode settings, sessions or keys. An OpenCode that failed
+to start is skipped while it is unchanged (same path, size and change time) and another one
+exists. The server must answer `/global/health` within 60 s. Of its output only the last 4 KB
+are kept, and a failed start names the reason in one redacted line (`detail`, the program's
+path with `~` for the home folder): `exited with code 1 — <OpenCode's last error line>` (for
+example an npm installation without its postinstall script), `HTTP 401 — OpenCode did not
+accept CROT's server password`, `no answer within 60 s, last answer HTTP 503 — …`, or the
+launch error. An OpenCode that answers `/global/health` with 404 is asked for `--version`:
+OpenCode 0.x (older than 1.0, which brought `/global/health` and `/provider`) fails with
+`OPENCODE_TOO_OLD` ("Your OpenCode is too old for CROT (version 1.0 or newer is needed).
+Install the verified OpenCode into CROT with one click, or update yours with “opencode
+upgrade”.", `detail` e.g. `~/.opencode/bin/opencode 0.15.31: CROT needs OpenCode 1.0.0 or
+newer`); every other failure with `OPENCODE_START_FAILED` ("Local OpenCode could not be
+started. Install the verified OpenCode into CROT with one click (your own OpenCode stays as it
+is), or enter an OpenCode Zen API key."). The last failure stays in `opencode.status` as
+`problem: {code, source: "owner" | "crot", version?, detail?}` until a start succeeds, and the
+form then shows **Install verified OpenCode into CROT (1 click)** (**Reinstall OpenCode in
+CROT (1 click)** when CROT's own copy failed) with "Your own OpenCode stays as it is: CROT
+keeps its copy with its own settings and data." The route of a connected card says "copy
+installed by CROT" when CROT's copy serves it.
+
+**Install and start OpenCode (1 click)** (`opencode.install`, no parameters): the service
+downloads OpenCode itself — no terminal, Node.js or npm needed — in the background (one at a
+time, 15 min limit): the platform package `opencode-<os>-<arch>[-musl][-baseline]` of
+OpenCode 1.19.5 straight from `https://registry.npmjs.org` (about 80 MB), checked against its
+pinned sha512 (`OPENCODE_RUNTIME_INTEGRITY`, the registry's published integrity), and only its
+`bin/opencode` (`opencode.exe` on Windows) is unpacked into
+`<state>/opencode-runtime/bin/<package>-<time>/`. Builds are tried in the order
+opencode-ai's postinstall would pick them (the baseline build first on x64 CPUs without
+AVX2); the first one that answers `--version` is recorded in `crot-runtime.json`, and earlier
+installations are removed (a new folder each time, so a running binary is never overwritten).
+Only when the download fails (the registry cannot be reached or answers with an error), the
+owner's npm (found on PATH, never in the working directory; allowlisted child environment
+plus `npm_config_*`: the owner's registry and proxy) installs the same version with
+`npm install --prefix <state>/opencode-runtime --ignore-scripts --no-audit --no-fund
+--no-update-notifier --loglevel=error --save-exact opencode-ai@1.19.5`. The UI follows `opencode.status.runtime` (`missing`, `installing` with
+`progress` 0–99, `installed` with `version`, `failed` with `opencode_refused`,
+`download_failed`, `integrity_mismatch`, `install_failed`, `binary_not_found` or `cancelled`
+and a short `detail`) and then runs Save & Test: on the Zen card the same check as
+Auto-connect, in Workspaces the managed server after the owner confirms the same warning as
+Start and connect OpenCode. The emergency stop cancels a running installation, an explicit
+runtime deny of starting processes refuses it, and every outcome is audited
+(`opencode_runtime`, reason only, no output).
 
 Turns through local OpenCode keep the conversation and the open project. OpenCode's own tools
 stay off (`tools: {"*": false, …}`: they would act outside Core) and every turn gets a new
@@ -202,8 +232,8 @@ free models, so the live inventory (Zen's `/models`, or local OpenCode's `/provi
 OpenCode's default first) replaces the catalog after Save & Test.
 
 `opencode.status` reports `{available, installed, installCommand, installable?, runtime?:
-{state, version?, reason?}, keySource?, server?: {url, managed, version?}}` (never a key or
-password); `opencode.install` starts the one-click installation and returns the same status;
+{state, version?, reason?, progress?, detail?}, keySource?, server?: {url, managed, version?,
+source?}, problem?}` (never a key or password); `opencode.install` starts the one-click installation and returns the same status;
 `opencode.stop` stops CROT's own server (refused while a generation runs). In Electron, links of the Agents screen open in the
 system browser only for allowlisted HTTPS hosts (`opencode.ai`, Notion, Claude, n8n).
 
@@ -217,7 +247,9 @@ the server's models into the model selector. OpenCode is in Workspaces.
   OpenCode** (after a warning) starts CROT's own server as above and connects to it
   (`managed: true`, no stored password); its status line shows "Running on 127.0.0.1:<port>"
   and Stop. Without an installed OpenCode the card offers **Install and start OpenCode
-  (1 click)** (after the same warning) and the install command. OpenCode's agents then work in the open project (`x-opencode-directory`) with
+  (1 click)** (after the same warning) and the install command; when the owner's OpenCode
+  does not start, **Install verified OpenCode into CROT (1 click)**, as on the Zen card.
+  OpenCode's agents then work in the open project (`x-opencode-directory`) with
   OpenCode's own permissions; CROT tool grants are not forwarded and CROT never approves
   their actions. A server the owner runs in a terminal is used with Save & Test as before.
 - **Notion Agents API**: PAT or connection token with agent interaction capability

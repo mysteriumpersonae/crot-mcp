@@ -178,7 +178,10 @@ export function providerDiagnostic(error: unknown): ProviderDiagnostic {
   // The local OpenCode bridge: OpenCode's own free tier exhausted, not installed or not startable.
   if (d?.reason === "free_tier_limit") return { code: "FREE_TIER_LIMIT", stage: "local", httpStatus: 429, ...local };
   if (d?.reason === "opencode_not_installed") return { code: "OPENCODE_NOT_INSTALLED", stage: "local" };
-  if (d?.reason === "opencode_start_failed") return { code: "OPENCODE_START_FAILED", stage: "local" };
+  // Why it did not start (exit code and OpenCode's last error line, HTTP status, the wait), and an OpenCode
+  // too old for CROT (0.x has none of the API CROT uses): the UI offers CROT's verified OpenCode.
+  if (d?.reason === "opencode_start_failed") return { code: "OPENCODE_START_FAILED", stage: "local", ...local };
+  if (d?.reason === "opencode_too_old") return { code: "OPENCODE_TOO_OLD", stage: "local", ...local };
   // ECONNREFUSED on a loopback address → local server not running.
   if (errno === "ECONNREFUSED") {
     return { code: "LOCAL_SERVER_OFFLINE", stage: "network", networkCode: errno };
@@ -368,7 +371,9 @@ export function chatFailure(error: unknown): string | undefined {
   if (d.reason === "opencode_not_installed")
     return "Local OpenCode CLI was not found. Click “Install and start OpenCode (1 click)” or enter an OpenCode Zen API key.";
   if (d.reason === "opencode_start_failed")
-    return "Local OpenCode could not be started. Check the OpenCode installation.";
+    return "Local OpenCode could not be started. Install the verified OpenCode into CROT with one click (your own OpenCode stays as it is), or enter an OpenCode Zen API key.";
+  if (d.reason === "opencode_too_old")
+    return "Your OpenCode is too old for CROT (version 1.0 or newer is needed). Install the verified OpenCode into CROT with one click, or update yours with “opencode upgrade”.";
   if (d.reason === "opencode_refused")
     return "Starting local OpenCode is blocked by the emergency stop or the runtime policy.";
   if (d.reason === "local_text_only")
