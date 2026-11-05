@@ -13,6 +13,7 @@ import { URL } from "node:url";
 import { ControlClient } from "../dist/service/control-client.js";
 import { TrayToolClient } from "../dist/tray/tool-client.js";
 import { TrayController } from "../dist/tray/controller.js";
+import { productFailure } from "../dist/tray/product-failure.js";
 import { trayView } from "../dist/tray/view-model.js";
 import { createPrivateFileProtection } from "../dist/core/platform/private-files.js";
 export async function serviceHarness() {
@@ -237,8 +238,10 @@ export async function serviceHarness() {
         data += c;
         if (data.length > 262144) throw Error("Oversized test request");
       }
+      let request = {};
       try {
-        const { kind, name, input } = JSON.parse(data || "{}");
+        request = JSON.parse(data || "{}");
+        const { kind, name, input } = request;
         const value =
           kind === "view"
             ? view
@@ -256,10 +259,16 @@ export async function serviceHarness() {
           await inspectionGate;
         }
         res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ value }));
-      } catch {
-        res
-          .writeHead(200, { "content-type": "application/json" })
-          .end(JSON.stringify({ value: { ok: false, message: "Service rejected operation" } }));
+      } catch (error) {
+        // A failed product request answers like the tray's IPC (main.ts): a fixed message and a diagnostic.
+        res.writeHead(200, { "content-type": "application/json" }).end(
+          JSON.stringify({
+            value:
+              request.kind === "product"
+                ? productFailure(String(request.name), error)
+                : { ok: false, message: "Service rejected operation" },
+          }),
+        );
       }
       return true;
     },

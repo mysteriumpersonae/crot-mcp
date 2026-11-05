@@ -238,12 +238,17 @@ describe("Other authorization methods and provider checks", () => {
   });
 
   it("offers a Zen key link, auto-connect through local OpenCode, the install command and a managed server", () => {
-    // Cloud LLM: the key page opens in the browser; auto-connect is Save & Test without a key.
+    // Cloud LLM: the key page opens in the browser; Auto-connect is the same check as Save & Test (a typed,
+    // stored or OpenCode-found key goes to the Zen API, no key to local OpenCode).
     expect(AGENTS_CENTER_RENDERER).toContain(
       "const zenKeyLink=externalLink('Get a Zen key ↗','https://opencode.ai/zen','agents-light-button agents-link-button');",
     );
     expect(AGENTS_CENTER_RENDERER).toContain(
-      "const zenAuto=button('Auto-connect via local OpenCode',()=>checkProvider('OpenCode (Free & Zen)',cloudEndpoint.input.value||defaults['OpenCode (Free & Zen)'],'',cloudState,checked,cloudModel),'agents-light-button');",
+      "const zenAuto=button('Auto-connect via local OpenCode',()=>saveAndTest(),'agents-light-button');",
+    );
+    expect(AGENTS_CENTER_RENDERER).toContain("const saveTest=button('Save & Test',saveAndTest,'primary');");
+    expect(AGENTS_CENTER_RENDERER).toContain(
+      "await checkProvider(provider,cloudEndpoint.input.value||(baseOf(provider)==='OpenCode (Free & Zen)'?defaults['OpenCode (Free & Zen)']:''),key,cloudState,checked,cloudModel,extra);",
     );
     expect(AGENTS_CENTER_RENDERER).toContain("a.setAttribute('rel','noopener noreferrer')");
     expect(AGENTS_CENTER_RENDERER).toContain("zenAuto.dataset.opencodeAuto=''");
@@ -275,7 +280,8 @@ describe("Other authorization methods and provider checks", () => {
       "started outside CROT",
       "CROT starts opencode serve on 127.0.0.1 with a random password and connects to it. OpenCode agents act in the open project with their own permissions (files, commands); CROT tool grants are not forwarded and CROT never auto-approves their actions.",
       "OpenCode's free usage limit is reached (OpenCode suggests its Go subscription). Try again later, or enter an OpenCode Zen API key.",
-      "OpenCode CLI is not installed. Install it (npm i -g opencode-ai) or enter an OpenCode Zen API key.",
+      "Local OpenCode CLI was not found. Click “Install and start OpenCode (1 click)” or enter an OpenCode Zen API key.",
+      "Local OpenCode refused the request.",
       "Local OpenCode could not be started. Check the OpenCode installation.",
       "Starting local OpenCode is blocked by the emergency stop or the runtime policy.",
       // Chat errors of the local bridge (chat-runtime.ts), translated where the chat shows them.
@@ -299,6 +305,91 @@ describe("Other authorization methods and provider checks", () => {
           key.startsWith("Through local OpenCode the model"),
         key,
       ).toBe(true);
+    }
+  });
+
+  it("shows the exact reason of a failed check (code, HTTP status, model, OpenCode's words), never a generic one", () => {
+    expect(AGENTS_CENTER_RENDERER).not.toContain("Connection failed. Check server, key and network.");
+    expect(messages["Connection failed. Check server, key and network."]).toBeUndefined();
+    const source = /function diagnosticText\(d,lead\)\{[^\n]*\}\n/.exec(AGENTS_CENTER_RENDERER)?.[0];
+    expect(source).toBeDefined();
+    const diagnosticText = new Function("t", `${source}return diagnosticText;`)((value: string) => value) as (
+      d: Record<string, unknown>,
+      lead?: string,
+    ) => string;
+    // The tray's own answers (product-failure.ts): a slow service, a closed connection, a refused request.
+    expect(diagnosticText({ code: "SERVICE_TIMEOUT", stage: "service" })).toBe(
+      "The CROT service did not answer in time. Try again: the first start of local OpenCode can take up to a minute. [SERVICE_TIMEOUT]",
+    );
+    expect(diagnosticText({ code: "SERVICE_UNAVAILABLE", stage: "service" })).toContain("not connected");
+    expect(
+      diagnosticText(
+        { code: "REQUEST_REFUSED", stage: "service", detail: "Workspace agent request failed" },
+        "The model list could not be loaded.",
+      ),
+    ).toBe("The model list could not be loaded. [REQUEST_REFUSED] — Workspace agent request failed");
+    // OpenCode missing: exactly what to click, without a technical tag; OpenCode's refusal: its status, the model and its own words.
+    expect(diagnosticText({ code: "OPENCODE_NOT_INSTALLED", stage: "local" })).toBe(
+      "Local OpenCode CLI was not found. Click “Install and start OpenCode (1 click)” or enter an OpenCode Zen API key.",
+    );
+    expect(
+      diagnosticText({
+        code: "OPERATION_FAILED",
+        stage: "local",
+        httpStatus: 500,
+        model: "glm-5.3-flash-free",
+        detail: "UnknownError: Unexpected server error. Check server logs for details. (ref err_1)",
+      }),
+    ).toBe(
+      "Local OpenCode refused the request. [OPERATION_FAILED · HTTP 500 · glm-5.3-flash-free] — UnknownError: Unexpected server error. Check server logs for details. (ref err_1)",
+    );
+    expect(
+      diagnosticText({
+        code: "FREE_TIER_LIMIT",
+        stage: "local",
+        httpStatus: 429,
+        model: "big-pickle",
+        detail: "Free usage exceeded, subscribe to Go (https://opencode.ai/go)",
+      }),
+    ).toContain("[FREE_TIER_LIMIT · HTTP 429 · big-pickle] — Free usage exceeded");
+    // Green "Connected" once OpenCode is up and lists its models; a refused test request is a warning beside it.
+    expect(AGENTS_CENTER_RENDERER).toContain("baseOf(provider.provider)==='OpenCode (Free & Zen)'?'Connected'");
+    expect(AGENTS_CENTER_RENDERER).toContain(
+      "cloud.append(endpointSection,modelRow,cloudStatus,zenCheck,zenRoute,zenInstall);",
+    );
+    expect(AGENTS_CENTER_RENDERER).toContain("c.modelCheck?.ok===false&&c.modelCheck.model===c.defaultModel");
+    expect(AGENTS_CENTER_RENDERER).toContain("keySource:r.keySource,modelCheck:r.modelCheck}");
+    // A failure without a diagnostic keeps its own message; none falls back to a generic text.
+    expect(AGENTS_CENTER_RENDERER).toContain("connectionMessage:error.message");
+    expect(AGENTS_CENTER_RENDERER).toContain(
+      "(provider.connectionMessage||'The last check failed without details. Check again.')",
+    );
+    expect(AGENTS_CENTER_RENDERER).toContain("connectionMessage:'The model list could not be loaded.'");
+    expect(AGENTS_CENTER_RENDERER).toContain(
+      "connectionMessage:'Providers could not be loaded from the CROT service.'",
+    );
+    expect(
+      messages[
+        "Local OpenCode CLI was not found. Click “Install and start OpenCode (1 click)” or enter an OpenCode Zen API key."
+      ]?.[1],
+    ).toBe(
+      "Локальный OpenCode CLI не найден. Нажмите «Установить и запустить OpenCode (1 клик)» или введите API-ключ Zen.",
+    );
+    expect(messages["Connected"]?.[1]).toBe("Подключено");
+    for (const key of [
+      "The CROT service did not answer in time. Try again: the first start of local OpenCode can take up to a minute.",
+      "The CROT service is not connected. Restart CROT and try again.",
+      "The CROT service refused the request.",
+      "Local OpenCode refused the request.",
+      "The last check failed without details. Check again.",
+      "The model list could not be loaded.",
+      "Providers could not be loaded from the CROT service.",
+      "Connected, but OpenCode refused a test request with this model.",
+      "Choose another free model or try again later.",
+    ]) {
+      expect(messages[key]?.length, key).toBe(5);
+      expect(messages[key]![1], key).not.toBe(key);
+      expect(AGENTS_CENTER_RENDERER, key).toContain(key);
     }
   });
 

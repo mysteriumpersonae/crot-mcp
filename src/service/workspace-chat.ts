@@ -19,6 +19,37 @@ const str = (v: unknown): string => (typeof v === "string" ? v : "");
 const fail = (message: string): never => {
   throw new CrotError("OPERATION_FAILED", message);
 };
+/**
+ * An OpenCode server's own explanation of a failure (an error's name and message, a retry's message) for the
+ * owner: one line of at most 300 characters, control characters removed and whatever looks like a credential
+ * (Bearer/Basic values, sk-… keys, long tokens) redacted. Shown as text only; never logged or sent to a model.
+ */
+export function openCodeDetail(value: string): string | undefined {
+  const line = value
+    .slice(0, 4000)
+    .replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ")
+    .replace(/\b(Bearer|Basic)\s+\S+/gi, "$1 [redacted]")
+    .replace(/\b(?:sk|pk|rk)-[\w-]{8,}/g, "[redacted]")
+    .replace(/[A-Za-z0-9+/_=-]{40,}/g, "[redacted]")
+    .replace(/\s+/g, " ")
+    .trim();
+  return line ? (line.length > 300 ? `${line.slice(0, 299)}…` : line) : undefined;
+}
+/** OpenCode's explanation in an error answer (`{name, data: {message, ref}}`, `{error}`, or plain text). */
+export function openCodeBodyDetail(body: string): string | undefined {
+  let value: unknown;
+  try {
+    value = JSON.parse(body);
+  } catch {
+    return openCodeDetail(body);
+  }
+  const v = obj(value),
+    data = obj(v.data),
+    name = str(v.name),
+    message = str(data.message) || str(v.message) || str(v.error) || str(obj(v.error).message),
+    ref = /^[\w-]{1,64}$/.test(str(data.ref)) ? str(data.ref) : "";
+  return openCodeDetail([name, message].filter(Boolean).join(": ") + (ref ? ` (ref ${ref})` : ""));
+}
 const safeId = (id: unknown): string => {
   const s = str(id);
   if (!s || s.length > 256 || !/^[\w-]+$/.test(s)) return fail("Invalid workspace session ID");
@@ -109,19 +140,37 @@ export interface OpenCodeTurn {
    */
   readonly system?: string;
 }
-/** A failed OpenCode turn (info.error) as a fixed error: status and reason only, never OpenCode's text. */
-function openCodeError(error: Json): CrotError {
+/**
+ * A failed OpenCode turn (info.error) as an error: its status and reason, the model, and OpenCode's own
+ * explanation (openCodeDetail) for the owner.
+ */
+function openCodeError(error: Json, model: string): CrotError {
   const name = str(error.name),
     data = obj(error.data),
     status = Number(data.statusCode);
   if (name === "MessageAbortedError") return new CrotError("OPERATION_FAILED", "OpenCode turn was aborted");
   const httpStatus = name === "ProviderAuthError" ? 401 : Number.isInteger(status) ? status : undefined;
   const free = httpStatus === 429 && /free|subscribe/i.test(`${str(data.message)} ${str(data.responseBody)}`);
+  const detail = openCodeDetail([name, str(data.message)].filter(Boolean).join(": "));
   return new CrotError("OPERATION_FAILED", "OpenCode agent failed", {
     stage: "local",
+    model,
     ...(httpStatus && httpStatus >= 100 && httpStatus <= 599 ? { httpStatus } : {}),
     ...(free ? { reason: "free_tier_limit" } : {}),
+    ...(detail ? { detail } : {}),
   });
+}
+/** A refused `/message` request (OpenCode's HTTP status and explanation) with the model it was for. */
+function withModel(error: unknown, model: string): unknown {
+  return error instanceof CrotError && error.details?.httpStatus !== undefined && error.details.model === undefined
+    ? new CrotError(error.code, error.message, { ...error.details, model }, { cause: error })
+    : error;
+}
+/** OpenCode's retry message, with its link (e.g. "Free usage exceeded, subscribe to Go (https://opencode.ai/go)"). */
+function retryDetail(state: Json): string | undefined {
+  const action = obj(state.action),
+    link = /^https:\/\/[\w.-]+(\/[\w./?=&%-]*)?$/.test(str(action.link)) ? str(action.link) : "";
+  return openCodeDetail((str(state.message) || str(action.title)) + (link ? ` (${link})` : ""));
 }
 /**
  * One CROT turn with an OpenCode server (`opencode serve`): a new session whose messages follow each other
@@ -171,10 +220,13 @@ export class OpenCodeSession {
             next = Number(state.next),
             freeTier = action.reason === "free_tier_limit";
           if (freeTier || (Number.isFinite(next) && next - Date.now() > 60_000) || Number(state.attempt) >= 5) {
+            const detail = retryDetail(state);
             refusal = new CrotError("OPERATION_FAILED", "OpenCode refused the model request", {
               stage: "local",
               httpStatus: 429,
+              model: model.slice(split + 1),
               ...(freeTier ? { reason: "free_tier_limit" } : {}),
+              ...(detail ? { detail } : {}),
             });
             stop.abort();
             return;
@@ -201,12 +253,12 @@ export class OpenCodeSession {
           stop.signal,
         );
       } catch (error) {
-        if (!refusal && !accepted) throw error;
+        if (!refusal && !accepted) throw withModel(error, model.slice(split + 1));
       }
       if (refusal) throw refusal;
       if (accepted || !result) return "";
       const failure = obj(obj(result.info).error);
-      if (Object.keys(failure).length) throw openCodeError(failure);
+      if (Object.keys(failure).length) throw openCodeError(failure, model.slice(split + 1));
       const reply = list(result.parts)
         .filter((p) => obj(p).type === "text")
         .map((p) => str(obj(p).text))

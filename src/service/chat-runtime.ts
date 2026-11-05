@@ -9,6 +9,7 @@
  */
 import {
   OpenCodeSession,
+  openCodeBodyDetail,
   openCodeReply,
   workspaceInventory,
   workspaceReply,
@@ -133,6 +134,10 @@ export interface ProviderDiagnostic {
   stage: string;
   httpStatus?: number;
   networkCode?: string;
+  /** Local OpenCode: the model the failed request was for. */
+  model?: string;
+  /** Local OpenCode: its own one-line explanation (see openCodeDetail), shown to the owner as text. */
+  detail?: string;
 }
 
 /**
@@ -142,12 +147,21 @@ export interface ProviderDiagnostic {
  * LOCAL_SERVER_OFFLINE  – local service not running (ECONNREFUSED on loopback)
  * OPERATION_FAILED      – other network or protocol error
  */
-/** Never expose provider bodies, arbitrary thrown messages, URLs or credentials as diagnostics. */
+/**
+ * Never expose provider bodies, arbitrary thrown messages, URLs or credentials as diagnostics. The one exception
+ * is an OpenCode server's own explanation of its failure (`detail`, `model`): CROT's local bridge and the OpenCode
+ * servers of the Workspaces provider produce them already bounded and redacted (openCodeDetail), so the owner sees
+ * which model OpenCode refused and why.
+ */
 export function providerDiagnostic(error: unknown): ProviderDiagnostic {
   if (!(error instanceof CrotError)) return { code: "OPERATION_FAILED", stage: "network" };
   const d = error.details,
     status = Number(d?.httpStatus),
     errno = String(d?.errno ?? "");
+  const local = {
+    ...(typeof d?.model === "string" && d.model && d.model.length <= 256 ? { model: d.model } : {}),
+    ...(typeof d?.detail === "string" && d.detail ? { detail: d.detail.slice(0, 300) } : {}),
+  };
   // PERMISSION_DENIED from the ExecutionGuard (network policy block or explicit deny rule):
   // - network policy block: details.missing is [] (empty array, explicitly set)
   // - explicit runtime deny: details.missing is [] as well, but both map to NETWORK_GUARD_BLOCKED
@@ -162,7 +176,7 @@ export function providerDiagnostic(error: unknown): ProviderDiagnostic {
   // OpenCode Zen without a key: anonymous free use refused (FreeUsageLimitError).
   if (d?.reason === "free_usage_limit") return { code: "FREE_USAGE_LIMIT", stage: "probe", httpStatus: 429 };
   // The local OpenCode bridge: OpenCode's own free tier exhausted, not installed or not startable.
-  if (d?.reason === "free_tier_limit") return { code: "FREE_TIER_LIMIT", stage: "local", httpStatus: 429 };
+  if (d?.reason === "free_tier_limit") return { code: "FREE_TIER_LIMIT", stage: "local", httpStatus: 429, ...local };
   if (d?.reason === "opencode_not_installed") return { code: "OPENCODE_NOT_INSTALLED", stage: "local" };
   if (d?.reason === "opencode_start_failed") return { code: "OPENCODE_START_FAILED", stage: "local" };
   // ECONNREFUSED on a loopback address → local server not running.
@@ -179,8 +193,9 @@ export function providerDiagnostic(error: unknown): ProviderDiagnostic {
   }
   return {
     code: error.code,
-    stage: ["models", "workspace", "inventory"].includes(String(d?.stage)) ? String(d?.stage) : "network",
+    stage: ["models", "workspace", "inventory", "local"].includes(String(d?.stage)) ? String(d?.stage) : "network",
     ...(Number.isInteger(status) && status >= 100 && status <= 599 ? { httpStatus: status } : {}),
+    ...local,
     ...([
       "ENOTFOUND",
       "EAI_AGAIN",
@@ -211,46 +226,42 @@ export interface ChatProviderConfig {
   route?: "zen" | "local";
   /** OpenCode (Free & Zen): where the key of the latest check came from (never the key itself). */
   keySource?: "stored" | "env" | "auth.json";
+  /** OpenCode (Free & Zen) through local OpenCode: the latest check's request with the chosen model. */
+  modelCheck?: ModelCheck;
   /** OpenCode (Workspaces): CROT starts and stops the server itself (`opencode serve`, random password). */
   managed?: boolean;
 }
 
 /**
- * OpenCode's catalog before the first check, and when the live inventory cannot be read: the free models and
- * the Zen / Go models that need a key. Save & Test replaces it with the live inventory (Zen's /models, or the
- * local OpenCode server's), which is authoritative: OpenCode rotates its free models.
+ * OpenCode Zen's free models as local OpenCode 1.19.5 lists them without a key (GET /provider, provider
+ * "opencode"), with OpenCode's own default first: shown before the first check and while local OpenCode is not
+ * running. Save & Test replaces them with the live inventory, which is authoritative (OpenCode rotates its free
+ * models); the models that need a key come from Zen's live /models only.
  */
+export const OPENCODE_DEFAULT_MODEL = "big-pickle";
 export const OPENCODE_FREE_MODELS: readonly string[] = [
   "big-pickle",
+  "beam-free",
+  "crouton-alpha-free",
+  "deepseek-v4.1-flash-free",
+  "flint-40b-free",
   "glm-5.3-flash-free",
-  "deepseek-v4-flash-free",
-  "minimax-m2.5-free",
-  "mimo-v2-pro-free",
-  "qwen3.6-plus-free",
-  "nemotron-3-ultra-free",
-];
-export const OPENCODE_PAID_MODELS: readonly string[] = [
-  "glm-5.3",
-  "glm-5.3-flash",
-  "deepseek-v4-pro",
-  "claude-sonnet-4-6",
-  "gpt-5.5",
-  "kimi-k2.5",
+  "mimo-v2.6-flash-free",
+  "nemotron-3.5-lightning-free",
+  "nemotron-3.5-super-vl-free",
+  "pulse-alpha-free",
 ];
 export const OPENCODE_MODEL_LABELS: Readonly<Record<string, string>> = {
   "big-pickle": "Big Pickle (free)",
-  "glm-5.3-flash-free": "GLM-5.3 Flash (free)",
-  "deepseek-v4-flash-free": "DeepSeek V4 Flash (free)",
-  "minimax-m2.5-free": "MiniMax M2.5 (free)",
-  "mimo-v2-pro-free": "MiMo V2 Pro (free)",
-  "qwen3.6-plus-free": "Qwen3.6 Plus (free)",
-  "nemotron-3-ultra-free": "Nemotron 3 Ultra (free)",
-  "glm-5.3": "GLM-5.3 (Zen / Go)",
-  "glm-5.3-flash": "GLM-5.3 Flash (Zen / Go)",
-  "deepseek-v4-pro": "DeepSeek V4 Pro (Zen / Go)",
-  "claude-sonnet-4-6": "Claude Sonnet 4.6 (Zen / Go)",
-  "gpt-5.5": "GPT-5.5 (Zen / Go)",
-  "kimi-k2.5": "Kimi K2.5 (Zen / Go)",
+  "beam-free": "Beam (free)",
+  "crouton-alpha-free": "Crouton Alpha (free)",
+  "deepseek-v4.1-flash-free": "DeepSeek V4.1 Flash (free)",
+  "flint-40b-free": "Flint 40B (free)",
+  "glm-5.3-flash-free": "GLM-5.3-Flash (free)",
+  "mimo-v2.6-flash-free": "MiMo-V2.6-Flash (free)",
+  "nemotron-3.5-lightning-free": "Nemotron 3.5 Lightning (free)",
+  "nemotron-3.5-super-vl-free": "Nemotron 3.5 Super VL (free)",
+  "pulse-alpha-free": "Pulse Alpha (free)",
 };
 /** A model name for the picker: control characters and a trailing "Free" removed, "(free)" or "(Zen / Go)" added. */
 function zenLabel(name: string, id: string, free: boolean): string {
@@ -272,8 +283,19 @@ export interface ZenModel {
   readonly protocol: "openai" | "anthropic";
 }
 
+/** An inventory in picker order: the preferred (default) model first, then the free models, then by id. */
+function pickerOrder(models: ZenModel[], preferred: string | undefined): ZenModel[] {
+  return models.sort(
+    (a, b) =>
+      Number(b.id === preferred) - Number(a.id === preferred) ||
+      Number(b.free) - Number(a.free) ||
+      a.id.localeCompare(b.id),
+  );
+}
+
 /**
- * OpenCode Zen's /models: the models served over chat completions or Anthropic messages, free first.
+ * OpenCode Zen's /models: the models served over chat completions or Anthropic messages, OpenCode's default
+ * (Big Pickle) first, then the free ones.
  * Models that need the Responses or Gemini API are left out (CROT's chat does not speak them).
  */
 export function zenInventory(body: unknown): ZenModel[] {
@@ -294,12 +316,13 @@ export function zenInventory(body: unknown): ZenModel[] {
       typeof input === "number" && typeof output === "number" ? input === 0 && output === 0 : id.endsWith("-free");
     out.push({ id, label: zenLabel(text(m.name), id, free), free, protocol });
   }
-  return out.sort((a, b) => Number(b.free) - Number(a.free) || a.id.localeCompare(b.id));
+  return pickerOrder(out, OPENCODE_DEFAULT_MODEL);
 }
 
 /**
- * The OpenCode Zen models of a local OpenCode server (GET /provider, provider "opencode"), free first. OpenCode
- * speaks every model's protocol itself, so none is left out; without a key it lists only the free ones.
+ * The OpenCode Zen models of a local OpenCode server (GET /provider, provider "opencode"): OpenCode's default for
+ * the provider first, then the free ones. OpenCode speaks every model's protocol itself, so none is left out;
+ * without a key it lists only the free ones.
  */
 export function openCodeZenModels(inventory: unknown): ZenModel[] {
   const body = record(inventory);
@@ -316,7 +339,8 @@ export function openCodeZenModels(inventory: unknown): ZenModel[] {
         : key.endsWith("-free");
     out.push({ id: key, label: zenLabel(text(m.name), key, free), free, protocol: "openai" });
   }
-  return out.sort((a, b) => Number(b.free) - Number(a.free) || a.id.localeCompare(b.id));
+  const preferred = text(record(body.default).opencode);
+  return pickerOrder(out, preferred || OPENCODE_DEFAULT_MODEL);
 }
 
 /** A provider's non-2xx answer as an error: its status and a fixed reason, never its text. */
@@ -342,7 +366,7 @@ export function chatFailure(error: unknown): string | undefined {
   if (d.reason === "free_tier_limit")
     return "OpenCode's free usage limit is reached (OpenCode suggests its Go subscription). Try again later, or enter an OpenCode Zen API key.";
   if (d.reason === "opencode_not_installed")
-    return "OpenCode CLI is not installed. Install it (npm i -g opencode-ai) or enter an OpenCode Zen API key.";
+    return "Local OpenCode CLI was not found. Click “Install and start OpenCode (1 click)” or enter an OpenCode Zen API key.";
   if (d.reason === "opencode_start_failed")
     return "Local OpenCode could not be started. Check the OpenCode installation.";
   if (d.reason === "opencode_refused")
@@ -352,6 +376,8 @@ export function chatFailure(error: unknown): string | undefined {
   if (d.reason === "local_read_only_tools")
     return "Through local OpenCode the model can only read the open project (list, read and search files); other CROT tools are not forwarded. Turn them off or enter an OpenCode Zen API key.";
   if (error.code === "PERMISSION_DENIED") return "Network access is blocked by the runtime policy.";
+  // OpenCode's own explanation follows (chatFailureDetail): the model, the exact status and why.
+  if (d.stage === "local" && typeof d.detail === "string" && d.detail) return "Local OpenCode refused the request.";
   if (!Number.isInteger(status)) return undefined;
   if (status === 401) return "The provider rejected the credential (HTTP 401). Check the API key or token.";
   if (status === 403) return "The provider refused access (HTTP 403). Check the account and model permissions.";
@@ -362,6 +388,24 @@ export function chatFailure(error: unknown): string | undefined {
     return "The provider rejected the request (HTTP 400/422). The model may not support this input or tools.";
   if (status >= 500) return "The provider failed to answer (HTTP 5xx). Try again later.";
   return undefined;
+}
+
+/**
+ * OpenCode's own explanation of a failed chat turn, shown after the fixed message (chatFailure): the model, the
+ * exact HTTP status and OpenCode's bounded, redacted text (openCodeDetail), e.g. "glm-5.3-flash-free · HTTP 429:
+ * Free usage exceeded, subscribe to Go (https://opencode.ai/go)". Only OpenCode servers produce one.
+ */
+export function chatFailureDetail(error: unknown): string | undefined {
+  if (!(error instanceof CrotError)) return undefined;
+  const d = error.details ?? {},
+    detail = typeof d.detail === "string" ? d.detail.slice(0, 300) : "";
+  if (!detail) return undefined;
+  const status = Number(d.httpStatus),
+    head = [
+      typeof d.model === "string" && d.model.length <= 256 ? d.model : "",
+      Number.isInteger(status) && status >= 100 && status <= 599 ? `HTTP ${status}` : "",
+    ].filter(Boolean);
+  return head.length ? `${head.join(" · ")}: ${detail}` : detail;
 }
 
 export const CHAT_ENDPOINTS: Record<ChatBaseProvider, string> = {
@@ -491,13 +535,26 @@ export interface OpenCodeHooks {
  * local OpenCode would be started, which listing the models never does.
  */
 type ZenRoute =
-  | { kind: "zen"; key?: string; source?: "stored" | "env" | "auth.json" }
+  | { kind: "zen"; key: string; source: "stored" | "env" | "auth.json" }
   | { kind: "local"; server: OpenCodeServer }
-  | { kind: "idle" };
+  /** Local OpenCode is installed but not running (listing models never starts it). */
+  | { kind: "idle" }
+  /** No key and no OpenCode to start (listing models only; a check or a chat reports it). */
+  | { kind: "missing" };
+/** Save & Test's request with the chosen model through local OpenCode: accepted, or OpenCode's refusal. */
+export interface ModelCheck {
+  readonly model: string;
+  readonly ok: boolean;
+  readonly diagnostic?: ProviderDiagnostic;
+}
 /** An OpenCode server and the headers of every request to it (Basic auth, the OpenCode directory). */
 interface OpenCodeTarget {
   readonly endpoint: string;
   readonly headers: Record<string, string>;
+  /** An OpenCode server (not a Notion agent): its own explanation of a refused request is kept (openCodeBodyDetail). */
+  readonly openCode?: boolean;
+  /** CROT's local OpenCode bridge of OpenCode Zen: its failures belong to the "local" stage. */
+  readonly local?: boolean;
 }
 
 interface Block {
@@ -520,6 +577,8 @@ interface Conversation {
   error?: string;
   /** The fixed message of a failed turn (chatFailure), shown instead of the generic one. */
   failure?: string;
+  /** OpenCode's own explanation of the failure (chatFailureDetail), shown after the fixed message. */
+  failureDetail?: string;
   controller: AbortController;
   done?: Promise<void>;
 }
@@ -684,9 +743,10 @@ export class ChatRuntime {
         // Shown before the first check (OpenCode's free and Zen / Go models); the live inventory replaces them.
         ...(base === "OpenCode (Free & Zen)"
           ? {
-              suggestedModels: [...OPENCODE_FREE_MODELS, ...OPENCODE_PAID_MODELS],
+              suggestedModels: [...OPENCODE_FREE_MODELS],
               suggestedLabels: { ...OPENCODE_MODEL_LABELS },
               ...(status && config?.route ? { route: config.route } : {}),
+              ...(status === "connected" && config?.modelCheck ? { modelCheck: config.modelCheck } : {}),
               ...(credentialStored
                 ? { keySource: "stored" }
                 : status && config?.keySource
@@ -732,7 +792,8 @@ export class ChatRuntime {
   }
   /**
    * The provider's models. `start: false` (the owner UI listing them) never starts local OpenCode: a stopped
-   * managed server lists the saved model, OpenCode Zen through stopped local OpenCode the bundled free models.
+   * managed server lists the saved model, OpenCode Zen through stopped (or missing) local OpenCode the bundled
+   * free models.
    */
   async models(provider: ChatProvider, options: { start?: boolean } = {}): Promise<Record<string, unknown>> {
     const start = options.start ?? true;
@@ -758,10 +819,18 @@ export class ChatRuntime {
     if (base === "OpenCode (Free & Zen)") {
       const route = await this.zenRoute(provider, context.signal, start);
       if (route.kind === "local") return this.localInventory(route.server, context);
-      if (route.kind === "idle") {
+      if (route.kind === "idle" || route.kind === "missing") {
         const models = [...OPENCODE_FREE_MODELS];
         if (config?.defaultModel && !models.includes(config.defaultModel)) models.unshift(config.defaultModel);
-        return { ok: true, models, labels: { ...OPENCODE_MODEL_LABELS }, route: "local", idle: true };
+        return {
+          ok: true,
+          models,
+          labels: { ...OPENCODE_MODEL_LABELS },
+          free: [...OPENCODE_FREE_MODELS],
+          route: "local",
+          idle: true,
+          ...(route.kind === "missing" ? { installed: false } : {}),
+        };
       }
       const { endpoint, headers } = this.settings(provider, route.key);
       const response = await controlFetch(`${endpoint}/models`, {
@@ -776,8 +845,7 @@ export class ChatRuntime {
       } catch {
         return bad("Invalid provider model inventory");
       }
-      // Without a key only the free models can answer.
-      const inventory = zenInventory(body).filter((m) => route.key || m.free);
+      const inventory = zenInventory(body);
       if (!inventory.length)
         throw new CrotError("OPERATION_FAILED", "Provider returned no valid model inventory", { stage: "inventory" });
       this.zenProtocols.clear();
@@ -789,7 +857,7 @@ export class ChatRuntime {
         labels: Object.fromEntries(inventory.map((m) => [m.id, m.label])),
         free: inventory.filter((m) => m.free).map((m) => m.id),
         route: "zen",
-        ...(route.source ? { keySource: route.source } : {}),
+        keySource: route.source,
       };
     }
     const { endpoint, headers } = this.settings(provider);
@@ -827,17 +895,18 @@ export class ChatRuntime {
     return bad("Provider model pagination exceeds its limit");
   }
   /**
-   * Save & Test of OpenCode Zen without a key: one tiny request with the chosen free model, so a refused free use
-   * (Zen's free usage limit for anonymous use, OpenCode's own free tier limit) is reported at once instead of at
-   * the first chat. With a key nothing is sent.
+   * Save & Test of OpenCode Zen through local OpenCode: one tiny request with the chosen model, so the owner sees
+   * at once whether OpenCode accepts it (its free tier limit, a model it refuses) instead of at the first chat.
+   * The connection itself stands on the inventory: a refused model is reported, never a failed check. With a key
+   * nothing is sent.
    */
-  async verify(provider: ChatProvider, model: string): Promise<void> {
-    if (baseProvider(provider) !== "OpenCode (Free & Zen)") return;
+  async verify(provider: ChatProvider, model: string): Promise<ModelCheck | undefined> {
+    if (baseProvider(provider) !== "OpenCode (Free & Zen)") return undefined;
     if (isNetworkDenied(this.host.core())) throw denied();
     const context = this.host.context(),
       route = await this.zenRoute(provider, context.signal);
-    if (route.kind === "idle") return;
-    if (route.kind === "local") {
+    if (route.kind !== "local") return undefined;
+    try {
       await openCodeReply(
         `opencode/${model}`,
         "Reply with OK.",
@@ -845,44 +914,37 @@ export class ChatRuntime {
         ...this.openCodeCalls(this.localTarget(route.server), context),
         { answerOnly: true, ephemeral: true, probeMs: 8000 },
       );
-      return;
+      return { model, ok: true };
+    } catch (error) {
+      return { model, ok: false, diagnostic: { ...providerDiagnostic(error), model } };
     }
-    if (route.key) return;
-    const { endpoint, headers } = this.settings(provider);
-    const response = await controlFetch(`${endpoint}/chat/completions`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ model, messages: [{ role: "user", content: "ping" }], max_tokens: 1, stream: false }),
-      timeoutMs: 30000,
-      signal: context.signal,
-    });
-    if (response.status < 200 || response.status >= 300)
-      throw providerHttpError(response.status, response.body, "probe");
   }
   /**
    * How OpenCode Zen is reached: with the stored key, else with the owner's OpenCode key (OPENCODE_API_KEY,
-   * auth.json), else through local OpenCode (the owner's running server, or CROT's own `opencode serve`), else
-   * anonymously (which Zen usually refuses for clients other than OpenCode).
+   * auth.json), else through local OpenCode (the owner's running server, or CROT's own `opencode serve`, which
+   * CROT can install). Never anonymously: Zen refuses anonymous use by clients other than OpenCode itself, so
+   * without a key and without OpenCode the owner is told to install OpenCode or enter a key.
    */
   private async zenRoute(provider: ChatProvider, signal?: AbortSignal, start = true): Promise<ZenRoute> {
     const stored = this.host.credential(provider);
     if (stored) return { kind: "zen", key: stored, source: "stored" };
     const openCode = this.host.openCode;
-    if (!openCode) return { kind: "zen" };
-    const local = localKeyEndpoint(this.host.configuration(provider)?.endpoint)
-      ? await openCode.key().catch(() => undefined)
-      : undefined;
+    const local =
+      openCode && localKeyEndpoint(this.host.configuration(provider)?.endpoint)
+        ? await openCode.key().catch(() => undefined)
+        : undefined;
     if (local) return { kind: "zen", key: local.key, source: local.source };
+    if (!openCode) {
+      if (!start) return { kind: "missing" };
+      throw new CrotError("NOT_FOUND", "OpenCode CLI is not installed", {
+        stage: "local",
+        reason: "opencode_not_installed",
+      });
+    }
     const current = openCode.bridge.current();
     if (current) return { kind: "local", server: current };
-    if (!start && (await openCode.bridge.installed())) return { kind: "idle" };
-    try {
-      return { kind: "local", server: await openCode.bridge.ensure(signal) };
-    } catch (error) {
-      // Not installed and no server running: Zen itself (anonymous free use) is all that is left.
-      if (error instanceof CrotError && error.details?.reason === "opencode_not_installed") return { kind: "zen" };
-      throw error;
-    }
+    if (!start) return (await openCode.bridge.installed()) ? { kind: "idle" } : { kind: "missing" };
+    return { kind: "local", server: await openCode.bridge.ensure(signal) };
   }
   /** The OpenCode Zen models of local OpenCode, for the Cloud LLM picker. */
   private async localInventory(server: OpenCodeServer, context: AuthContext): Promise<Record<string, unknown>> {
@@ -906,6 +968,8 @@ export class ChatRuntime {
   private localTarget(server: OpenCodeServer): OpenCodeTarget {
     return {
       endpoint: server.url,
+      openCode: true,
+      local: true,
       headers: {
         "content-type": "application/json",
         ...(server.password
@@ -933,6 +997,7 @@ export class ChatRuntime {
       const directory = this.host.project?.()?.root;
       return {
         endpoint: server.url,
+        openCode: true,
         headers: {
           "content-type": "application/json",
           ...(server.password
@@ -943,7 +1008,7 @@ export class ChatRuntime {
       };
     }
     const { endpoint, headers } = this.settings(provider);
-    return { endpoint, headers };
+    return { endpoint, headers, openCode: provider === "OpenCode" };
   }
   /** Request and cleanup functions of one turn with an OpenCode or Notion agent server. */
   private openCodeCalls(target: OpenCodeTarget, context: AuthContext): [WorkspaceRequest, WorkspaceCancel] {
@@ -975,11 +1040,14 @@ export class ChatRuntime {
       signal: signal && context.signal ? AbortSignal.any([context.signal, signal]) : (signal ?? context.signal),
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
     });
-    if (response.status < 200 || response.status >= 300)
+    if (response.status < 200 || response.status >= 300) {
+      const detail = target.openCode ? openCodeBodyDetail(response.body) : undefined;
       throw new CrotError("OPERATION_FAILED", "Workspace agent request failed", {
-        stage: "workspace",
+        stage: target.local ? "local" : "workspace",
         httpStatus: response.status,
+        ...(detail ? { detail } : {}),
       });
+    }
     try {
       const value: unknown = JSON.parse(response.body);
       return record(value);
@@ -1062,6 +1130,7 @@ export class ChatRuntime {
           await this.generate(c, p, ctx);
         } catch (error) {
           c.failure = chatFailure(error);
+          c.failureDetail = chatFailureDetail(error);
           return bad("Chat generation failed");
         }
       })
@@ -1150,6 +1219,7 @@ export class ChatRuntime {
       state: c.state,
       blocks: structuredClone(c.blocks),
       ...(c.error ? { error: c.error } : {}),
+      ...(c.error && c.failureDetail ? { errorDetail: c.failureDetail } : {}),
     };
   }
   stop(id: string): Record<string, unknown> {

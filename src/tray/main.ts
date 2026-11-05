@@ -43,6 +43,7 @@ import { createPrivateFileProtection } from "../core/platform/private-files.js";
 import { PRESET_VALUES, type PresetValue } from "../service/protocol.js";
 import { TRAY_CSP, TRAY_ORIGIN, trayAsset } from "./assets.js";
 import { TrayToolClient } from "./tool-client.js";
+import { productFailure } from "./product-failure.js";
 import { repairL1 } from "./l1-repair.js";
 import { checkRelayEndpoint, relayCheckUrl, relayCheckVerdict } from "./relay-check.js";
 import { TrayController } from "./controller.js";
@@ -410,8 +411,8 @@ function registerIpc(): void {
         return { ok: true, flowId: result.flowId };
       }
       return result;
-    } catch {
-      return { ok: false, message: "Request refused. Check service policy and connection." };
+    } catch (error) {
+      return productFailure(method, error);
     }
   });
   ipcMain.handle("tool", async (event, name: unknown, input: unknown) => {

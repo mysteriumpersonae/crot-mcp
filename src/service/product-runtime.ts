@@ -840,15 +840,24 @@ export class ProductRuntime {
           const models = result.models as string[];
           if (!models.length)
             throw new CrotError("OPERATION_FAILED", "Provider returned no usable models", { stage: "inventory" });
-          const model = config.defaultModel && models.includes(config.defaultModel) ? config.defaultModel : models[0]!;
-          // OpenCode Zen without a key: one tiny completion proves anonymous free use is accepted.
-          await this.chat.verify(provider, model);
+          // The saved model while the live inventory still has it, else the first free one (OpenCode's default
+          // first), else the first model.
+          const free = Array.isArray(result.free) ? (result.free as string[]) : [];
+          const model =
+            config.defaultModel && models.includes(config.defaultModel)
+              ? config.defaultModel
+              : (models.find((m) => free.includes(m)) ?? models[0]!);
+          // OpenCode Zen through local OpenCode: one tiny request with that model. Its refusal (a free tier limit,
+          // a model OpenCode rejects) is reported with the connection, never instead of it.
+          const check = await this.chat.verify(provider, model);
           if (this.state.chatProviders?.[provider] !== config)
             return fail("Provider configuration changed; test again");
           config.checkedAt = now();
           config.connectionStatus = "connected";
           delete config.connectionError;
           config.defaultModel = model;
+          if (check) config.modelCheck = check;
+          else delete config.modelCheck;
           // OpenCode (Free & Zen): the route and key source of this check (never the key).
           if (result.route === "zen" || result.route === "local") config.route = result.route;
           else delete config.route;
@@ -857,7 +866,13 @@ export class ProductRuntime {
           else delete config.keySource;
           await this.persist();
           await this.event(method, undefined, provider);
-          return { ...result, provider, checkedAt: config.checkedAt, defaultModel: config.defaultModel };
+          return {
+            ...result,
+            provider,
+            checkedAt: config.checkedAt,
+            defaultModel: config.defaultModel,
+            ...(check ? { modelCheck: check } : {}),
+          };
         } catch (error) {
           const diagnostic = providerDiagnostic(error);
           if (this.state.chatProviders?.[provider] === config) {
@@ -866,6 +881,7 @@ export class ProductRuntime {
             config.connectionStatus = "failed";
             delete config.route;
             delete config.keySource;
+            delete config.modelCheck;
             await this.persist();
           }
           // OpenCode: whether the CLI is installed, so the owner sees how to get a key or install it.
