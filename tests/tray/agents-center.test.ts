@@ -282,20 +282,25 @@ describe("Other authorization methods and provider checks", () => {
       "OpenCode's free usage limit is reached (OpenCode suggests its Go subscription). Try again later, or enter an OpenCode Zen API key.",
       "Local OpenCode CLI was not found. Click “Install and start OpenCode (1 click)” or enter an OpenCode Zen API key.",
       "Local OpenCode refused the request.",
-      "Local OpenCode could not be started. Check the OpenCode installation.",
+      "Local OpenCode could not be started. Install the verified OpenCode into CROT with one click (your own OpenCode stays as it is), or enter an OpenCode Zen API key.",
+      "Your OpenCode is too old for CROT (version 1.0 or newer is needed). Install the verified OpenCode into CROT with one click, or update yours with “opencode upgrade”.",
       "Starting local OpenCode is blocked by the emergency stop or the runtime policy.",
       // Chat errors of the local bridge (chat-runtime.ts), translated where the chat shows them.
       "Local OpenCode takes text only: images are not forwarded. Remove them or enter an OpenCode Zen API key.",
       "Through local OpenCode the model can only read the open project (list, read and search files); other CROT tools are not forwarded. Turn them off or enter an OpenCode Zen API key.",
       "Installing OpenCode…",
-      "CROT downloads OpenCode with npm into its own folder (about 200 MB) and starts it. No terminal needed.",
-      "One-click install needs npm (Node.js). Install Node.js from nodejs.org, or run the command below in a terminal.",
+      "CROT downloads the verified OpenCode (about 80 MB) from the npm registry into its own folder and starts it. No terminal, Node.js or npm needed.",
+      "Install verified OpenCode into CROT (1 click)",
+      "Reinstall OpenCode in CROT (1 click)",
+      "Your own OpenCode stays as it is: CROT keeps its copy with its own settings and data.",
+      "copy installed by CROT",
       "Installing OpenCode is blocked by the emergency stop or the runtime policy.",
-      "npm was not found. Install Node.js (nodejs.org) and try again.",
-      "npm could not install OpenCode. Check the network or proxy and try again.",
+      "OpenCode could not be downloaded from registry.npmjs.org. Check the network or proxy and try again.",
+      "The downloaded OpenCode did not match its published checksum and was removed. Try again.",
+      "OpenCode could not be installed. Check the network, proxy and free disk space, then try again.",
       "No OpenCode build for this system runs here. Install OpenCode with the command below.",
       "The installation was stopped.",
-      "CROT installs OpenCode with npm into its own folder, then starts opencode serve on 127.0.0.1 with a random password and connects to it. OpenCode agents act in the open project with their own permissions (files, commands); CROT tool grants are not forwarded and CROT never auto-approves their actions.",
+      "CROT downloads the verified OpenCode into its own folder, then starts opencode serve on 127.0.0.1 with a random password and connects to it. OpenCode agents act in the open project with their own permissions (files, commands); CROT tool grants are not forwarded and CROT never auto-approves their actions.",
     ]) {
       expect(messages[key]?.length, key).toBe(5);
       expect(messages[key]![1], key).not.toBe(key);
@@ -331,6 +336,25 @@ describe("Other authorization methods and provider checks", () => {
     // OpenCode missing: exactly what to click, without a technical tag; OpenCode's refusal: its status, the model and its own words.
     expect(diagnosticText({ code: "OPENCODE_NOT_INSTALLED", stage: "local" })).toBe(
       "Local OpenCode CLI was not found. Click “Install and start OpenCode (1 click)” or enter an OpenCode Zen API key.",
+    );
+    // OpenCode that does not start: what to do, then exactly why (the program, its exit code and last error line).
+    expect(
+      diagnosticText({
+        code: "OPENCODE_START_FAILED",
+        stage: "local",
+        detail: "~/.npm-global/bin/opencode: exited with code 1 — Error: opencode-ai's postinstall script was not run.",
+      }),
+    ).toBe(
+      "Local OpenCode could not be started. Install the verified OpenCode into CROT with one click (your own OpenCode stays as it is), or enter an OpenCode Zen API key. [OPENCODE_START_FAILED] — ~/.npm-global/bin/opencode: exited with code 1 — Error: opencode-ai's postinstall script was not run.",
+    );
+    expect(
+      diagnosticText({
+        code: "OPENCODE_TOO_OLD",
+        stage: "local",
+        detail: "~/.opencode/bin/opencode 0.15.31: CROT needs OpenCode 1.0.0 or newer",
+      }),
+    ).toBe(
+      "Your OpenCode is too old for CROT (version 1.0 or newer is needed). Install the verified OpenCode into CROT with one click, or update yours with “opencode upgrade”. [OPENCODE_TOO_OLD] — ~/.opencode/bin/opencode 0.15.31: CROT needs OpenCode 1.0.0 or newer",
     );
     expect(
       diagnosticText({
@@ -398,19 +422,69 @@ describe("Other authorization methods and provider checks", () => {
     expect(AGENTS_CENTER_RENDERER).toContain("openCodeInfo=await rpc('opencode.install')");
     expect(AGENTS_CENTER_RENDERER).toContain("run.dataset.opencodeInstallRun=''");
     expect(AGENTS_CENTER_RENDERER).toContain("while(openCodeInfo?.runtime?.state==='installing'&&layout.isConnected)");
-    // Shown only when OpenCode is missing and npm is there; otherwise how to get npm.
+    // Offered whenever OpenCode is missing or did not start (no Node.js or npm needed), with the download's progress.
     expect(AGENTS_CENTER_RENDERER).toContain("if(info.installable||installing)");
-    expect(AGENTS_CENTER_RENDERER).toContain("const missing=zen&&!ok&&openCodeInfo?.installed===false;");
+    expect(AGENTS_CENTER_RENDERER).not.toContain("One-click install needs npm");
+    expect(AGENTS_CENTER_RENDERER).not.toContain("npm_not_found");
+    expect(AGENTS_CENTER_RENDERER).toContain(
+      "t('Installing OpenCode…')+(Number.isInteger(runtime.progress)?' '+runtime.progress+' %':'')",
+    );
+    expect(AGENTS_CENTER_RENDERER).toContain("const missing=zen&&!ok&&needsInstall(openCodeInfo);");
+    expect(AGENTS_CENTER_RENDERER).toContain(
+      "installHint(wsInstall,opencode&&!server&&needsInstall(openCodeInfo)?openCodeInfo:undefined,",
+    );
+    const source = /function needsInstall\(info\)\{[^\n]*\}\n/.exec(AGENTS_CENTER_RENDERER)?.[0];
+    expect(source).toBeDefined();
+    const needsInstall = new Function(`${source}return needsInstall;`)() as (info: unknown) => boolean;
+    const owner = { code: "OPENCODE_START_FAILED", source: "owner" },
+      crot = { code: "OPENCODE_START_FAILED", source: "crot" };
+    expect(needsInstall(undefined)).toBe(false);
+    expect(needsInstall({ installed: false })).toBe(true);
+    expect(needsInstall({ installed: true })).toBe(false);
+    // The owner's OpenCode did not start: CROT's copy helps unless it is installed already (then it is tried next).
+    expect(needsInstall({ installed: true, problem: owner, runtime: { state: "missing" } })).toBe(true);
+    expect(needsInstall({ installed: true, problem: owner, runtime: { state: "failed" } })).toBe(true);
+    expect(needsInstall({ installed: true, problem: owner, runtime: { state: "installed" } })).toBe(false);
+    // CROT's own copy did not start: reinstall it.
+    expect(needsInstall({ installed: true, problem: crot, runtime: { state: "installed" } })).toBe(true);
+    expect(AGENTS_CENTER_RENDERER).toContain(
+      "label=!problem?'Install and start OpenCode (1 click)':runtime.state==='installed'?'Reinstall OpenCode in CROT (1 click)':'Install verified OpenCode into CROT (1 click)'",
+    );
+    for (const [reason, text] of [
+      ["download_failed", "OpenCode could not be downloaded from registry.npmjs.org."],
+      ["integrity_mismatch", "did not match its published checksum"],
+      ["install_failed", "OpenCode could not be installed."],
+      ["binary_not_found", "No OpenCode build for this system runs here."],
+    ] as [string, string][])
+      expect(AGENTS_CENTER_RENDERER).toMatch(new RegExp(`${reason}:'[^']*${text.replace(/[.]/g, "\\.")}`));
+    expect(AGENTS_CENTER_RENDERER).toContain("(runtime.detail?' — '+runtime.detail:'')");
     // Zen: the same Save & Test as Auto-connect; Workspaces: the managed server, after the owner confirms.
     expect(AGENTS_CENTER_RENDERER).toContain(
       "installHint(zenInstall,missing?openCodeInfo:undefined,true,()=>checkProvider('OpenCode (Free & Zen)',cloudEndpoint.input.value||defaults['OpenCode (Free & Zen)'],'',cloudState,checked,cloudModel));",
     );
     expect(AGENTS_CENTER_RENDERER).toContain(
-      "false,()=>checkProvider('OpenCode','http://127.0.0.1:4096','',workspaceState,workspaceChecked,workspaceModel,{managed:true}),'CROT installs OpenCode with npm",
+      "false,()=>checkProvider('OpenCode','http://127.0.0.1:4096','',workspaceState,workspaceChecked,workspaceModel,{managed:true}),'CROT downloads the verified OpenCode into its own folder",
     );
     expect(AGENTS_CENTER_RENDERER).toContain(
-      "warning?confirm('Install and start OpenCode (1 click)',()=>installOpenCode(connect),warning):installOpenCode(connect)",
+      "warning?confirm(label,()=>installOpenCode(connect),warning):installOpenCode(connect)",
     );
-    expect(messages["Install and start OpenCode (1 click)"]?.[1]).toBe("Установить и запустить OpenCode (1 клик)");
+    // The route names CROT's copy when it serves.
+    expect(AGENTS_CENTER_RENDERER).toContain(
+      "t(server.managed?(server.source==='crot'?'copy installed by CROT':'started by CROT'):'already running')",
+    );
+    for (const [key, ru] of [
+      ["Install and start OpenCode (1 click)", "Установить и запустить OpenCode (1 клик)"],
+      ["Install verified OpenCode into CROT (1 click)", "Установить проверенный OpenCode в CROT (1 клик)"],
+      ["Reinstall OpenCode in CROT (1 click)", "Переустановить OpenCode в CROT (1 клик)"],
+      [
+        "CROT downloads the verified OpenCode (about 80 MB) from the npm registry into its own folder and starts it. No terminal, Node.js or npm needed.",
+        "CROT скачает проверенный OpenCode (около 80 МБ) из реестра npm в свою папку и запустит его. Терминал, Node.js и npm не нужны.",
+      ],
+      [
+        "Local OpenCode could not be started. Install the verified OpenCode into CROT with one click (your own OpenCode stays as it is), or enter an OpenCode Zen API key.",
+        "Не удалось запустить локальный OpenCode. Установите проверенный OpenCode в CROT одним кликом (ваш OpenCode останется как есть) или введите API-ключ Zen.",
+      ],
+    ] as [string, string][])
+      expect(messages[key]?.[1], key).toBe(ru);
   });
 });

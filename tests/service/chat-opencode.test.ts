@@ -128,6 +128,29 @@ describe("zenInventory", () => {
       code: "OPENCODE_START_FAILED",
       stage: "local",
     });
+    // Why local OpenCode did not start, and an OpenCode too old for CROT: the bridge's one redacted line.
+    const exited =
+      "~/.npm-global/bin/opencode: exited with code 1 — Error: opencode-ai's postinstall script was not run.";
+    const why = (reason: string, detail: string) =>
+      new CrotError("OPERATION_FAILED", "x", { stage: "local", reason, source: "owner", detail });
+    expect(providerDiagnostic(why("opencode_start_failed", exited))).toEqual({
+      code: "OPENCODE_START_FAILED",
+      stage: "local",
+      detail: exited,
+    });
+    const old = "~/.opencode/bin/opencode 0.15.31: CROT needs OpenCode 1.0.0 or newer";
+    expect(providerDiagnostic(why("opencode_too_old", old))).toEqual({
+      code: "OPENCODE_TOO_OLD",
+      stage: "local",
+      detail: old,
+    });
+    expect(chatFailure(why("opencode_start_failed", exited))).toBe(
+      "Local OpenCode could not be started. Install the verified OpenCode into CROT with one click (your own OpenCode stays as it is), or enter an OpenCode Zen API key.",
+    );
+    expect(chatFailureDetail(why("opencode_start_failed", exited))).toBe(exited);
+    expect(chatFailure(why("opencode_too_old", old))).toBe(
+      "Your OpenCode is too old for CROT (version 1.0 or newer is needed). Install the verified OpenCode into CROT with one click, or update yours with “opencode upgrade”.",
+    );
     expect(providerDiagnostic(local("PERMISSION_DENIED", "opencode_refused"))).toEqual({
       code: "OPENCODE_START_REFUSED",
       stage: "local",

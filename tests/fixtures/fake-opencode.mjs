@@ -6,6 +6,10 @@
 // CROT's text tool protocol (chat-tool-protocol.ts): a new message "READ:<path>" is answered with an
 // fs_read_file call, "CALL:<tool>" with a call of that tool, and a message of tool results with a final answer
 // that quotes them.
+// Leading flags play OpenCode installations that do not start: --fake-old (OpenCode 0.x: no /global/health,
+// `--version` 0.15.31), --fake-crash (an npm installation without its postinstall script: an error, exit 1),
+// --fake-unhealthy (answers /global/health with 503 and logs an error). `--version` prints FAKE_OPENCODE_VERSION
+// (default 1.19.5); FAKE_OPENCODE_STARTS: a file that gets one JSON line per start (flags, XDG folders).
 import { Buffer } from "node:buffer";
 import { appendFileSync, readFileSync } from "node:fs";
 import http from "node:http";
@@ -13,11 +17,34 @@ import process from "node:process";
 import { URL } from "node:url";
 
 const args = process.argv.slice(2);
+const flags = [];
+while (args[0]?.startsWith("--fake-")) flags.push(args.shift());
 const option = (name) => {
   const i = args.indexOf(name);
   return i >= 0 ? args[i + 1] : undefined;
 };
+if (args[0] === "--version") {
+  process.stdout.write(`${flags.includes("--fake-old") ? "0.15.31" : process.env.FAKE_OPENCODE_VERSION || "1.19.5"}\n`);
+  process.exit(0);
+}
 if (args[0] !== "serve" || option("--hostname") !== "127.0.0.1") process.exit(2);
+if (process.env.FAKE_OPENCODE_STARTS)
+  appendFileSync(
+    process.env.FAKE_OPENCODE_STARTS,
+    `${JSON.stringify({
+      flags,
+      xdg: Object.fromEntries(
+        ["XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"].map((n) => [
+          n,
+          process.env[n] ?? null,
+        ]),
+      ),
+    })}\n`,
+  );
+if (flags.includes("--fake-crash")) {
+  process.stderr.write("Error: opencode-ai's postinstall script was not run.\n");
+  process.exit(1);
+}
 const port = Number(option("--port"));
 const username = process.env.OPENCODE_SERVER_USERNAME || "opencode";
 const password = process.env.OPENCODE_SERVER_PASSWORD;
@@ -78,8 +105,14 @@ const server = http.createServer((req, res) => {
         ...(typeof directory === "string" ? { directory: decodeURIComponent(directory) } : {}),
         ...(body !== undefined ? { body } : {}),
       });
-    if (req.method === "GET" && url.pathname === "/global/health")
+    if (req.method === "GET" && url.pathname === "/global/health") {
+      if (flags.includes("--fake-old")) return send(res, 404, { error: "not found" });
+      if (flags.includes("--fake-unhealthy")) {
+        process.stderr.write("Error: database is locked\n");
+        return send(res, 503, { healthy: false });
+      }
       return send(res, 200, { healthy: true, version: "0.0.0-fake" });
+    }
     if (req.method === "GET" && url.pathname === "/provider") return send(res, 200, provider);
     if (req.method === "GET" && url.pathname === "/session/status") return send(res, 200, statuses);
     if (req.method === "POST" && url.pathname === "/session") return send(res, 200, { id: `ses_${++sessions}` });

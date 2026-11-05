@@ -5,7 +5,7 @@
  * stands in for the real one.
  */
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import http from "node:http";
 import net from "node:net";
 import path from "node:path";
@@ -17,12 +17,20 @@ import type { CrotCore } from "../../src/core/crot-core.js";
 import { CrotError } from "../../src/core/errors.js";
 import { createNodePlatform } from "../../src/core/platform/node-platform.js";
 import { createPrivateFileProtection } from "../../src/core/platform/private-files.js";
-import { basicAuthorization, OpenCodeBridge, type OpenCodeBridgeOptions } from "../../src/service/opencode-bridge.js";
+import {
+  basicAuthorization,
+  lastOutputLine,
+  olderThan,
+  OPENCODE_MIN_VERSION,
+  OpenCodeBridge,
+  type OpenCodeBridgeOptions,
+} from "../../src/service/opencode-bridge.js";
 import {
   OPENCODE_RUNTIME_VERSION,
   runtimePackages,
   type OpenCodeInstallHost,
 } from "../../src/service/opencode-runtime.js";
+import { fakeRegistry, tgz } from "../fixtures/opencode-registry.js";
 import { OPENCODE_FREE_MODELS } from "../../src/service/chat-runtime.js";
 import { ProductRuntime, type ProductHost } from "../../src/service/product-runtime.js";
 import { prepareSecretStore } from "../../src/service/secrets/store.js";
@@ -122,7 +130,7 @@ describe("OpenCode bridge", () => {
       const status = await bridge.status();
       expect(status).toEqual({
         installed: true,
-        server: { url: server.url, managed: true, version: "0.0.0-fake" },
+        server: { url: server.url, managed: true, version: "0.0.0-fake", source: "owner" },
       });
       expect(JSON.stringify(status)).not.toContain(server.password);
       expect(await bridge.stop()).toBe(true);
@@ -201,6 +209,11 @@ describe("OpenCode bridge", () => {
       // Once more on another port when the server exits at once (the port may have been taken in between).
       expect(records).toEqual(["start:failed", "start:failed"]);
       expect(exits.current()).toBeUndefined();
+      // Why, until a start succeeds: the program and its exit code.
+      expect(await exits.status()).toEqual({
+        installed: true,
+        problem: { code: "OPENCODE_START_FAILED", source: "owner", detail: `${process.execPath}: exited with code 3` },
+      });
     } finally {
       await Promise.all([missing.close(), denied.close(), exits.close()]);
       await dirs.cleanup();
@@ -261,22 +274,169 @@ describe("OpenCode bridge", () => {
     }
   }, 60_000);
 
-  it("starts the OpenCode that CROT installed when the owner has none", async () => {
+  it("starts the OpenCode that CROT installed when the owner has none, with its own folders", async () => {
     const dirs = await makeTempDirs();
     const { command: _command, ...options } = await fakeOptions(dirs.outside);
     const directory = path.join(dirs.outside, "opencode-chat");
+    const home = path.join(dirs.outside, "opencode-runtime", "home");
     const installed = path.join(dirs.outside, "opencode-runtime", "bin", "opencode");
     let binary: string | undefined;
-    const bridge = new OpenCodeBridge({ ...options, directory, runtime: { binary: async () => binary } });
+    const bridge = new OpenCodeBridge({ ...options, directory, runtime: { binary: async () => binary, home } });
     try {
       expect(await bridge.status()).toEqual({ installed: false });
       binary = installed;
-      expect(await bridge.command()).toEqual({ command: installed, args: [] });
+      expect(await bridge.command()).toEqual({
+        command: installed,
+        args: [],
+        source: "crot",
+        env: {
+          XDG_CONFIG_HOME: path.join(home, "config"),
+          XDG_DATA_HOME: path.join(home, "data"),
+          XDG_STATE_HOME: path.join(home, "state"),
+          XDG_CACHE_HOME: path.join(home, "cache"),
+        },
+      });
       expect(await bridge.status()).toEqual({ installed: true });
     } finally {
       await bridge.close();
       await dirs.cleanup();
     }
+  });
+
+  it("says why the owner's OpenCode did not start: too old, exited, no answer", async () => {
+    const dirs = await makeTempDirs();
+    const options = await fakeOptions(dirs.outside);
+    const directory = path.join(dirs.outside, "opencode-chat");
+    const owner = (flag: string) => async () => ({ command: process.execPath, args: [FAKE, flag] });
+    const failure = async (bridge: OpenCodeBridge) => {
+      const error = await bridge.ensure().catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(CrotError);
+      return (error as CrotError).details;
+    };
+    // OpenCode 0.x answers without /global/health: its version, and that CROT needs 1.0 or newer.
+    const old = new OpenCodeBridge({ ...options, directory, command: owner("--fake-old") });
+    // An npm installation without its postinstall script: the exit code and OpenCode's last error line.
+    const crash = new OpenCodeBridge({ ...options, directory, command: owner("--fake-crash") });
+    // A server that never gets healthy: the wait, its last answer and its last error line.
+    const stuck = new OpenCodeBridge({
+      ...options,
+      directory,
+      command: owner("--fake-unhealthy"),
+      readyTimeoutMs: 2000,
+    });
+    try {
+      const tooOld = `${process.execPath} 0.15.31: CROT needs OpenCode ${OPENCODE_MIN_VERSION} or newer`;
+      expect(await failure(old)).toMatchObject({
+        stage: "local",
+        reason: "opencode_too_old",
+        source: "owner",
+        version: "0.15.31",
+        detail: tooOld,
+      });
+      expect(await old.status()).toEqual({
+        installed: true,
+        problem: { code: "OPENCODE_TOO_OLD", source: "owner", version: "0.15.31", detail: tooOld },
+      });
+      expect(await failure(crash)).toMatchObject({
+        reason: "opencode_start_failed",
+        source: "owner",
+        detail: `${process.execPath}: exited with code 1 — Error: opencode-ai's postinstall script was not run.`,
+      });
+      expect(await failure(stuck)).toMatchObject({
+        reason: "opencode_start_failed",
+        detail: `${process.execPath}: no answer within 2 s, last answer HTTP 503 — Error: database is locked`,
+      });
+      for (const bridge of [old, crash, stuck]) expect(bridge.current()).toBeUndefined();
+    } finally {
+      await Promise.all([old.close(), crash.close(), stuck.close()]);
+      await dirs.cleanup();
+    }
+  }, 60_000);
+
+  it("falls back to the copy CROT installed when the owner's OpenCode does not start", async () => {
+    const dirs = await makeTempDirs();
+    const options = await fakeOptions(dirs.outside);
+    const directory = path.join(dirs.outside, "opencode-chat");
+    const home = path.join(dirs.outside, "opencode-runtime", "home");
+    const starts = path.join(dirs.outside, "starts.jsonl");
+    const env = { ...options.env, FAKE_OPENCODE_STARTS: starts };
+    const started = async () =>
+      (await readFile(starts, "utf8").catch(() => ""))
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as { flags: string[]; xdg: Record<string, string | null> });
+    const fake = (flag: string) => async () => ({ command: process.execPath, args: [FAKE, flag] });
+    const records: string[] = [];
+    // The owner's OpenCode 0.x, then CROT's copy (its own config, data, state and cache folders).
+    const bridge = new OpenCodeBridge({
+      ...options,
+      env,
+      directory,
+      command: fake("--fake-old"),
+      runtime: { binary: async () => undefined, home },
+      runtimeCommand: fake("--fake-crot"),
+      record: (e, o) => records.push(`${e}:${o}`),
+    });
+    // Both fail: the copy CROT installed is the one to reinstall.
+    const broken = new OpenCodeBridge({
+      ...options,
+      env,
+      directory,
+      command: fake("--fake-old"),
+      runtime: { binary: async () => undefined, home },
+      runtimeCommand: fake("--fake-crash"),
+    });
+    try {
+      const error = await broken.ensure().catch((e: unknown) => e);
+      expect((error as CrotError).details).toMatchObject({ reason: "opencode_start_failed", source: "crot" });
+      expect((await broken.status()).problem).toEqual({
+        code: "OPENCODE_START_FAILED",
+        source: "crot",
+        detail: `${process.execPath}: exited with code 1 — Error: opencode-ai's postinstall script was not run.`,
+      });
+
+      const server = await bridge.ensure();
+      expect(server).toMatchObject({ managed: true, source: "crot" });
+      expect(records).toEqual(["start:failed", "start:applied"]);
+      // While it runs, no problem: the route says which OpenCode serves.
+      expect(await bridge.status()).toEqual({
+        installed: true,
+        server: { url: server.url, managed: true, version: "0.0.0-fake", source: "crot" },
+      });
+      const xdg = {
+        XDG_CONFIG_HOME: path.join(home, "config"),
+        XDG_DATA_HOME: path.join(home, "data"),
+        XDG_STATE_HOME: path.join(home, "state"),
+        XDG_CACHE_HOME: path.join(home, "cache"),
+      };
+      const crot = (await started()).filter((s) => s.flags.includes("--fake-crot"));
+      expect(crot.map((s) => s.xdg)).toEqual([xdg]);
+      for (const folder of Object.values(xdg)) expect((await stat(folder)).isDirectory()).toBe(true);
+      // The owner's OpenCode keeps its own folders.
+      for (const s of (await started()).filter((s) => s.flags.includes("--fake-old")))
+        expect(Object.values(s.xdg)).not.toContain(xdg.XDG_CONFIG_HOME);
+      // Next time the owner's unchanged OpenCode is not tried again.
+      expect(await bridge.stop()).toBe(true);
+      const before = (await started()).length;
+      expect((await bridge.ensure()).source).toBe("crot");
+      expect((await started()).slice(before).map((s) => s.flags)).toEqual([["--fake-crot"]]);
+    } finally {
+      await Promise.all([bridge.close(), broken.close()]);
+      await dirs.cleanup();
+    }
+  }, 60_000);
+
+  it("compares OpenCode versions and keeps OpenCode's last error line, without the password", () => {
+    expect(olderThan("0.15.31", OPENCODE_MIN_VERSION)).toBe(true);
+    expect(olderThan("0.5.29", OPENCODE_MIN_VERSION)).toBe(true);
+    expect(olderThan("1.0.0", OPENCODE_MIN_VERSION)).toBe(false);
+    expect(olderThan("1.19.5", "1.2.0")).toBe(false);
+    expect(olderThan("1.2.0", "1.19.5")).toBe(true);
+    expect(olderThan("local", OPENCODE_MIN_VERSION)).toBe(false);
+    expect(lastOutputLine("\u001b[31mError: boom\u001b[0m\nlistening on 127.0.0.1\n")).toBe("Error: boom");
+    expect(lastOutputLine("starting\r\nready\r\n")).toBe("ready");
+    expect(lastOutputLine("Error: password s3cr3t rejected\n", "s3cr3t")).toBe("Error: password [redacted] rejected");
+    expect(lastOutputLine("\n \n")).toBeUndefined();
   });
 });
 
@@ -411,7 +571,12 @@ describe("OpenCode through the local bridge", () => {
         command: process.execPath,
       });
       const status = await rpc("opencode.status");
-      expect(status.server).toEqual({ url: `http://127.0.0.1:${options.port}`, managed: true, version: "0.0.0-fake" });
+      expect(status.server).toEqual({
+        url: `http://127.0.0.1:${options.port}`,
+        managed: true,
+        version: "0.0.0-fake",
+        source: "owner",
+      });
       expect(JSON.stringify(status)).not.toMatch(/password/i);
 
       const answered = await chat(ZEN, "glm-5.3-flash-free");
@@ -712,32 +877,41 @@ describe("OpenCode through the local bridge", () => {
     }
   });
 
-  it("Install and start OpenCode: npm installs the pinned OpenCode into the state directory in the background", async () => {
-    const calls: { command: string; args: readonly string[]; cwd: string }[] = [];
-    let release!: () => void;
-    const gate = new Promise<void>((resolve) => (release = resolve));
+  /**
+   * The registry of the one-click install: every build of this system, each a script that runs the fake OpenCode
+   * (a real program on POSIX; on Windows only its `--version` check is played).
+   */
+  async function installHost(gate?: Promise<void>) {
     const names = [
       ...new Set([
         ...runtimePackages(process.platform, process.arch, false),
         ...runtimePackages(process.platform, process.arch, true),
       ]),
     ];
+    const exe = process.platform === "win32" ? "opencode.exe" : "opencode";
+    const script = `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(FAKE)} --fake-crot "$@"\n`;
+    const registry = await fakeRegistry(
+      Object.fromEntries(names.map((name) => [name, tgz({ [`package/bin/${exe}`]: script })])),
+      gate,
+    );
+    const calls: { command: string; args: readonly string[] }[] = [];
     const install: OpenCodeInstallHost = {
-      npm: async () => true,
-      run: async (command, args, { cwd }) => {
-        calls.push({ command, args, cwd });
-        if (command !== "npm") return { code: 0, output: `${OPENCODE_RUNTIME_VERSION}\n` };
-        await gate;
-        for (const name of names) {
-          const bin = path.join(cwd, "node_modules", name, "bin");
-          await mkdir(bin, { recursive: true });
-          await writeFile(path.join(bin, process.platform === "win32" ? "opencode.exe" : "opencode"), "", {
-            mode: 0o755,
-          });
-        }
-        return { code: 0, output: "" };
+      registry: registry.url,
+      integrity: registry.integrity,
+      // No Node.js or npm needed.
+      npm: async () => false,
+      run: async (command, args) => {
+        calls.push({ command, args });
+        return { code: 0, output: `${OPENCODE_RUNTIME_VERSION}\n` };
       },
     };
+    return { names, registry, calls, install };
+  }
+
+  it("Install and start OpenCode: CROT downloads the verified OpenCode in the background and connects through it", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const { names, registry, calls, install } = await installHost(gate);
     // The owner has no `opencode` of their own.
     const t = await setup(({ command: _command, ...options }) => ({ ...options, install }));
     const { rpc } = t;
@@ -776,40 +950,101 @@ describe("OpenCode through the local bridge", () => {
         installed: true,
         runtime: { state: "installed", version: OPENCODE_RUNTIME_VERSION },
       });
+      // One download (the first build of this system), checked and kept in CROT's own folder.
       const directory = path.join(t.stateDir, "opencode-runtime");
-      const npm = calls.filter((c) => c.command === "npm");
-      expect(npm).toHaveLength(1);
-      expect(npm[0]).toMatchObject({ cwd: directory, args: expect.arrayContaining(["--ignore-scripts", directory]) });
-      expect(npm[0]!.args.at(-1)).toBe(`opencode-ai@${OPENCODE_RUNTIME_VERSION}`);
-      // One platform binary is kept and checked; the others are removed.
-      const kept = calls.filter((c) => c.command !== "npm");
-      expect(kept).toHaveLength(1);
-      expect(kept[0]!.command.startsWith(path.join(directory, "node_modules", names[0]!))).toBe(true);
-      expect((await readdir(path.join(directory, "node_modules"))).filter((n) => n.startsWith("opencode-"))).toEqual([
-        names[0],
+      expect(registry.seen).toHaveLength(1);
+      const name = /^\/([\w-]+)\//.exec(registry.seen[0]!)?.[1];
+      expect(names).toContain(name);
+      expect(calls).toHaveLength(1);
+      expect(calls[0]!.args).toEqual(["--version"]);
+      expect(path.relative(directory, calls[0]!.command).split(path.sep).slice(0, 2)).toEqual([
+        "bin",
+        expect.stringMatching(new RegExp(`^${name}-[0-9a-z]+$`)),
       ]);
       expect(t.audit).toEqual(["runtime:applied"]);
+      if (process.platform === "win32") return;
+      // Save & Test: through CROT's copy, in its own folders.
+      expect(await rpc("chat.testConnection", { provider: ZEN })).toMatchObject({
+        ok: true,
+        route: "local",
+        server: { managed: true },
+      });
+      expect((await rpc("opencode.status")).server).toMatchObject({ managed: true, source: "crot" });
     } finally {
       await t.cleanup();
+      await registry.close();
     }
   });
 
-  it("refuses to install OpenCode while starting processes is stopped, and without npm", async () => {
+  it("offers the verified OpenCode when the owner's does not start, and connects through it", async () => {
+    const { registry, install } = await installHost();
+    // The owner's OpenCode: an npm installation whose postinstall script did not run.
+    const t = await setup((options) => ({
+      ...options,
+      command: async () => ({ command: process.execPath, args: [FAKE, "--fake-crash"] }),
+      install,
+    }));
+    const { rpc } = t;
+    try {
+      await rpc("chat.configure", { provider: ZEN, endpoint: t.endpoint });
+      const why = `${process.execPath}: exited with code 1 — Error: opencode-ai's postinstall script was not run.`;
+      expect(await rpc("chat.testConnection", { provider: ZEN })).toMatchObject({
+        ok: false,
+        diagnostic: { code: "OPENCODE_START_FAILED", stage: "local", detail: why },
+      });
+      expect(await rpc("opencode.status")).toMatchObject({
+        installed: true,
+        installable: true,
+        runtime: { state: "missing" },
+        problem: { code: "OPENCODE_START_FAILED", source: "owner", detail: why },
+      });
+      // A chat turn says the same, with OpenCode's reason after the fixed message.
+      const turn = await t.chat(ZEN, "big-pickle");
+      expect(turn).toMatchObject({
+        state: "failed",
+        error: expect.stringContaining("Install the verified OpenCode into CROT with one click"),
+        errorDetail: why,
+      });
+      expect(t.zen.seen).toHaveLength(0);
+      await rpc("opencode.install");
+      await waitFor(async () => (await rpc("opencode.status")).runtime.state === "installed", 10_000);
+      if (process.platform === "win32") return;
+      const connected = await rpc("chat.testConnection", { provider: ZEN });
+      expect(connected).toMatchObject({ ok: true, route: "local", server: { managed: true } });
+      const status = await rpc("opencode.status");
+      expect(status.server).toMatchObject({ managed: true, source: "crot" });
+      expect(status.problem).toBeUndefined();
+    } finally {
+      await t.cleanup();
+      await registry.close();
+    }
+  });
+
+  it("refuses to install OpenCode while starting processes is stopped; without npm the download says why", async () => {
+    const port = await freePort();
     const t = await setup(({ command: _command, ...options }) => ({
       ...options,
-      install: { npm: async () => false, run: async () => ({ code: 0, output: "" }) },
+      install: {
+        registry: `http://127.0.0.1:${port}`,
+        npm: async () => false,
+        run: async () => ({ code: 0, output: "" }),
+      },
     }));
     try {
-      expect(await t.rpc("opencode.status")).toMatchObject({ installable: false, runtime: { state: "missing" } });
+      expect(await t.rpc("opencode.status")).toMatchObject({ installable: true, runtime: { state: "missing" } });
       await t.rpc("opencode.install");
       await waitFor(async () => (await t.rpc("opencode.status")).runtime.state === "failed");
-      expect((await t.rpc("opencode.status")).runtime).toEqual({ state: "failed", reason: "npm_not_found" });
+      expect((await t.rpc("opencode.status")).runtime).toEqual({
+        state: "failed",
+        reason: "download_failed",
+        detail: "ECONNREFUSED",
+      });
       // The emergency stop: no installation starts.
       await t.runtime.abortAll();
       t.core.permissions.runtime.stop();
       await t.rpc("opencode.install");
       await waitFor(async () => (await t.rpc("opencode.status")).runtime.reason === "opencode_refused");
-      expect(t.audit).toEqual(["runtime:failed:npm_not_found", "runtime:failed:opencode_refused"]);
+      expect(t.audit).toEqual(["runtime:failed:download_failed", "runtime:failed:opencode_refused"]);
     } finally {
       await t.cleanup();
     }

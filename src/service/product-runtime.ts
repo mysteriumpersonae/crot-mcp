@@ -168,7 +168,7 @@ export interface ProductHost {
    * bridge. Absent: CROT neither reads OpenCode's files nor starts OpenCode.
    */
   openCode?: Omit<OpenCodeBridgeOptions, "directory" | "allowed" | "record" | "runtime" | "pidFile"> & {
-    /** npm and the binary check for "Install and start OpenCode"; absent: CROT never installs OpenCode. */
+    /** The binary check (and npm, the fallback) for "Install and start OpenCode"; absent: CROT never installs it. */
     install?: OpenCodeInstallHost;
   };
 }
@@ -1080,7 +1080,7 @@ export class ProductRuntime {
       case "opencode.status":
         return { ok: true, ...(await this.openCodeStatus()) };
       case "opencode.install": {
-        // "Install and start OpenCode": npm installs the pinned OpenCode in the background; the status
+        // "Install and start OpenCode": CROT downloads the pinned OpenCode in the background; the status
         // reports its progress, and the owner's next Save & Test starts it.
         if (!this.runtime) return fail("Installing OpenCode is unavailable in this host");
         await this.runtime.start();
@@ -1919,21 +1919,21 @@ export class ProductRuntime {
   private async openCodeStatus(): Promise<Record<string, unknown>> {
     const openCode = this.host.openCode;
     if (!this.openCode || !openCode) return { available: false, installCommand: OPENCODE_INSTALL_COMMAND };
-    const install = openCode.install;
-    const [status, key, runtime, installable] = await Promise.all([
+    const [status, key, runtime] = await Promise.all([
       this.openCode.status(),
       findOpenCodeKey(openCode.local).catch(() => undefined),
       this.runtime?.status(),
-      this.runtime && install ? install.npm().catch(() => false) : false,
     ]);
     return {
       available: true,
       installCommand: OPENCODE_INSTALL_COMMAND,
       installed: status.installed,
-      // One-click install (hosts that can run npm): possible (npm found) and its state.
-      ...(runtime ? { installable, runtime } : {}),
+      // One-click install (straight from the npm registry: no Node.js or npm needed) and its state.
+      ...(runtime ? { installable: true, runtime } : {}),
       ...(key ? { keySource: key.source } : {}),
       ...(status.server ? { server: status.server } : {}),
+      // Why local OpenCode did not start last time: the UI offers CROT's verified OpenCode.
+      ...(status.problem ? { problem: status.problem } : {}),
     };
   }
   /** Whether a configured provider uses CROT's own OpenCode server. */

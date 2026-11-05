@@ -666,7 +666,8 @@ export class CrotService {
               { file: command, args, display: [command, ...args].join(" ") },
               { cwd, env, stdin: false },
             ),
-          // "Install and start OpenCode": the owner's npm (never one from the working directory) with the
+          // "Install and start OpenCode": CROT downloads the pinned OpenCode itself (opencode-runtime.ts); only
+          // when its download fails, the owner's npm (never one from the working directory) with the
           // allowlisted child environment plus npm's own npm_config_* settings (registry, proxy, cache).
           install: {
             npm: () =>
