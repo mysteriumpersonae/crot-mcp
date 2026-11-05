@@ -79,25 +79,40 @@ is reachable even if the user has a custom config that omits the default list.
 - `NO_MODELS` — the server answered but lists no models (`reason: "no_models"`)
 - `TIMEOUT` — no answer in time (fetch's `TimeoutError`, a connect timeout; `networkCode`
   `ETIMEDOUT`)
-- `FREE_USAGE_LIMIT` — OpenCode Zen refused free use (HTTP 429 `FreeUsageLimitError`)
-- `FREE_TIER_LIMIT` — local OpenCode reached OpenCode's own free tier limit (its session
-  status turned to a retry with `free_tier_limit`, or a retry minutes ahead). With
-  `source: "crot"` the refused server was the copy CROT installed: it is not signed in to
-  OpenCode, so it has only OpenCode's anonymous free allowance, even when the owner's own
-  OpenCode (signed in) still works in a terminal. The UI then says so: "OpenCode's
-  anonymous free limit is used up: CROT's own OpenCode copy is not signed in (your OpenCode
-  was not found or did not start). Enter an OpenCode Zen API key (opencode.ai/zen): free
-  models work with it too."
+- `FREE_USAGE_LIMIT` — OpenCode Zen refused a free model (HTTP 429 `FreeUsageLimitError`).
+  Zen serves its free models only to OpenCode itself; an API key is for the paid models and
+  does not unlock the free ones. The UI says so: "OpenCode Zen refused the free model (free
+  usage limit): free models work only inside OpenCode, an API key does not unlock them.
+  Connect through local OpenCode (Auto-connect), or choose a paid model with an OpenCode Zen
+  API key."
+- `FREE_TIER_LIMIT` — local OpenCode reached OpenCode's own free tier limit (OpenCode 1.x:
+  its session status turned to a retry with `free_tier_limit`, or a retry minutes ahead;
+  OpenCode 2: a refused generation with the provider's status 429 or reason `rate_limit`
+  whose message names the free usage or the subscription). With `source: "crot"` the refused
+  server was the copy CROT installed: it is not signed in to OpenCode, so it has only
+  OpenCode's anonymous free allowance, even when the owner's own OpenCode (signed in) still
+  works in a terminal. The diagnostic then also carries `owner`: why the owner's own OpenCode
+  was not used, as one redacted line (`opencode: not found on PATH or in the usual install
+  folders (N places checked)`, or the reason it did not start). The UI says: "OpenCode's free
+  limit is reached for CROT's own OpenCode copy (not signed in), because your own OpenCode
+  was not found or did not start (see the details). An API key does not unlock free models:
+  try again later, or choose a paid model with an OpenCode Zen API key.", followed by
+  ` — <owner>`
 - `OPENCODE_NOT_INSTALLED`, `OPENCODE_START_FAILED`, `OPENCODE_START_REFUSED` — the local
   OpenCode bridge could not be used (no CLI, the server did not become healthy, the
   emergency stop or an explicit runtime deny of process.start)
+- `OPENCODE_V2_UNSUPPORTED` — an OpenCode workspace connection (OpenCode 1.x's session API)
+  reached an OpenCode 2 server, which answers those routes with its web app's page ("This
+  OpenCode server runs OpenCode 2, whose new server API the OpenCode workspace agent does not
+  support yet. Use the Cloud LLM “OpenCode (Free & Zen)”: it works with OpenCode 2.")
 - `OPERATION_FAILED` — other network or protocol error (stage `local` when local OpenCode
   answered with an error; `httpStatus: 404` when a local server has no `/models` at the
   address)
 
 A diagnostic of local OpenCode (or of an earlier OpenCode workspace connection) also
 carries `model` (the model the request was for) and `detail`: OpenCode's own explanation —
-an error answer's `name: data.message (ref …)`, `{error}` or text, a refused turn's
+an error answer's `name: data.message (ref …)`, OpenCode 2's `_tag: message`, `{error}` or
+text, a refused turn's
 `info.error`, a retry's message and link — as one line of at most 300 characters, control
 characters removed and anything that looks like a credential (Bearer/Basic values, `sk-…`
 keys, long tokens) redacted (`openCodeDetail`). No other provider's text is ever kept.
@@ -105,8 +120,9 @@ keys, long tokens) redacted (`openCodeDetail`). No other provider's text is ever
 A failed chat turn shows a fixed message chosen by the provider's HTTP status (401,
 403, 404, 429, 400/422, 5xx, free usage limit, local OpenCode); after a failure of local
 OpenCode `chat.poll` adds `errorDetail` (`<model> · HTTP <status>: <OpenCode's words>`,
-e.g. `glm-5.3-flash-free · HTTP 500: UnknownError: Unexpected server error. … (ref err_…)`),
-which the chat shows after the fixed message.
+e.g. `glm-5.3-flash-free · HTTP 500: UnknownError: Unexpected server error. … (ref err_…)`;
+when CROT's own copy was refused, then ` — ` and why the owner's own OpenCode was not
+used), which the chat shows after the fixed message.
 
 The UI maps these to actionable messages without exposing credentials or URLs: the message,
 then `[code · HTTP status · network code · model]`, then ` — ` and OpenCode's detail. There
@@ -130,14 +146,20 @@ OpenCode). Save & Test and "Auto-connect via local OpenCode" are the same check:
 (typed, stored, or the owner's own OpenCode key) goes to the Zen API, which lists every
 model CROT can talk to (`/models`: chat completions, and Claude/Qwen over `/messages`;
 models that need the Responses or Gemini API are left out); no key goes to local
-OpenCode, which lists its models itself (`/provider`). The model is chosen from that live
+OpenCode, which lists its models itself (OpenCode 1.x: `/provider`; OpenCode 2:
+`/api/model`, its enabled chat models of provider `opencode`, free when no price is above
+zero). The model is chosen from that live
 list: the saved one while the list still has it, else the first free model (OpenCode's
 default, `big-pickle`, first), else the first model. The card is connected (green
 "Connected") as soon as the list is there. Through local OpenCode Save & Test then sends
-one tiny request with the chosen model (`verify`, at most about 8 s): its outcome is
-returned and kept as `modelCheck` (`{model, ok, diagnostic?}`), and a refusal (OpenCode's
-free tier limit, a model it rejects) is shown as a warning under the status with
-OpenCode's exact reason — never instead of the connection. With a key nothing is sent.
+one tiny request with the chosen model (`verify`; OpenCode 1.x at most about 8 s, OpenCode 2
+one generation, still running after 20 s counts as accepted): its outcome is returned and
+kept as `modelCheck` (`{model, ok, diagnostic?}`), and a refusal (OpenCode's free tier
+limit, a model it rejects) is shown as a warning under the status with OpenCode's exact
+reason — never instead of the connection. With a key and a free model chosen the check goes
+through local OpenCode too (started when needed), like the chat; a local OpenCode that is
+missing or does not start is the check's warning ("Connected. The free model needs local
+OpenCode: …", with the install button). With a key and a paid model nothing is sent.
 
 How CROT reaches OpenCode Zen, in this order (`zenRoute`):
 1. the key saved in the form (vault);
@@ -166,8 +188,9 @@ How CROT reaches OpenCode Zen, in this order (`zenRoute`):
    start/stop/exit and a stopped left-behind server are audited (`opencode_bridge`, no secrets);
 4. never anonymously: Zen refuses clients other than OpenCode without a key. Without a key
    and without OpenCode, Save & Test and a chat turn fail with `OPENCODE_NOT_INSTALLED`
-   ("Local OpenCode CLI was not found. Click “Install and start OpenCode (1 click)” or enter
-   an OpenCode Zen API key.") and Zen is not asked; listing the models shows the bundled
+   ("Local OpenCode CLI was not found. Free models work only inside OpenCode: click “Install
+   and start OpenCode (1 click)”, or choose a paid model with an OpenCode Zen API key.") and
+   Zen is not asked; listing the models shows the bundled
    catalog (`installed: false`). While OpenCode is not installed and the card is not
    connected, the form shows **Install and start OpenCode (1 click)** and the install
    command `npm i -g opencode-ai` with a copy button; the key link is the one of the Zen
@@ -187,7 +210,11 @@ the copy CROT installed (below), which runs with its own `XDG_CONFIG_HOME`,
 `XDG_DATA_HOME`, `XDG_STATE_HOME` and `XDG_CACHE_HOME` under `<state>/opencode-runtime/home`
 and so never touches the owner's OpenCode settings, sessions or keys. An OpenCode that failed
 to start is skipped while it is unchanged (same path, size and change time) and another one
-exists. The server must answer `/global/health` within 60 s. Of its output only the last 4 KB
+exists. The server must answer within 60 s: OpenCode 1.x on `/global/health`
+(`{healthy, version}`), OpenCode 2 — which answers `/global/health` and every other unknown
+GET with its web app's page, even without the password — on `/api/info` (`{version, …}`;
+HTTP 401 without the password, so an owner's protected OpenCode 2 on port 4096 is left
+alone like a protected OpenCode 1.x). Of its output only the last 4 KB
 are kept, and a failed start names the reason in one redacted line (`detail`, the program's
 path with `~` for the home folder): `exited with code 1 — <OpenCode's last error line>` (for
 example an npm installation without its postinstall script), `HTTP 401 — OpenCode did not
@@ -197,14 +224,22 @@ OpenCode 0.x (older than 1.0, which brought `/global/health` and `/provider`) fa
 `OPENCODE_TOO_OLD` ("Your OpenCode is too old for CROT (version 1.0 or newer is needed).
 Install the verified OpenCode into CROT with one click, or update yours with “opencode
 upgrade”.", `detail` e.g. `~/.opencode/bin/opencode 0.15.31: CROT needs OpenCode 1.0.0 or
-newer`); every other failure with `OPENCODE_START_FAILED` ("Local OpenCode could not be
-started. Install the verified OpenCode into CROT with one click (your own OpenCode stays as it
-is), or enter an OpenCode Zen API key."). The last failure stays in `opencode.status` as
+newer`; `opencode v2.2.5` of OpenCode 2 is read as 2.2.5); every other failure with
+`OPENCODE_START_FAILED` ("Local OpenCode could not be started. Free models work only inside
+OpenCode: install the verified OpenCode into CROT with one click (your own OpenCode stays as
+it is), or choose a paid model with an OpenCode Zen API key."). The last failure stays in
+`opencode.status` as
 `problem: {code, source: "owner" | "crot", version?, detail?}` until a start succeeds, and the
 form then shows **Install verified OpenCode into CROT (1 click)** (**Reinstall OpenCode in
 CROT (1 click)** when CROT's own copy failed) with "Your own OpenCode stays as it is: CROT
-keeps its copy with its own settings and data." The route of a connected card says "copy
-installed by CROT" when CROT's copy serves it.
+keeps its copy with its own settings and data." The route of a connected card names the
+server, who started it ("copy installed by CROT" when CROT's copy serves it) and its
+version (`· OpenCode 2.2.5`). While CROT's copy serves, the server and `opencode.status`
+keep why the owner's own OpenCode was not used (`ownerProblem: {code, source: "owner",
+version?, detail?}`: `OPENCODE_NOT_INSTALLED` with `opencode: not found on PATH or in the
+usual install folders (N places checked)`, or the owner's start failure), and the card says
+"Your own OpenCode is not used: CROT runs its own copy (not signed in). — <detail>": that
+copy has only OpenCode's anonymous free allowance.
 
 **Install and start OpenCode (1 click)** (`opencode.install`, no parameters): the service
 downloads OpenCode itself — no terminal, Node.js or npm needed — in the background (one at a
@@ -239,11 +274,27 @@ turn's tools; Core policy, approvals and audit apply) and sends the results back
 ```` ```crot-tool-result ```` blocks in the next message of the same session. Through local
 OpenCode the turn's tools are the read-only project tools only (`fs_list_directory`,
 `fs_read_file`, `fs_stat`, `project_search_files`); other CROT tools (`local_read_only_tools`)
-and images (`local_text_only`) need a Zen key. While a turn is pending CROT watches
-`/session/status`: OpenCode retries a refused free model instead of failing, so a retry with
-`free_tier_limit` (or minutes ahead) aborts the turn at once with `FREE_TIER_LIMIT`. A free
-model that Zen refuses (429/403) before any answer is answered once more through local
-OpenCode. Every direct Zen request carries `User-Agent: CROT/<version>` and a random session ID
+and images (`local_text_only`) need a paid model with a Zen key. While a turn is pending
+CROT watches `/session/status`: OpenCode retries a refused free model instead of failing, so
+a retry with `free_tier_limit` (or minutes ahead) aborts the turn at once with
+`FREE_TIER_LIMIT`.
+
+OpenCode 2 keeps no conversation for CROT: every request is one stateless generation (`POST
+/api/experimental/generate/text` with exactly `{prompt, model: {providerID: "opencode", id}}`,
+at most 120 s) whose prompt carries the `system` text above, `Conversation so far:` (the
+remembered thread, then this turn's answers and tool results; beyond 400,000 characters
+older tool results of the turn are replaced by a short note) and `New message:`. The tool
+protocol, Core and the read-only tools are the same. A refused generation comes back as HTTP
+502 `ProviderRequestError` with the provider's own `status` (429 for a rate limit), and that
+status is the one reported.
+
+With a key, a free model goes through local OpenCode as well (the owner's, else CROT's copy,
+started when needed), because Zen serves free models only to OpenCode itself; a turn with
+other tools or images goes to Zen directly. When local OpenCode is missing or does not start,
+Zen is asked all the same, and its refusal (429/403 before any answer) reports why local
+OpenCode could not serve (`OPENCODE_NOT_INSTALLED`, `OPENCODE_START_FAILED`,
+`OPENCODE_TOO_OLD`, `OPENCODE_START_REFUSED`), which says what to do. Paid models always go
+to Zen. Every direct Zen request carries `User-Agent: CROT/<version>` and a random session ID
 (`x-opencode-session`, `x-session-id`) that stays the same within a chat thread.
 
 Before the first check, and while local OpenCode is not running, the picker shows a bundled
@@ -257,7 +308,7 @@ OpenCode's default first) replaces the catalog after Save & Test.
 
 `opencode.status` reports `{available, installed, installCommand, installable?, runtime?:
 {state, version?, reason?, progress?, detail?}, keySource?, server?: {url, managed, version?,
-source?}, problem?}` (never a key or password); `opencode.install` starts the one-click installation and returns the same status;
+api?: 2, source?}, problem?, ownerProblem?}` (never a key or password); `opencode.install` starts the one-click installation and returns the same status;
 `opencode.stop` stops CROT's own server (refused while a generation runs; the tray calls it
 when it quits). In Electron, links of the Agents screen open in the
 system browser only for allowlisted HTTPS hosts (`opencode.ai`, Notion, Claude, n8n).
@@ -293,7 +344,9 @@ native adapters stay in the service, so connections made before keep working in 
 they are listed under **Connected providers** as "Workspace agent (earlier connection)"
 with Disconnect only (after confirmation; removes the configuration and its vault secret).
 A managed OpenCode server of such a connection is still started on demand and stopped with
-CROT. New ones are not offered in the UI; `chat.configure` still accepts them.
+CROT. New ones are not offered in the UI; `chat.configure` still accepts them. They speak
+OpenCode 1.x's session API: with OpenCode 2 (its own server, or CROT's managed one) they fail
+with `OPENCODE_V2_UNSUPPORTED`, pointing to the Cloud LLM "OpenCode (Free & Zen)".
 
 ## Verification boundary
 Real Chromium/CrotService tests cover guarded requests, encrypted credential

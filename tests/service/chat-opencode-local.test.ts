@@ -1,8 +1,9 @@
 /**
  * Local OpenCode: CROT's own `opencode serve` (the bridge: random password, 127.0.0.1, stopped with CROT, an
  * owner's unprotected server reused), OpenCode Zen through it without a key, the owner's OpenCode key with
- * OpenCode's session headers, and the managed server of an earlier OpenCode workspace connection. A fake OpenCode server (Node)
- * stands in for the real one.
+ * OpenCode's session headers, free models through local OpenCode even with a key, OpenCode 2 (its new server API), and
+ * the managed server of an earlier OpenCode workspace connection. A fake OpenCode server (Node) stands in for the real
+ * one.
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { chmod, mkdir, readFile, stat, symlink, writeFile } from "node:fs/promises";
@@ -70,10 +71,10 @@ const readLog = async (file: string): Promise<Logged[]> =>
     .filter(Boolean)
     .map((line) => JSON.parse(line) as Logged);
 
-/** The fake server started by hand: the owner's own `opencode serve`. */
+/** The fake server started by hand: the owner's own `opencode serve` (`--fake-v2`: OpenCode 2). */
 const external: ChildProcess[] = [];
-async function ownerServer(port: number, password?: string): Promise<void> {
-  const child = spawn(process.execPath, [FAKE, "serve", "--hostname", "127.0.0.1", "--port", String(port)], {
+async function ownerServer(port: number, password?: string, flags: string[] = []): Promise<void> {
+  const child = spawn(process.execPath, [FAKE, ...flags, "serve", "--hostname", "127.0.0.1", "--port", String(port)], {
     env: { ...ENV, ...(password ? { OPENCODE_SERVER_PASSWORD: password } : {}) },
     stdio: "ignore",
   });
@@ -398,10 +399,18 @@ describe("OpenCode bridge", () => {
       const server = await bridge.ensure();
       expect(server).toMatchObject({ managed: true, source: "crot" });
       expect(records).toEqual(["start:failed", "start:applied"]);
-      // While it runs, no problem: the route says which OpenCode serves.
+      // While it runs, no problem: the route says which OpenCode serves, and why the owner's own is not used.
+      const ownerProblem = {
+        code: "OPENCODE_TOO_OLD",
+        source: "owner",
+        version: "0.15.31",
+        detail: `${process.execPath} 0.15.31: CROT needs OpenCode 1.0.0 or newer`,
+      };
+      expect(server.ownerProblem).toEqual(ownerProblem);
       expect(await bridge.status()).toEqual({
         installed: true,
         server: { url: server.url, managed: true, version: "0.0.0-fake", source: "crot" },
+        ownerProblem,
       });
       const xdg = {
         XDG_CONFIG_HOME: path.join(home, "config"),
@@ -420,6 +429,7 @@ describe("OpenCode bridge", () => {
       const before = (await started()).length;
       expect((await bridge.ensure()).source).toBe("crot");
       expect((await started()).slice(before).map((s) => s.flags)).toEqual([["--fake-crot"]]);
+      expect((await bridge.status()).ownerProblem).toEqual(ownerProblem);
     } finally {
       await Promise.all([bridge.close(), broken.close()]);
       await dirs.cleanup();
@@ -481,6 +491,65 @@ describe("OpenCode bridge", () => {
     },
     60_000,
   );
+
+  it("recognizes OpenCode 2 by /api/info: its own server, the owner's unprotected one, never a protected one", async () => {
+    const dirs = await makeTempDirs();
+    const options = await fakeOptions(dirs.outside);
+    const directory = path.join(dirs.outside, "opencode-chat");
+    const v2 = async () => ({ command: process.execPath, args: [FAKE, "--fake-v2"] });
+    const bridge = new OpenCodeBridge({ ...options, directory, command: v2 });
+    const port = await freePort();
+    const other = new OpenCodeBridge({ ...options, port, directory, command: v2 });
+    try {
+      // OpenCode 2's web app answers /global/health with a page: CROT asks /api/info with its password.
+      const server = await bridge.ensure();
+      expect(server).toMatchObject({ managed: true, source: "owner", api: 2, version: "2.2.5" });
+      expect(server.url).toBe(`http://127.0.0.1:${options.port}`);
+      expect(await bridge.status()).toEqual({
+        installed: true,
+        server: { url: server.url, managed: true, version: "2.2.5", api: 2, source: "owner" },
+      });
+      expect((await readLog(options.log)).some((l) => l.method === "GET" && l.path === "/api/info")).toBe(true);
+      expect(await bridge.stop()).toBe(true);
+      // The owner's OpenCode 2 with a password on the port: its page is no answer, so it is left alone.
+      await ownerServer(options.port, "owner-secret", ["--fake-v2"]);
+      const own = await bridge.ensure();
+      expect(own).toMatchObject({ managed: true, api: 2 });
+      expect(own.url).not.toBe(`http://127.0.0.1:${options.port}`);
+      // An unprotected one is used as it is, and never stopped.
+      await ownerServer(port, undefined, ["--fake-v2"]);
+      const unprotected = await other.ensure();
+      expect(unprotected).toMatchObject({ url: `http://127.0.0.1:${port}`, managed: false, api: 2, version: "2.2.5" });
+      expect(await other.stop()).toBe(false);
+    } finally {
+      await Promise.all([bridge.close(), other.close()]);
+      await dirs.cleanup();
+    }
+  }, 60_000);
+
+  it("keeps why the owner's OpenCode is not used while CROT's copy serves; none of the owner's: not found", async () => {
+    const dirs = await makeTempDirs();
+    const options = await fakeOptions(dirs.outside);
+    const bridge = new OpenCodeBridge({
+      ...options,
+      directory: path.join(dirs.outside, "opencode-chat"),
+      command: async () => undefined,
+      runtimeCommand: async () => ({ command: process.execPath, args: [FAKE, "--fake-v2"] }),
+    });
+    try {
+      const server = await bridge.ensure();
+      expect(server).toMatchObject({ managed: true, source: "crot", api: 2 });
+      const ownerProblem = { code: "OPENCODE_NOT_INSTALLED", source: "owner", detail: "opencode: not found" };
+      expect(server.ownerProblem).toEqual(ownerProblem);
+      expect(await bridge.status()).toMatchObject({ server: { source: "crot", api: 2 }, ownerProblem });
+      // Stopped: nothing serves, so nothing to explain.
+      await bridge.stop();
+      expect((await bridge.status()).ownerProblem).toBeUndefined();
+    } finally {
+      await bridge.close();
+      await dirs.cleanup();
+    }
+  }, 60_000);
 
   it("compares OpenCode versions and keeps OpenCode's last error line, without the password", () => {
     expect(olderThan("0.15.31", OPENCODE_MIN_VERSION)).toBe(true);
@@ -825,6 +894,8 @@ describe("OpenCode through the local bridge", () => {
         route: "zen",
         keySource: "auth.json",
         models: ["big-pickle", "kimi-k2.6"],
+        // Zen serves free models only to OpenCode itself: the chosen free model is checked through local OpenCode.
+        modelCheck: { model: "big-pickle", ok: true },
       });
       expect(checked.labels).toEqual({ "big-pickle": "Big Pickle (free)", "kimi-k2.6": "Kimi K2.6 (Zen / Go)" });
       expect(await listed(ZEN)).toMatchObject({
@@ -839,10 +910,15 @@ describe("OpenCode through the local bridge", () => {
       expect(JSON.stringify(first.blocks)).toContain("Zen answer from kimi-k2.6");
       const second = await chat(ZEN, "kimi-k2.6", { thread: first.thread });
       expect(second.state).toBe("completed");
-      const other = await chat(ZEN, "big-pickle");
+      // A free model: through local OpenCode, like OpenCode itself (the key is for the paid models).
+      const free = await chat(ZEN, "big-pickle");
+      expect(free.state).toBe("completed");
+      expect(JSON.stringify(free.blocks)).toContain("Local answer from big-pickle");
+      const other = await chat(ZEN, "kimi-k2.6");
       expect(other.state).toBe("completed");
       const requests = t.zen.seen.filter((s) => s.url === "/zen/v1/chat/completions");
       expect(requests).toHaveLength(3);
+      expect(requests.map((r) => r.body?.model)).toEqual(["kimi-k2.6", "kimi-k2.6", "kimi-k2.6"]);
       for (const r of [...requests, t.zen.seen[0]!]) {
         expect(r.headers.authorization).toBe(`Bearer ${key}`);
         expect(r.headers["user-agent"]).toBe(`CROT/${CORE_VERSION}`);
@@ -852,15 +928,23 @@ describe("OpenCode through the local bridge", () => {
       // One session per thread.
       expect(requests[1]!.headers["x-session-id"]).toBe(requests[0]!.headers["x-session-id"]);
       expect(requests[2]!.headers["x-session-id"]).not.toBe(requests[0]!.headers["x-session-id"]);
-      // No local server for a keyed Zen; the key is never shown.
-      expect((await rpc("opencode.status")).server).toBeUndefined();
-      const shown = JSON.stringify([checked, await rpc("chat.providers"), await rpc("opencode.status"), first, second]);
+      // Local OpenCode served the free model; it never gets the key, which is never shown.
+      expect((await rpc("opencode.status")).server).toMatchObject({ managed: true, source: "owner" });
+      expect(JSON.stringify(await readLog(options.log))).not.toContain(key);
+      const shown = JSON.stringify([
+        checked,
+        await rpc("chat.providers"),
+        await rpc("opencode.status"),
+        first,
+        second,
+        free,
+      ]);
       expect(shown).not.toContain(key);
       expect(await readFile(path.join(t.stateDir, "product-state.json"), "utf8").catch(() => "")).not.toContain(key);
       // Another host in the endpoint field never gets the owner's key.
       await rpc("chat.configure", { provider: ZEN, endpoint: "https://zen.example.test/zen/v1" });
       const elsewhere = await rpc("chat.models", { provider: ZEN });
-      expect(elsewhere).toMatchObject({ ok: true, route: "local", idle: true });
+      expect(elsewhere).toMatchObject({ ok: true, route: "local" });
       expect(elsewhere.keySource).toBeUndefined();
     } finally {
       await t.cleanup();
@@ -928,6 +1012,241 @@ describe("OpenCode through the local bridge", () => {
       // Disconnecting the provider stops it.
       await rpc("chat.remove", { provider: "OpenCode" });
       expect((await rpc("opencode.status")).server).toBeUndefined();
+    } finally {
+      await t.cleanup();
+    }
+  });
+
+  it("connects OpenCode Zen through OpenCode 2: its models, the check, chat and project reads through Core", async () => {
+    const t = await setup((options) => ({
+      ...options,
+      command: async () => ({ command: process.execPath, args: [FAKE, "--fake-v2"] }),
+    }));
+    const { rpc, listed, chat, options } = t;
+    type Block = { type: string; text: string; name?: string; status?: string };
+    const generations = async () =>
+      (await readLog(options.log)).filter((l) => l.path === "/api/experimental/generate/text");
+    try {
+      await mkdir(path.join(t.dirs.workspace, "notes"), { recursive: true });
+      await writeFile(path.join(t.dirs.workspace, "notes", "plan.md"), "Plan: ship CROT-PLAN-42 on Friday.\n");
+      await rpc("chat.configure", { provider: ZEN, endpoint: t.endpoint });
+      // Save & Test: OpenCode 2's enabled Zen chat models (/api/model), and one generation with the chosen one.
+      const checked = await rpc("chat.testConnection", { provider: ZEN });
+      expect(checked).toMatchObject({
+        ok: true,
+        route: "local",
+        models: ["big-pickle", "glm-5.3-flash-free"],
+        labels: { "big-pickle": "Big Pickle (free)", "glm-5.3-flash-free": "GLM-5.3-Flash (free)" },
+        defaultModel: "big-pickle",
+        server: { url: `http://127.0.0.1:${options.port}`, managed: true },
+        modelCheck: { model: "big-pickle", ok: true },
+      });
+      expect(await listed(ZEN)).toMatchObject({ connectionStatus: "connected", route: "local" });
+      expect((await rpc("opencode.status")).server).toEqual({
+        url: `http://127.0.0.1:${options.port}`,
+        managed: true,
+        version: "2.2.5",
+        api: 2,
+        source: "owner",
+      });
+      expect((await generations()).map((g) => g.body)).toEqual([
+        { prompt: "Reply with OK.", model: { providerID: "opencode", id: "big-pickle" } },
+      ]);
+
+      const answered = await chat(ZEN, "glm-5.3-flash-free");
+      expect(answered.state).toBe("completed");
+      expect(JSON.stringify(answered.blocks)).toContain("Local answer from glm-5.3-flash-free via OpenCode 2");
+
+      // CROT's text tool protocol over stateless generations: the read runs through Core, its result goes back
+      // with the conversation so far.
+      const first = await chat(ZEN, "big-pickle", { message: "READ:notes/plan.md", projectTools: true });
+      expect(first.state).toBe("completed");
+      const blocks = first.blocks as Block[];
+      expect(blocks.filter((b) => b.type === "tool")).toMatchObject([{ name: "fs_read_file", status: "completed" }]);
+      const final = blocks.filter((b) => b.type === "assistant").at(-1)!;
+      expect(final.text).toContain("Final answer from the tool results");
+      expect(final.text).toContain("CROT-PLAN-42");
+      const [call, result] = (await generations()).slice(-2).map((g) => String(g.body?.prompt));
+      for (const prompt of [call!, result!]) {
+        expect(prompt).toContain(`Project root: ${t.dirs.workspace}`);
+        expect(prompt).toContain("CROT tools: this conversation has no native tool calls");
+        expect(prompt).not.toContain("- shell_run: ");
+      }
+      expect(call).toMatch(/\n\nNew message:\nREAD:notes\/plan\.md$/);
+      expect(result).toContain("Conversation so far:\nOwner: READ:notes/plan.md\n\nAssistant: Using fs_read_file.");
+      expect(result).toMatch(
+        /\n\nNew message:\n```crot-tool-result\n\{"tool":"fs_read_file","isError":false,"output":/,
+      );
+      expect(result).toContain("CROT-PLAN-42");
+      // The next turn of the thread carries the earlier one; a tool not offered never runs.
+      const second = await chat(ZEN, "big-pickle", {
+        message: "CALL:shell_run",
+        thread: first.thread,
+        projectTools: true,
+      });
+      expect(second.state).toBe("completed");
+      expect((second.blocks as Block[]).filter((b) => b.type === "tool")).toMatchObject([
+        { name: "shell_run", status: "failed" },
+      ]);
+      const next = String((await generations()).at(-2)!.body?.prompt);
+      expect(next).toContain("Conversation so far:\nOwner: READ:notes/plan.md\n\nAssistant: Using fs_read_file.");
+      expect(next).toMatch(/\n\nNew message:\nCALL:shell_run$/);
+      expect(
+        t.coreAudit.events.filter((e) => "operation" in e && e.operation === "filesystem.read_file"),
+      ).toMatchObject([{ outcome: "success", principal: { transport: "owner-chat" } }]);
+
+      // A model OpenCode 2 does not list: its own refusal after the fixed message.
+      const retired = await chat(ZEN, "retired-free");
+      expect(retired).toMatchObject({
+        state: "failed",
+        error: "Local OpenCode refused the request.",
+        errorDetail: "retired-free · HTTP 404: ModelNotFoundError: Model not found: opencode/retired-free",
+      });
+      // OpenCode 2's free usage limit (Zen's 429 inside its HTTP 502): the fixed message, then OpenCode's words.
+      await writeFile(options.mode, "limit");
+      const limited = await chat(ZEN, "big-pickle");
+      expect(limited).toMatchObject({
+        state: "failed",
+        error:
+          "OpenCode's free usage limit is reached (OpenCode suggests its Go subscription). Try again later, or choose a paid model with an OpenCode Zen API key.",
+        errorDetail:
+          "big-pickle · HTTP 429: ProviderRequestError: Free usage limit reached. Free models work in OpenCode (https://opencode.ai); subscribe to OpenCode Go to keep going: https://opencode.ai/go",
+      });
+      expect(await rpc("chat.testConnection", { provider: ZEN })).toMatchObject({
+        ok: true,
+        modelCheck: {
+          model: "big-pickle",
+          ok: false,
+          diagnostic: { code: "FREE_TIER_LIMIT", stage: "local", httpStatus: 429, model: "big-pickle" },
+        },
+      });
+      // Only OpenCode 2's API: none of OpenCode 1.x's routes, and Zen is never asked.
+      expect((await readLog(options.log)).every((l) => l.path.startsWith("/api/"))).toBe(true);
+      expect(t.zen.seen).toHaveLength(0);
+    } finally {
+      await t.cleanup();
+    }
+  });
+
+  it("says why the owner's OpenCode is not used when CROT's OpenCode 2 copy hits the free tier", async () => {
+    // No OpenCode of the owner: CROT's copy serves.
+    const t = await setup(({ command: _command, ...options }) => ({
+      ...options,
+      runtimeCommand: async () => ({ command: process.execPath, args: [FAKE, "--fake-v2"] }),
+    }));
+    const { rpc, options } = t;
+    try {
+      await rpc("chat.configure", { provider: ZEN, endpoint: t.endpoint });
+      await writeFile(options.mode, "limit");
+      const notFound = /^opencode: not found on PATH or in the usual install folders \(\d+ places checked\)$/;
+      expect(await rpc("chat.testConnection", { provider: ZEN })).toMatchObject({
+        ok: true,
+        route: "local",
+        modelCheck: {
+          ok: false,
+          diagnostic: { code: "FREE_TIER_LIMIT", source: "crot", owner: expect.stringMatching(notFound) },
+        },
+      });
+      expect(await rpc("opencode.status")).toMatchObject({
+        server: { managed: true, source: "crot", api: 2 },
+        ownerProblem: { code: "OPENCODE_NOT_INSTALLED", source: "owner", detail: expect.stringMatching(notFound) },
+      });
+      const limited = await t.chat(ZEN, "big-pickle");
+      expect(limited.error).toContain("free limit is reached for CROT's own OpenCode copy (not signed in)");
+      expect(String(limited.errorDetail).split(" — ")[1]).toMatch(notFound);
+    } finally {
+      await t.cleanup();
+    }
+  });
+
+  it("with a key: free models through local OpenCode 2, paid ones from Zen", async () => {
+    const t = await setup((options) => ({
+      ...options,
+      command: async () => ({ command: process.execPath, args: [FAKE, "--fake-v2"] }),
+    }));
+    const { rpc, chat } = t;
+    try {
+      await rpc("chat.configure", { provider: ZEN, endpoint: t.endpoint, credential: "zen-key" });
+      expect(await rpc("chat.testConnection", { provider: ZEN })).toMatchObject({
+        ok: true,
+        route: "zen",
+        keySource: "stored",
+        models: ["big-pickle", "kimi-k2.6"],
+        modelCheck: { model: "big-pickle", ok: true },
+      });
+      const free = await chat(ZEN, "big-pickle");
+      expect(JSON.stringify(free.blocks)).toContain("Local answer from big-pickle via OpenCode 2");
+      const paid = await chat(ZEN, "kimi-k2.6");
+      expect(JSON.stringify(paid.blocks)).toContain("Zen answer from kimi-k2.6");
+      expect(t.zen.seen.filter((s) => s.url === "/zen/v1/chat/completions").map((s) => s.body?.model)).toEqual([
+        "kimi-k2.6",
+      ]);
+      expect(JSON.stringify(await readLog(t.options.log))).not.toContain("zen-key");
+    } finally {
+      await t.cleanup();
+    }
+  });
+
+  it("with a key but without local OpenCode: the free model needs OpenCode, a paid one works", async () => {
+    // Neither the owner's OpenCode nor CROT's copy; Zen refuses the free model for this key.
+    const t = await setup(({ command: _command, ...options }) => options);
+    const { rpc, listed, chat } = t;
+    try {
+      await rpc("chat.configure", { provider: ZEN, endpoint: t.endpoint, credential: "limited-key" });
+      const missing = { code: "OPENCODE_NOT_INSTALLED", stage: "local", model: "big-pickle" };
+      // Connected (the key lists Zen's models), with the warning that the chosen free model needs local OpenCode.
+      expect(await rpc("chat.testConnection", { provider: ZEN })).toMatchObject({
+        ok: true,
+        route: "zen",
+        modelCheck: { model: "big-pickle", ok: false, diagnostic: missing },
+      });
+      expect(await listed(ZEN)).toMatchObject({
+        connectionStatus: "connected",
+        modelCheck: { model: "big-pickle", ok: false, diagnostic: missing },
+      });
+      // The chat asks Zen all the same; its refusal says what to do, never Zen's own text.
+      const free = await chat(ZEN, "big-pickle");
+      expect(free).toMatchObject({
+        state: "failed",
+        error:
+          "Local OpenCode CLI was not found. Free models work only inside OpenCode: click “Install and start OpenCode (1 click)”, or choose a paid model with an OpenCode Zen API key.",
+      });
+      expect(JSON.stringify(free)).not.toContain("provider-text-do-not-show");
+      const paid = await chat(ZEN, "kimi-k2.6");
+      expect(JSON.stringify(paid.blocks)).toContain("Zen answer from kimi-k2.6");
+      expect(t.zen.seen.filter((s) => s.url === "/zen/v1/chat/completions").map((s) => s.body?.model)).toEqual([
+        "big-pickle",
+        "kimi-k2.6",
+      ]);
+    } finally {
+      await t.cleanup();
+    }
+  });
+
+  it("the OpenCode workspace agent says that OpenCode 2 is not supported yet", async () => {
+    const t = await setup((options) => ({
+      ...options,
+      command: async () => ({ command: process.execPath, args: [FAKE, "--fake-v2"] }),
+    }));
+    const { rpc, chat } = t;
+    const unsupported =
+      "This OpenCode server runs OpenCode 2, whose new server API the OpenCode workspace agent does not support yet. Use the Cloud LLM “OpenCode (Free & Zen)”: it works with OpenCode 2.";
+    try {
+      // An earlier "Start and connect": CROT's own server is OpenCode 2.
+      await rpc("chat.configure", { provider: "OpenCode", endpoint: "http://127.0.0.1:4096", managed: true });
+      expect(await rpc("chat.testConnection", { provider: "OpenCode" })).toMatchObject({
+        ok: false,
+        diagnostic: { code: "OPENCODE_V2_UNSUPPORTED" },
+      });
+      expect(await chat("OpenCode", "opencode/big-pickle")).toMatchObject({ state: "failed", error: unsupported });
+      // The owner's own OpenCode 2 server: its web app's page is recognized, never taken for an answer.
+      const port = await freePort();
+      await ownerServer(port, undefined, ["--fake-v2"]);
+      await rpc("chat.configure", { provider: "OpenCode", endpoint: `http://127.0.0.1:${port}`, managed: false });
+      expect(await rpc("chat.testConnection", { provider: "OpenCode" })).toMatchObject({
+        ok: false,
+        diagnostic: { code: "OPENCODE_V2_UNSUPPORTED", stage: "workspace" },
+      });
     } finally {
       await t.cleanup();
     }
@@ -1043,18 +1362,36 @@ describe("OpenCode through the local bridge", () => {
       await rpc("chat.configure", { provider: ZEN, endpoint: t.endpoint });
       await writeFile(options.mode, "limit");
       const refused = await rpc("chat.testConnection", { provider: ZEN });
+      const notFound = /^opencode: not found on PATH or in the usual install folders \(\d+ places checked\)$/;
       expect(refused).toMatchObject({
         ok: true,
         route: "local",
-        modelCheck: { ok: false, diagnostic: { code: "FREE_TIER_LIMIT", stage: "local", source: "crot" } },
+        modelCheck: {
+          ok: false,
+          diagnostic: {
+            code: "FREE_TIER_LIMIT",
+            stage: "local",
+            source: "crot",
+            owner: expect.stringMatching(notFound),
+          },
+        },
       });
-      expect((await rpc("opencode.status")).server).toMatchObject({ managed: true, source: "crot" });
+      const status = await rpc("opencode.status");
+      expect(status.server).toMatchObject({ managed: true, source: "crot" });
+      expect(status.ownerProblem).toEqual({
+        code: "OPENCODE_NOT_INSTALLED",
+        source: "owner",
+        detail: expect.stringMatching(notFound),
+      });
       const limited = await t.chat(ZEN, "big-pickle");
       expect(limited).toMatchObject({
         state: "failed",
-        error: expect.stringContaining("CROT's own OpenCode copy is not signed in"),
-        errorDetail: "big-pickle · HTTP 429: Free usage exceeded, subscribe to Go (https://opencode.ai/go)",
+        error: expect.stringContaining("free limit is reached for CROT's own OpenCode copy (not signed in)"),
       });
+      expect(limited.error).toContain("An API key does not unlock free models");
+      const [said, why] = String(limited.errorDetail).split(" — ");
+      expect(said).toBe("big-pickle · HTTP 429: Free usage exceeded, subscribe to Go (https://opencode.ai/go)");
+      expect(why).toMatch(notFound);
       expect(t.zen.seen).toHaveLength(0);
     } finally {
       await t.cleanup();
@@ -1087,7 +1424,7 @@ describe("OpenCode through the local bridge", () => {
       const turn = await t.chat(ZEN, "big-pickle");
       expect(turn).toMatchObject({
         state: "failed",
-        error: expect.stringContaining("Install the verified OpenCode into CROT with one click"),
+        error: expect.stringContaining("install the verified OpenCode into CROT with one click"),
         errorDetail: why,
       });
       expect(t.zen.seen).toHaveLength(0);
@@ -1099,6 +1436,8 @@ describe("OpenCode through the local bridge", () => {
       const status = await rpc("opencode.status");
       expect(status.server).toMatchObject({ managed: true, source: "crot" });
       expect(status.problem).toBeUndefined();
+      // The card says why the owner's own OpenCode is not used.
+      expect(status.ownerProblem).toEqual({ code: "OPENCODE_START_FAILED", source: "owner", detail: why });
     } finally {
       await t.cleanup();
       await registry.close();

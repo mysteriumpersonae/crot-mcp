@@ -35,7 +35,10 @@ export function openCodeDetail(value: string): string | undefined {
     .trim();
   return line ? (line.length > 300 ? `${line.slice(0, 299)}…` : line) : undefined;
 }
-/** OpenCode's explanation in an error answer (`{name, data: {message, ref}}`, `{error}`, or plain text). */
+/**
+ * OpenCode's explanation in an error answer (`{name, data: {message, ref}}`, OpenCode 2's `{_tag, message}`,
+ * `{error}`, or plain text).
+ */
 export function openCodeBodyDetail(body: string): string | undefined {
   let value: unknown;
   try {
@@ -45,10 +48,28 @@ export function openCodeBodyDetail(body: string): string | undefined {
   }
   const v = obj(value),
     data = obj(v.data),
-    name = str(v.name),
+    name = str(v.name) || (/^\w{1,64}$/.test(str(v._tag)) ? str(v._tag) : ""),
     message = str(data.message) || str(v.message) || str(v.error) || str(obj(v.error).message),
     ref = /^[\w-]{1,64}$/.test(str(data.ref)) ? str(data.ref) : "";
   return openCodeDetail([name, message].filter(Boolean).join(": ") + (ref ? ` (ref ${ref})` : ""));
+}
+/**
+ * An OpenCode 2 error answer (`{_tag, message, reason?, status?}`): a refused model call comes back as HTTP 502
+ * ProviderRequestError with the provider's own status (429 for a rate limit, 401 for a refused key), which is
+ * the status that counts; a free tier limit says so in its message. Undefined for other answers.
+ */
+export function openCodeV2Refusal(body: string): { httpStatus?: number; free: boolean } | undefined {
+  let v: Json;
+  try {
+    v = obj(JSON.parse(body));
+  } catch {
+    return undefined;
+  }
+  if (!str(v._tag)) return undefined;
+  const status = Number(v.status),
+    httpStatus = Number.isInteger(status) && status >= 100 && status <= 599 ? status : undefined;
+  const free = (httpStatus === 429 || v.reason === "rate_limit") && /free|subscribe/i.test(str(v.message));
+  return { ...(httpStatus ? { httpStatus } : {}), free };
 }
 const safeId = (id: unknown): string => {
   const s = str(id);
@@ -277,6 +298,35 @@ export class OpenCodeSession {
   async close(): Promise<void> {
     if (this.options.ephemeral) await this.cancel(`/session/${this.id}`, "DELETE").catch(() => {});
   }
+}
+/**
+ * One answer of an OpenCode 2 server (POST /api/experimental/generate/text): stateless, no session and no tools,
+ * so the prompt carries everything (CROT's instructions, the conversation, the new message). A refused model call
+ * is an error answer, turned into CROT's error by the request (see openCodeV2Refusal) with the model added.
+ */
+export async function openCodeGenerate(
+  model: string,
+  prompt: string,
+  signal: AbortSignal | undefined,
+  request: WorkspaceRequest,
+): Promise<string> {
+  if (signal?.aborted) return fail("Workspace generation cancelled");
+  const split = model.indexOf("/");
+  if (split < 1 || split === model.length - 1) return fail("Select an OpenCode provider/model");
+  let result: Json;
+  try {
+    result = await request(
+      "/api/experimental/generate/text",
+      "POST",
+      { prompt, model: { providerID: model.slice(0, split), id: model.slice(split + 1) } },
+      signal,
+    );
+  } catch (error) {
+    throw withModel(error, model.slice(split + 1));
+  }
+  const reply = str(obj(result.data).text);
+  if (!reply || reply.length > 128000 || signal?.aborted) return fail("OpenCode returned no usable answer");
+  return reply;
 }
 /** One message in a new OpenCode session (a workspace turn, a probe or a model-only answer). */
 export async function openCodeReply(

@@ -246,7 +246,7 @@ describe("Other authorization methods and provider checks", () => {
       "API Key (optional for Free / Zen API Key)",
       "Leave empty for free OpenCode Zen models or enter a key from opencode.ai/zen.",
       "Optional: OpenCode Zen API key",
-      "OpenCode Zen refused free use without a key (free usage limit). Enter an OpenCode Zen API key, or connect through local OpenCode (Auto-connect).",
+      "OpenCode Zen refused the free model (free usage limit): free models work only inside OpenCode, an API key does not unlock them. Connect through local OpenCode (Auto-connect), or choose a paid model with an OpenCode Zen API key.",
     ]) {
       expect(messages[key]?.length, key).toBe(5);
       expect(messages[key]![1], key).not.toBe(key);
@@ -285,16 +285,19 @@ describe("Other authorization methods and provider checks", () => {
       "Key from OPENCODE_API_KEY",
       "started by CROT",
       "already running",
-      "OpenCode's free usage limit is reached (OpenCode suggests its Go subscription). Try again later, or enter an OpenCode Zen API key.",
-      "OpenCode's anonymous free limit is used up: CROT's own OpenCode copy is not signed in (your OpenCode was not found or did not start). Enter an OpenCode Zen API key (opencode.ai/zen): free models work with it too.",
-      "Local OpenCode CLI was not found. Click “Install and start OpenCode (1 click)” or enter an OpenCode Zen API key.",
+      "OpenCode's free usage limit is reached (OpenCode suggests its Go subscription). Try again later, or choose a paid model with an OpenCode Zen API key.",
+      "OpenCode's free limit is reached for CROT's own OpenCode copy (not signed in), because your own OpenCode was not found or did not start (see the details). An API key does not unlock free models: try again later, or choose a paid model with an OpenCode Zen API key.",
+      "Local OpenCode CLI was not found. Free models work only inside OpenCode: click “Install and start OpenCode (1 click)”, or choose a paid model with an OpenCode Zen API key.",
       "Local OpenCode refused the request.",
-      "Local OpenCode could not be started. Install the verified OpenCode into CROT with one click (your own OpenCode stays as it is), or enter an OpenCode Zen API key.",
+      "Local OpenCode could not be started. Free models work only inside OpenCode: install the verified OpenCode into CROT with one click (your own OpenCode stays as it is), or choose a paid model with an OpenCode Zen API key.",
       "Your OpenCode is too old for CROT (version 1.0 or newer is needed). Install the verified OpenCode into CROT with one click, or update yours with “opencode upgrade”.",
       "Starting local OpenCode is blocked by the emergency stop or the runtime policy.",
+      "This OpenCode server runs OpenCode 2, whose new server API the OpenCode workspace agent does not support yet. Use the Cloud LLM “OpenCode (Free & Zen)”: it works with OpenCode 2.",
+      "Your own OpenCode is not used: CROT runs its own copy (not signed in).",
+      "Connected. The free model needs local OpenCode:",
       // Chat errors of the local bridge (chat-runtime.ts), translated where the chat shows them.
-      "Local OpenCode takes text only: images are not forwarded. Remove them or enter an OpenCode Zen API key.",
-      "Through local OpenCode the model can only read the open project (list, read and search files); other CROT tools are not forwarded. Turn them off or enter an OpenCode Zen API key.",
+      "Local OpenCode takes text only: images are not forwarded. Remove them, or choose a paid model with an OpenCode Zen API key.",
+      "Through local OpenCode the model can only read the open project (list, read and search files); other CROT tools are not forwarded. Turn them off, or choose a paid model with an OpenCode Zen API key.",
       "Installing OpenCode…",
       "CROT downloads the verified OpenCode (about 80 MB) from the npm registry into its own folder and starts it. No terminal, Node.js or npm needed.",
       "Install verified OpenCode into CROT (1 click)",
@@ -341,7 +344,7 @@ describe("Other authorization methods and provider checks", () => {
     ).toBe("The model list could not be loaded. [REQUEST_REFUSED] — Workspace agent request failed");
     // OpenCode missing: exactly what to click, without a technical tag; OpenCode's refusal: its status, the model and its own words.
     expect(diagnosticText({ code: "OPENCODE_NOT_INSTALLED", stage: "local" })).toBe(
-      "Local OpenCode CLI was not found. Click “Install and start OpenCode (1 click)” or enter an OpenCode Zen API key.",
+      "Local OpenCode CLI was not found. Free models work only inside OpenCode: click “Install and start OpenCode (1 click)”, or choose a paid model with an OpenCode Zen API key.",
     );
     // OpenCode that does not start: what to do, then exactly why (the program, its exit code and last error line).
     expect(
@@ -351,7 +354,7 @@ describe("Other authorization methods and provider checks", () => {
         detail: "~/.npm-global/bin/opencode: exited with code 1 — Error: opencode-ai's postinstall script was not run.",
       }),
     ).toBe(
-      "Local OpenCode could not be started. Install the verified OpenCode into CROT with one click (your own OpenCode stays as it is), or enter an OpenCode Zen API key. [OPENCODE_START_FAILED] — ~/.npm-global/bin/opencode: exited with code 1 — Error: opencode-ai's postinstall script was not run.",
+      "Local OpenCode could not be started. Free models work only inside OpenCode: install the verified OpenCode into CROT with one click (your own OpenCode stays as it is), or choose a paid model with an OpenCode Zen API key. [OPENCODE_START_FAILED] — ~/.npm-global/bin/opencode: exited with code 1 — Error: opencode-ai's postinstall script was not run.",
     );
     expect(
       diagnosticText({
@@ -382,10 +385,38 @@ describe("Other authorization methods and provider checks", () => {
         detail: "Free usage exceeded, subscribe to Go (https://opencode.ai/go)",
       }),
     ).toContain("[FREE_TIER_LIMIT · HTTP 429 · big-pickle] — Free usage exceeded");
+    // CROT's own copy hit the free tier: why the owner's OpenCode was not used comes last.
+    expect(
+      diagnosticText({
+        code: "FREE_TIER_LIMIT",
+        stage: "local",
+        httpStatus: 429,
+        source: "crot",
+        model: "big-pickle",
+        owner: "opencode: not found on PATH or in the usual install folders (12 places checked)",
+      }),
+    ).toBe(
+      "OpenCode's free limit is reached for CROT's own OpenCode copy (not signed in), because your own OpenCode was not found or did not start (see the details). An API key does not unlock free models: try again later, or choose a paid model with an OpenCode Zen API key. [FREE_TIER_LIMIT · HTTP 429 · big-pickle] — opencode: not found on PATH or in the usual install folders (12 places checked)",
+    );
+    expect(diagnosticText({ code: "OPENCODE_V2_UNSUPPORTED", stage: "local" })).toBe(
+      "This OpenCode server runs OpenCode 2, whose new server API the OpenCode workspace agent does not support yet. Use the Cloud LLM “OpenCode (Free & Zen)”: it works with OpenCode 2. [OPENCODE_V2_UNSUPPORTED]",
+    );
+    // A free model that needs local OpenCode (not installed or not started) is not "refused": it says what to do, with
+    // the install button; the route names the OpenCode version, and the card says when CROT's copy serves instead.
+    expect(AGENTS_CENTER_RENDERER).toContain(
+      "t(unstarted?'Connected. The free model needs local OpenCode:':'Connected, but OpenCode refused a test request with this model.')",
+    );
+    expect(AGENTS_CENTER_RENDERER).toContain("(server.version?' · OpenCode '+server.version:'')");
+    expect(AGENTS_CENTER_RENDERER).toContain(
+      "const owner=ok&&server?.managed&&server.source==='crot'?openCodeInfo.ownerProblem:undefined;",
+    );
+    expect(AGENTS_CENTER_RENDERER).toContain(
+      "zenOwner.textContent=t('Your own OpenCode is not used: CROT runs its own copy (not signed in).')+(owner.detail?' — '+owner.detail:'')",
+    );
     // Green "Connected" once OpenCode is up and lists its models; a refused test request is a warning beside it.
     expect(AGENTS_CENTER_RENDERER).toContain("baseOf(provider.provider)==='OpenCode (Free & Zen)'?'Connected'");
     expect(AGENTS_CENTER_RENDERER).toContain(
-      "cloud.append(connected,providerField,protocolField,endpointSection,apiKey.wrap,zenHint,zenActions,cloudStatus,zenCheck,zenRoute,zenInstall,modelField);",
+      "cloud.append(connected,providerField,protocolField,endpointSection,apiKey.wrap,zenHint,zenActions,cloudStatus,zenCheck,zenRoute,zenOwner,zenInstall,modelField);",
     );
     expect(AGENTS_CENTER_RENDERER).toContain("c.modelCheck?.ok===false&&c.modelCheck.model===c.defaultModel");
     expect(AGENTS_CENTER_RENDERER).toContain("keySource:r.keySource,modelCheck:r.modelCheck}");
@@ -400,10 +431,10 @@ describe("Other authorization methods and provider checks", () => {
     );
     expect(
       messages[
-        "Local OpenCode CLI was not found. Click “Install and start OpenCode (1 click)” or enter an OpenCode Zen API key."
+        "Local OpenCode CLI was not found. Free models work only inside OpenCode: click “Install and start OpenCode (1 click)”, or choose a paid model with an OpenCode Zen API key."
       ]?.[1],
     ).toBe(
-      "Локальный OpenCode CLI не найден. Нажмите «Установить и запустить OpenCode (1 клик)» или введите API-ключ Zen.",
+      "Локальный OpenCode CLI не найден. Бесплатные модели работают только внутри OpenCode: нажмите «Установить и запустить OpenCode (1 клик)» или выберите платную модель с API-ключом OpenCode Zen.",
     );
     expect(messages["Connected"]?.[1]).toBe("Подключено");
     for (const key of [
@@ -488,7 +519,7 @@ describe("Other authorization methods and provider checks", () => {
         model: "big-pickle",
       }),
     ).toBe(
-      "OpenCode's anonymous free limit is used up: CROT's own OpenCode copy is not signed in (your OpenCode was not found or did not start). Enter an OpenCode Zen API key (opencode.ai/zen): free models work with it too. [FREE_TIER_LIMIT · HTTP 429 · big-pickle]",
+      "OpenCode's free limit is reached for CROT's own OpenCode copy (not signed in), because your own OpenCode was not found or did not start (see the details). An API key does not unlock free models: try again later, or choose a paid model with an OpenCode Zen API key. [FREE_TIER_LIMIT · HTTP 429 · big-pickle]",
     );
     expect(AGENTS_CENTER_RENDERER).toContain(
       "state.textContent=(state===localState?localDiagnosticText:diagnosticText)(provider.connectionError,provider.connectionMessage);",
@@ -536,7 +567,7 @@ describe("Other authorization methods and provider checks", () => {
     expect(AGENTS_CENTER_RENDERER).toContain(
       "t('Installing OpenCode…')+(Number.isInteger(runtime.progress)?' '+runtime.progress+' %':'')",
     );
-    expect(AGENTS_CENTER_RENDERER).toContain("const missing=zen&&!ok&&needsInstall(openCodeInfo);");
+    expect(AGENTS_CENTER_RENDERER).toContain("const missing=zen&&(!ok||unstarted)&&needsInstall(openCodeInfo);");
     const source = /function needsInstall\(info\)\{[^\n]*\}\n/.exec(AGENTS_CENTER_RENDERER)?.[0];
     expect(source).toBeDefined();
     const needsInstall = new Function(`${source}return needsInstall;`)() as (info: unknown) => boolean;
@@ -580,8 +611,8 @@ describe("Other authorization methods and provider checks", () => {
         "CROT скачает проверенный OpenCode (около 80 МБ) из реестра npm в свою папку и запустит его. Терминал, Node.js и npm не нужны.",
       ],
       [
-        "Local OpenCode could not be started. Install the verified OpenCode into CROT with one click (your own OpenCode stays as it is), or enter an OpenCode Zen API key.",
-        "Не удалось запустить локальный OpenCode. Установите проверенный OpenCode в CROT одним кликом (ваш OpenCode останется как есть) или введите API-ключ Zen.",
+        "Local OpenCode could not be started. Free models work only inside OpenCode: install the verified OpenCode into CROT with one click (your own OpenCode stays as it is), or choose a paid model with an OpenCode Zen API key.",
+        "Не удалось запустить локальный OpenCode. Бесплатные модели работают только внутри OpenCode: установите проверенный OpenCode в CROT одним кликом (ваш OpenCode останется как есть) или выберите платную модель с API-ключом OpenCode Zen.",
       ],
     ] as [string, string][])
       expect(messages[key]?.[1], key).toBe(ru);

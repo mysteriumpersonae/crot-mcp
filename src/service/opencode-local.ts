@@ -238,6 +238,13 @@ async function program(local: OpenCodeLocal, candidate: string): Promise<string 
   }
 }
 
+/** Every place searched for the owner's `opencode`, in order: PATH, the usual install places, Node version managers. */
+export async function openCodeCandidates(local: OpenCodeLocal): Promise<string[]> {
+  const out = binaryCandidates(local);
+  for (const file of await versionManagerCandidates(local)) if (!out.includes(file)) out.push(file);
+  return out;
+}
+
 /**
  * Every `opencode` binary of the owner, in the order to try them (PATH first): one entry per program, so a
  * symlink and its target, or two PATH entries of one folder, count once. An old or broken one does not hide a
@@ -246,7 +253,7 @@ async function program(local: OpenCodeLocal, candidate: string): Promise<string 
 export async function findOpenCodeBinaries(local: OpenCodeLocal): Promise<string[]> {
   const out: string[] = [],
     seen = new Set<string>();
-  for (const candidate of [...binaryCandidates(local), ...(await versionManagerCandidates(local))]) {
+  for (const candidate of await openCodeCandidates(local)) {
     const file = await program(local, candidate);
     if (!file) continue;
     const real = await realpath(file).catch(() => file);
@@ -260,7 +267,7 @@ export async function findOpenCodeBinaries(local: OpenCodeLocal): Promise<string
 
 /** The absolute path of the owner's `opencode` binary, or undefined when OpenCode is not installed. */
 export async function findOpenCodeBinary(local: OpenCodeLocal): Promise<string | undefined> {
-  for (const candidate of [...binaryCandidates(local), ...(await versionManagerCandidates(local))]) {
+  for (const candidate of await openCodeCandidates(local)) {
     const file = await program(local, candidate);
     if (file) return file;
   }

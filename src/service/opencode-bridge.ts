@@ -1,7 +1,8 @@
 /**
  * The local OpenCode bridge: CROT's own `opencode serve` on 127.0.0.1, started when the owner connects
- * OpenCode without a key (Cloud LLM "OpenCode (Free & Zen)") or uses an OpenCode workspace agent connected
- * with a managed server, and stopped with CROT. A random password protects it (OPENCODE_SERVER_PASSWORD, HTTP
+ * OpenCode without a key or chooses a free model (Cloud LLM "OpenCode (Free & Zen)": Zen serves its free models
+ * only to OpenCode itself, so even with a key) or uses an OpenCode workspace agent connected with a managed
+ * server, and stopped with CROT. A random password protects it (OPENCODE_SERVER_PASSWORD, HTTP
  * Basic).
  * An OpenCode server the owner already runs on the default port without a password is used as is and
  * never stopped by CROT.
@@ -15,7 +16,12 @@
  * when none starts (too old, broken installation, crash, no answer), the copy CROT installed
  * (opencode-runtime.ts) in its own config, data, state and cache folders, so it never touches the owner's
  * OpenCode (and is not signed in to it). Why the last start failed stays in status() (`problem`):
- * the UI offers the one-click install of CROT's verified OpenCode with the exact reason.
+ * the UI offers the one-click install of CROT's verified OpenCode with the exact reason. While CROT's copy
+ * serves, the server and status() keep why the owner's own OpenCode was not used (`ownerProblem`: not found,
+ * or its start failure), so a refusal of CROT's copy (its free tier) names it.
+ *
+ * Both server APIs are recognized: OpenCode 1.x answers /global/health; OpenCode 2 (new server API, `api: 2`)
+ * has no such route (its web app answers the path with a page) and answers /api/info instead.
  *
  * It never outlives CROT: close() stops it (the service's shutdown on SIGINT/SIGTERM/SIGHUP), terminateSync()
  * kills it on the emergency and 'exit' paths, and its PID file (opencode-pid.ts) lets the next start stop a
@@ -29,7 +35,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { CrotError } from "../core/errors.js";
 import { createEnvironmentPolicy } from "../core/platform/environment.js";
 import type { ExitStatus, ManagedProcess } from "../core/platform/types.js";
-import { findOpenCodeBinaries, type OpenCodeLocal } from "./opencode-local.js";
+import { findOpenCodeBinaries, openCodeCandidates, type OpenCodeLocal } from "./opencode-local.js";
 import { BridgePidFile, nodeBridgeProcesses, type BridgeProcesses } from "./opencode-pid.js";
 import { openCodeDetail } from "./workspace-chat.js";
 
@@ -37,7 +43,10 @@ export const OPENCODE_DEFAULT_PORT = 4096;
 export const OPENCODE_USERNAME = "opencode";
 /** The install command shown when OpenCode is missing (https://opencode.ai/docs). */
 export const OPENCODE_INSTALL_COMMAND = "npm i -g opencode-ai";
-/** The oldest OpenCode whose server CROT can use: 1.0 brought /global/health and /provider (0.x has neither). */
+/**
+ * The oldest OpenCode whose server CROT can use: 1.0 brought /global/health and /provider (0.x has neither).
+ * OpenCode 2 has a new server API (/api/info, /api/model, stateless text generation), which CROT speaks too.
+ */
 export const OPENCODE_MIN_VERSION = "1.0.0";
 const READY_TIMEOUT_MS = 60_000;
 const VERSION_TIMEOUT_MS = 15_000;
@@ -53,8 +62,12 @@ export interface OpenCodeServer {
   readonly username?: string;
   readonly password?: string;
   readonly version?: string;
+  /** 2: OpenCode 2's server API (/api/info, /api/model, /api/experimental/generate/text); absent: OpenCode 1.x. */
+  readonly api?: 2;
   /** A managed server: the owner's own OpenCode, or the copy CROT installed. */
   readonly source?: "owner" | "crot";
+  /** CROT's copy serving: why the owner's own OpenCode is not used (not found, or why it did not start). */
+  readonly ownerProblem?: OpenCodeProblem;
 }
 export interface OpenCodeCommand {
   readonly command: string;
@@ -64,13 +77,16 @@ export interface OpenCodeCommand {
   /** Its own environment on top of the bridge's (CROT's copy: its own XDG config, data, state, cache). */
   readonly env?: Readonly<Record<string, string>>;
 }
-/** Why the last start of local OpenCode failed (cleared by the next successful start). */
+/**
+ * Why the last start of local OpenCode failed (cleared by the next successful start); as `ownerProblem` also
+ * "OPENCODE_NOT_INSTALLED": the owner has no OpenCode that CROT found.
+ */
 export interface OpenCodeProblem {
-  readonly code: "OPENCODE_START_FAILED" | "OPENCODE_TOO_OLD";
+  readonly code: "OPENCODE_START_FAILED" | "OPENCODE_TOO_OLD" | "OPENCODE_NOT_INSTALLED";
   /** The owner's own OpenCode, or the copy CROT installed. */
   readonly source: "owner" | "crot";
   readonly version?: string;
-  /** One redacted line: the exit code and OpenCode's last error line, the HTTP status, or the wait. */
+  /** One redacted line: the exit code and OpenCode's last error line, the HTTP status, the wait, or where CROT looked. */
   readonly detail?: string;
 }
 export interface OpenCodeBridgeOptions {
@@ -108,27 +124,63 @@ export interface OpenCodeBridgeOptions {
 }
 export interface OpenCodeBridgeStatus {
   readonly installed: boolean;
-  readonly server?: { url: string; managed: boolean; version?: string; source?: "owner" | "crot" };
+  readonly server?: { url: string; managed: boolean; version?: string; api?: 2; source?: "owner" | "crot" };
   /** Why the last start failed, while no server runs. */
   readonly problem?: OpenCodeProblem;
+  /** While CROT's copy serves: why the owner's own OpenCode is not used. */
+  readonly ownerProblem?: OpenCodeProblem;
 }
 
 interface Health {
   readonly healthy: boolean;
   readonly status: number | "refused" | "error";
   readonly version?: string;
+  /** 2: OpenCode 2's server API. */
+  readonly api?: 2;
 }
+/** A GET answer: its status and its body when that is a JSON object (never kept or shown). */
+async function getJson(
+  url: string,
+  authorization: string | undefined,
+  timeoutMs: number,
+): Promise<{ status: number; json?: Record<string, unknown> }> {
+  const response = await fetch(url, {
+    headers: authorization ? { authorization } : {},
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  const body = await response.text();
+  try {
+    const value: unknown = JSON.parse(body);
+    if (value && typeof value === "object" && !Array.isArray(value))
+      return { status: response.status, json: value as Record<string, unknown> };
+  } catch {
+    // An HTML page (OpenCode 2's web app) or other text.
+  }
+  return { status: response.status };
+}
+const versionOf = (value: unknown): string | undefined =>
+  typeof value === "string" && /^[\w.+-]{1,64}$/.test(value) ? value : undefined;
+/**
+ * Whether an OpenCode server answers: OpenCode 1.x on /global/health (`{healthy, version}`); OpenCode 2, which
+ * has no such route (its web app answers it with a page, or 404), on /api/info (`{version, pid, …}`; 401 without
+ * the server's password, 503 while it starts).
+ */
 async function health(url: string, authorization?: string, timeoutMs = 1500): Promise<Health> {
   try {
-    const response = await fetch(`${url}/global/health`, {
-      headers: authorization ? { authorization } : {},
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-    const body = await response.text();
-    if (response.status !== 200) return { healthy: false, status: response.status };
-    const value = JSON.parse(body) as Record<string, unknown>;
-    const version = typeof value.version === "string" && /^[\w.+-]{1,64}$/.test(value.version) ? value.version : "";
-    return { healthy: value.healthy === true, status: 200, ...(version ? { version } : {}) };
+    const v1 = await getJson(`${url}/global/health`, authorization, timeoutMs);
+    if (v1.status === 200 && v1.json) {
+      const version = versionOf(v1.json.version);
+      return { healthy: v1.json.healthy === true, status: 200, ...(version ? { version } : {}) };
+    }
+    if (v1.status !== 200 && v1.status !== 404) return { healthy: false, status: v1.status };
+    const v2 = await getJson(`${url}/api/info`, authorization, timeoutMs);
+    if (v2.status === 200 && v2.json && typeof v2.json.version === "string") {
+      const version = versionOf(v2.json.version);
+      return { healthy: true, status: 200, api: 2, ...(version ? { version } : {}) };
+    }
+    // OpenCode 2 refusing the password (401) or still starting (503); else 0.x (404) or no OpenCode at all.
+    if (v2.json && v2.status !== 404 && v2.status !== 200) return { healthy: false, status: v2.status, api: 2 };
+    return { healthy: false, status: v1.status };
   } catch (error) {
     const code = (error as { cause?: { code?: unknown } }).cause?.code;
     return { healthy: false, status: code === "ECONNREFUSED" ? "refused" : "error" };
@@ -192,6 +244,21 @@ const startFailed = (source: "owner" | "crot", detail?: string, exited = false) 
 const startProblem = (error: unknown): error is CrotError =>
   error instanceof CrotError &&
   (error.details?.reason === "opencode_start_failed" || error.details?.reason === "opencode_too_old");
+/** The version and API of a healthy server. */
+const serverInfo = (h: Health): Pick<OpenCodeServer, "version" | "api"> => ({
+  ...(h.version ? { version: h.version } : {}),
+  ...(h.api ? { api: h.api } : {}),
+});
+/** A failed start as the owner sees it in status(). */
+function problemOf(error: CrotError, source: "owner" | "crot"): OpenCodeProblem {
+  const d = error.details ?? {};
+  return {
+    code: d.reason === "opencode_too_old" ? "OPENCODE_TOO_OLD" : "OPENCODE_START_FAILED",
+    source,
+    ...(typeof d.version === "string" ? { version: d.version } : {}),
+    ...(typeof d.detail === "string" ? { detail: d.detail } : {}),
+  };
+}
 /** Stop waiting when `signal` aborts; the shared start itself goes on for other callers. */
 function until<T>(work: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
   if (!signal) return work;
@@ -289,16 +356,12 @@ export class OpenCodeBridge {
   /** Installed binary and the running server (CROT's own, or the owner's on the default port). */
   async status(): Promise<OpenCodeBridgeStatus> {
     const installed = await this.installed();
-    let server: OpenCodeServer | undefined = this.current(),
-      version = server?.version;
+    let server: OpenCodeServer | undefined = this.current();
     if (server && !server.managed && !(await health(server.url)).healthy) server = undefined;
     if (!server) {
       const url = `http://127.0.0.1:${this.port}`,
         probe = await health(url);
-      if (probe.healthy) {
-        server = { url, managed: false };
-        version = probe.version;
-      }
+      if (probe.healthy) server = { url, managed: false, ...serverInfo(probe) };
     }
     return {
       installed,
@@ -307,12 +370,14 @@ export class OpenCodeBridge {
             server: {
               url: server.url,
               managed: server.managed,
-              ...(version ? { version } : {}),
+              ...(server.version ? { version: server.version } : {}),
+              ...(server.api ? { api: server.api } : {}),
               ...(server.managed && server.source ? { source: server.source } : {}),
             },
           }
         : {}),
       ...(!server && this.problem ? { problem: this.problem } : {}),
+      ...(server?.ownerProblem ? { ownerProblem: server.ownerProblem } : {}),
     };
   }
   /** A running OpenCode server: the current one, the owner's unprotected one on the default port, or a new one. */
@@ -347,8 +412,7 @@ export class OpenCodeBridge {
     this.server = undefined;
     const url = `http://127.0.0.1:${this.port}`,
       probe = await health(url);
-    if (probe.healthy)
-      return (this.server = { url, managed: false, ...(probe.version ? { version: probe.version } : {}) });
+    if (probe.healthy) return (this.server = { url, managed: false, ...serverInfo(probe) });
     const commands = await this.commands();
     if (!commands.length)
       throw new CrotError("NOT_FOUND", "OpenCode CLI is not installed", {
@@ -360,17 +424,21 @@ export class OpenCodeBridge {
         stage: "local",
         reason: "opencode_refused",
       });
-    // The owner's OpenCode first, unless it failed before and is unchanged; then CROT's own copy.
-    let failure: CrotError | undefined;
+    // The owner's OpenCode first, unless it failed before and is unchanged; then CROT's own copy, which keeps why
+    // the owner's was not used.
+    let failure: CrotError | undefined,
+      owner = commands.some((c) => (c.source ?? "owner") === "owner") ? undefined : await this.notFound();
     for (const [index, command] of commands.entries()) {
-      const key = await this.fingerprint(command),
+      const source = command.source ?? "owner",
+        key = await this.fingerprint(command),
         known = this.failed.get(key);
       if (known && index < commands.length - 1) {
         failure = known;
+        if (source === "owner") owner = problemOf(known, source);
         continue;
       }
       try {
-        const server = await this.start(command, probe.status === "refused");
+        const server = await this.start(command, probe.status === "refused", source === "crot" ? owner : undefined);
         this.failed.delete(key);
         this.problem = undefined;
         return server;
@@ -378,31 +446,43 @@ export class OpenCodeBridge {
         if (!startProblem(error) || this.closed) throw error;
         this.failed.set(key, error);
         failure = error;
-        const d = error.details ?? {};
-        this.problem = {
-          code: d.reason === "opencode_too_old" ? "OPENCODE_TOO_OLD" : "OPENCODE_START_FAILED",
-          source: command.source ?? "owner",
-          ...(typeof d.version === "string" ? { version: d.version } : {}),
-          ...(typeof d.detail === "string" ? { detail: d.detail } : {}),
-        };
+        this.problem = problemOf(error, source);
+        if (source === "owner") owner = this.problem;
       }
     }
     throw failure!;
+  }
+  /** No OpenCode of the owner: where CROT looked, for the owner's explanation. */
+  private async notFound(): Promise<OpenCodeProblem> {
+    const places = this.options.command
+      ? 0
+      : (await openCodeCandidates(this.options.local).catch(() => [] as string[])).length;
+    return {
+      code: "OPENCODE_NOT_INSTALLED",
+      source: "owner",
+      detail: places
+        ? `opencode: not found on PATH or in the usual install folders (${places} places checked)`
+        : "opencode: not found",
+    };
   }
   /** The program, its size and change time: a reinstalled or updated OpenCode is tried again. */
   private async fingerprint(command: OpenCodeCommand): Promise<string> {
     const info = await stat(command.command).catch(() => undefined);
     return JSON.stringify([command.command, command.args, info?.size, info?.mtimeMs]);
   }
-  private async start(command: OpenCodeCommand, defaultPortFree: boolean): Promise<OpenCodeServer> {
+  private async start(
+    command: OpenCodeCommand,
+    defaultPortFree: boolean,
+    ownerProblem?: OpenCodeProblem,
+  ): Promise<OpenCodeServer> {
     // The default port when it is free; a port taken by another program or a protected server: any free one.
     const port = defaultPortFree ? this.port : await freePort();
     try {
-      return await this.spawn(command, port);
+      return await this.spawn(command, port, ownerProblem);
     } catch (error) {
       // The port was taken in between: once more on a free one.
       if (port === this.port && error instanceof CrotError && error.details?.exited && !this.closed)
-        return this.spawn(command, await freePort());
+        return this.spawn(command, await freePort(), ownerProblem);
       throw error;
     }
   }
@@ -418,12 +498,13 @@ export class OpenCodeBridge {
       proc.stderr.resume();
       const done = await Promise.race([proc.exited.then(() => true), delay(VERSION_TIMEOUT_MS).then(() => false)]);
       if (!done) await proc.terminate("force").catch(() => undefined);
-      return /\b(\d+\.\d+\.\d+[\w.+-]*)/.exec(output)?.[1];
+      // "1.19.5", or OpenCode 2's "opencode v2.2.5".
+      return /\bv?(\d+\.\d+\.\d+[\w.+-]*)/.exec(output)?.[1];
     } catch {
       return undefined;
     }
   }
-  private async spawn(command: OpenCodeCommand, port: number): Promise<OpenCodeServer> {
+  private async spawn(command: OpenCodeCommand, port: number, ownerProblem?: OpenCodeProblem): Promise<OpenCodeServer> {
     const password = randomBytes(24).toString("base64url"),
       source = command.source ?? "owner",
       who = shortPath(command.command, this.options.local.home),
@@ -464,7 +545,9 @@ export class OpenCodeBridge {
       timeoutMs = this.options.readyTimeoutMs ?? READY_TIMEOUT_MS,
       deadline = Date.now() + timeoutMs,
       line = () => lastOutputLine(output, password);
-    let version: string | undefined, unauthorized: number | undefined, last: Health | undefined;
+    let info: Pick<OpenCodeServer, "version" | "api"> = {},
+      unauthorized: number | undefined,
+      last: Health | undefined;
     try {
       for (;;) {
         if (this.closed) throw startFailed(source);
@@ -474,7 +557,7 @@ export class OpenCodeBridge {
         }
         const ready = await health(url, authorization);
         if (ready.healthy) {
-          version = ready.version;
+          info = serverInfo(ready);
           break;
         }
         if (ready.status === 404) {
@@ -517,8 +600,9 @@ export class OpenCodeBridge {
       managed: true,
       username: OPENCODE_USERNAME,
       password,
-      ...(version ? { version } : {}),
+      ...info,
       source,
+      ...(source === "crot" && ownerProblem ? { ownerProblem } : {}),
       proc,
     };
     this.server = server;

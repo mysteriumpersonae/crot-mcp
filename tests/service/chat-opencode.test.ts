@@ -15,6 +15,7 @@ import {
   OPENCODE_DEFAULT_MODEL,
   OPENCODE_FREE_MODELS,
   OPENCODE_MODEL_LABELS,
+  openCodeV2Models,
   providerDiagnostic,
   zenInventory,
 } from "../../src/service/chat-runtime.js";
@@ -145,7 +146,7 @@ describe("zenInventory", () => {
       detail: old,
     });
     expect(chatFailure(why("opencode_start_failed", exited))).toBe(
-      "Local OpenCode could not be started. Install the verified OpenCode into CROT with one click (your own OpenCode stays as it is), or enter an OpenCode Zen API key.",
+      "Local OpenCode could not be started. Free models work only inside OpenCode: install the verified OpenCode into CROT with one click (your own OpenCode stays as it is), or choose a paid model with an OpenCode Zen API key.",
     );
     expect(chatFailureDetail(why("opencode_start_failed", exited))).toBe(exited);
     expect(chatFailure(why("opencode_too_old", old))).toBe(
@@ -157,7 +158,7 @@ describe("zenInventory", () => {
     });
     expect(chatFailure(local("OPERATION_FAILED", "free_tier_limit", 429))).toContain("free usage limit is reached");
     expect(chatFailure(local("NOT_FOUND", "opencode_not_installed"))).toBe(
-      "Local OpenCode CLI was not found. Click “Install and start OpenCode (1 click)” or enter an OpenCode Zen API key.",
+      "Local OpenCode CLI was not found. Free models work only inside OpenCode: click “Install and start OpenCode (1 click)”, or choose a paid model with an OpenCode Zen API key.",
     );
     expect(chatFailure(local("OPERATION_FAILED", "opencode_start_failed"))).toContain("could not be started");
     expect(chatFailure(local("PERMISSION_DENIED", "opencode_refused"))).toContain("emergency stop");
@@ -260,10 +261,84 @@ describe("zenInventory", () => {
     });
     expect(providerDiagnostic(tier("owner"))).toEqual({ code: "FREE_TIER_LIMIT", stage: "local", httpStatus: 429 });
     expect(chatFailure(tier("crot"))).toBe(
-      "OpenCode's anonymous free limit is used up: CROT's own OpenCode copy is not signed in (your OpenCode was not found or did not start). Enter an OpenCode Zen API key (opencode.ai/zen): free models work with it too.",
+      "OpenCode's free limit is reached for CROT's own OpenCode copy (not signed in), because your own OpenCode was not found or did not start (see the details). An API key does not unlock free models: try again later, or choose a paid model with an OpenCode Zen API key.",
     );
     expect(chatFailure(tier("owner"))).toContain("free usage limit is reached");
     expect(chatFailure(tier())).toContain("free usage limit is reached");
+    // Why the owner's own OpenCode was not used (CROT's copy only): in the diagnostic and after OpenCode's words.
+    const notFound = "opencode: not found on PATH or in the usual install folders (12 places checked)";
+    const crotTier = (detail?: string) =>
+      new CrotError("OPERATION_FAILED", "x", {
+        stage: "local",
+        httpStatus: 429,
+        reason: "free_tier_limit",
+        source: "crot",
+        model: "big-pickle",
+        owner: notFound,
+        ...(detail ? { detail } : {}),
+      });
+    expect(providerDiagnostic(crotTier())).toEqual({
+      code: "FREE_TIER_LIMIT",
+      stage: "local",
+      httpStatus: 429,
+      model: "big-pickle",
+      source: "crot",
+      owner: notFound,
+    });
+    expect(chatFailureDetail(crotTier())).toBe(notFound);
+    expect(chatFailureDetail(crotTier("Free usage limit reached."))).toBe(
+      `big-pickle · HTTP 429: Free usage limit reached. — ${notFound}`,
+    );
+    const ownerTier = new CrotError("OPERATION_FAILED", "x", {
+      stage: "local",
+      reason: "free_tier_limit",
+      source: "owner",
+      owner: notFound,
+    });
+    expect(providerDiagnostic(ownerTier)).not.toHaveProperty("owner");
+    expect(chatFailureDetail(ownerTier)).toBeUndefined();
+    // OpenCode 2 on a route that speaks OpenCode 1.x only (the OpenCode workspace agent).
+    const v2 = new CrotError("OPERATION_FAILED", "x", { stage: "workspace", reason: "opencode_v2_unsupported" });
+    expect(providerDiagnostic(v2)).toEqual({ code: "OPENCODE_V2_UNSUPPORTED", stage: "workspace" });
+    expect(chatFailure(v2)).toBe(
+      "This OpenCode server runs OpenCode 2, whose new server API the OpenCode workspace agent does not support yet. Use the Cloud LLM “OpenCode (Free & Zen)”: it works with OpenCode 2.",
+    );
+  });
+
+  it("lists the OpenCode Zen chat models of an OpenCode 2 server, free ones by price", () => {
+    const m = (id: string, extra: Record<string, unknown> = {}) => ({
+      id,
+      modelID: id,
+      providerID: "opencode",
+      type: "chat",
+      name: id,
+      cost: [{ input: 0, output: 0, cache: { read: 0, write: 0 } }],
+      status: "active",
+      enabled: true,
+      settings: { apiKey: "never-shown" },
+      ...extra,
+    });
+    const models = openCodeV2Models({
+      data: [
+        m("glm-5.3-flash-free", { name: "GLM-5.3-Flash Free" }),
+        m("big-pickle", { name: "Big Pickle" }),
+        m("kimi-k2.6", { cost: [{ input: 0.6, output: 2.5 }] }),
+        m("off", { enabled: false }),
+        m("old", { status: "deprecated" }),
+        m("picture", { type: "image" }),
+        m("big-pickle", { providerID: "opencode-go" }),
+        m("bad/id"),
+        m("big-pickle"),
+      ],
+    });
+    expect(models.map((x) => [x.id, x.free])).toEqual([
+      ["big-pickle", true],
+      ["glm-5.3-flash-free", true],
+      ["kimi-k2.6", false],
+    ]);
+    expect(JSON.stringify(models)).not.toContain("never-shown");
+    expect(openCodeV2Models({})).toEqual([]);
+    expect(openCodeV2Models("<!doctype html>")).toEqual([]);
   });
 });
 
@@ -390,7 +465,7 @@ describe("OpenCode (Free & Zen) connection and chat", () => {
       expect(keyless).toMatchObject({
         state: "failed",
         error:
-          "Local OpenCode CLI was not found. Click “Install and start OpenCode (1 click)” or enter an OpenCode Zen API key.",
+          "Local OpenCode CLI was not found. Free models work only inside OpenCode: click “Install and start OpenCode (1 click)”, or choose a paid model with an OpenCode Zen API key.",
       });
       expect(keyless.errorDetail).toBeUndefined();
       expect(seen).toHaveLength(0);
