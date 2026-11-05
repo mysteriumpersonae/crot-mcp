@@ -4,7 +4,7 @@
  * and keeps the build that runs here; npm is only the fallback when the download fails. A fake host stands in
  * for the binary check and npm; runProgram runs real (Node) processes.
  */
-import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, readlink, stat, writeFile } from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -65,6 +65,14 @@ function fakeHost(
     },
   };
   return { host, calls };
+}
+/** Linux: how often this process has `file` open (an open file cannot be removed on Windows); else undefined. */
+async function openHandles(file: string): Promise<number | undefined> {
+  const fds = await readdir("/proc/self/fd").catch(() => undefined);
+  if (!fds) return undefined;
+  let open = 0;
+  for (const fd of fds) if ((await readlink(`/proc/self/fd/${fd}`).catch(() => "")) === file) open++;
+  return open;
 }
 const closedPort = (): Promise<number> =>
   new Promise((resolve, reject) => {
@@ -343,12 +351,22 @@ describe("OpenCode runtime (one-click install)", () => {
       archive,
       tgz({ "package/README.md": "readme", "package/bin/opencode": "binary", [long]: "long", "package/bin/x": "x" }),
     );
+    // The archive is closed again whenever it returns, also when it stops early or finds nothing.
+    const closed = async () => expect((await openHandles(archive)) ?? 0).toBe(0);
     try {
       expect(await extractTarEntry(archive, "package/bin/opencode", path.join(dirs.outside, "a"))).toBe(true);
+      await closed();
       expect(await readFile(path.join(dirs.outside, "a"), "utf8")).toBe("binary");
       expect(await extractTarEntry(archive, long, path.join(dirs.outside, "b"))).toBe(true);
+      await closed();
       expect(await readFile(path.join(dirs.outside, "b"), "utf8")).toBe("long");
       expect(await extractTarEntry(archive, "package/bin/opencode.exe", path.join(dirs.outside, "c"))).toBe(false);
+      await closed();
+      // A target that cannot be written: the file's own error, no crash.
+      await expect(
+        extractTarEntry(archive, "package/bin/opencode", path.join(dirs.outside, "no-such-folder", "d")),
+      ).rejects.toMatchObject({ reason: "install_failed", detail: "ENOENT" });
+      await closed();
       expect((await readdir(dirs.outside)).sort()).toEqual(["a", "b", "package.tgz"]);
     } finally {
       await dirs.cleanup();

@@ -16,7 +16,7 @@ import { once } from "node:events";
 import { constants, createReadStream, createWriteStream, type WriteStream } from "node:fs";
 import { access, chmod, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { Readable } from "node:stream";
+import { Readable, type Writable } from "node:stream";
 import { createGunzip } from "node:zlib";
 import type { ProcessLauncher } from "../core/platform/types.js";
 
@@ -146,6 +146,19 @@ async function hasAvx2(platform: NodeJS.Platform, arch: string): Promise<boolean
   }
 }
 const isFile = async (file: string): Promise<boolean> => (await stat(file).catch(() => undefined))?.isFile() ?? false;
+/** Resolves once the stream has closed its file: Windows cannot remove a file that is still open. */
+const closedOf = (stream: Readable | Writable): Promise<void> =>
+  new Promise((resolve) => (stream.closed ? resolve() : stream.once("close", () => resolve())));
+/** One write; waits while the file is behind, and fails with the file's own error (disk full, no access). */
+async function writeTo(out: WriteStream, data: Buffer, failure: () => unknown, closed: Promise<void>): Promise<void> {
+  const failed = () => {
+    const error = failure();
+    if (error) throw new RuntimeFailure("install_failed", describe(error));
+  };
+  failed();
+  if (!out.write(data)) await Promise.race([once(out, "drain"), closed]).catch(() => undefined);
+  failed();
+}
 /** A failed step of the installation: its reason and a few words for the owner. */
 class RuntimeFailure extends Error {
   constructor(
@@ -178,11 +191,17 @@ const tarString = (field: Buffer): string => field.toString("utf8").replace(/\0.
  * a path. False when the archive does not hold it.
  */
 export async function extractTarEntry(archive: string, entry: string, target: string): Promise<boolean> {
-  const input = createReadStream(archive).pipe(createGunzip());
+  const source = createReadStream(archive),
+    input = createGunzip(),
+    sourceClosed = closedOf(source);
+  source.on("error", (error) => input.destroy(error));
+  source.pipe(input);
   let buffer: Buffer = Buffer.alloc(0),
     remaining = 0,
     padding = 0,
     out: WriteStream | undefined,
+    outClosed: Promise<void> = Promise.resolve(),
+    outError: unknown,
     meta: Buffer[] | undefined,
     metaType = "",
     nextName: string | undefined,
@@ -190,8 +209,9 @@ export async function extractTarEntry(archive: string, entry: string, target: st
   const finishData = async () => {
     if (out) {
       out.end();
-      await once(out, "close");
+      await outClosed;
       out = undefined;
+      if (outError) throw new RuntimeFailure("install_failed", describe(outError));
       found = true;
     } else if (meta) {
       const data = Buffer.concat(meta);
@@ -211,7 +231,7 @@ export async function extractTarEntry(archive: string, entry: string, target: st
           buffer = buffer.subarray(take);
           remaining -= take;
           if (out) {
-            if (!out.write(part)) await once(out, "drain");
+            await writeTo(out, part, () => outError, outClosed);
           } else if (meta) meta.push(Buffer.from(part));
           if (remaining > 0) break;
           await finishData();
@@ -246,6 +266,8 @@ export async function extractTarEntry(archive: string, entry: string, target: st
           if ((type === "0" || type === "\0") && name.replace(/^\.\//, "") === entry) {
             if (size > MAX_BINARY_BYTES) throw new RuntimeFailure("install_failed", "binary too large");
             out = createWriteStream(target, { mode: 0o700 });
+            out.on("error", (error) => (outError ??= error));
+            outClosed = closedOf(out);
             if (!size) await finishData();
             if (found) return true;
           }
@@ -255,8 +277,11 @@ export async function extractTarEntry(archive: string, entry: string, target: st
     }
     return found;
   } finally {
+    // Both files are closed before this returns, also when it stops early: Windows cannot remove an open file.
     out?.destroy();
     input.destroy();
+    source.destroy();
+    await Promise.all([outClosed, sourceClosed]);
   }
 }
 
@@ -396,21 +421,26 @@ export class OpenCodeRuntime {
     }
     const total = Number(response.headers.get("content-length")) || 0,
       hash = createHash("sha512"),
-      out = createWriteStream(archive, { mode: 0o600 });
-    let received = 0;
+      out = createWriteStream(archive, { mode: 0o600 }),
+      closed = closedOf(out);
+    let received = 0,
+      writeError: unknown;
+    out.on("error", (error) => (writeError ??= error));
     try {
       for await (const chunk of Readable.fromWeb(response.body as import("node:stream/web").ReadableStream)) {
         const bytes = chunk as Buffer;
         received += bytes.length;
         if (received > MAX_DOWNLOAD_BYTES) throw new RuntimeFailure("download_failed", "download too large");
         hash.update(bytes);
-        if (!out.write(bytes)) await once(out, "drain");
+        await writeTo(out, bytes, () => writeError, closed);
         if (total) this.progress = Math.min(99, Math.floor((received * 100) / total));
       }
       out.end();
-      await once(out, "close");
+      await closed;
+      if (writeError) throw new RuntimeFailure("install_failed", describe(writeError));
     } catch (error) {
       out.destroy();
+      await closed;
       await rm(archive, { force: true }).catch(() => undefined);
       if (error instanceof RuntimeFailure) throw error;
       throw new RuntimeFailure("download_failed", describe(error));
