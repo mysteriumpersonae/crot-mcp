@@ -9,10 +9,12 @@
 // Leading flags play OpenCode installations that do not start: --fake-old (OpenCode 0.x: no /global/health,
 // `--version` 0.15.31), --fake-crash (an npm installation without its postinstall script: an error, exit 1),
 // --fake-unhealthy (answers /global/health with 503 and logs an error). `--version` prints FAKE_OPENCODE_VERSION
-// (default 1.19.5); FAKE_OPENCODE_STARTS: a file that gets one JSON line per start (flags, XDG folders).
+// (default 1.19.5); FAKE_OPENCODE_STARTS: a file that gets one JSON line per start (flags, XDG folders, the
+// first PATH entry).
 import { Buffer } from "node:buffer";
 import { appendFileSync, readFileSync } from "node:fs";
 import http from "node:http";
+import path from "node:path";
 import process from "node:process";
 import { URL } from "node:url";
 
@@ -39,6 +41,7 @@ if (process.env.FAKE_OPENCODE_STARTS)
           process.env[n] ?? null,
         ]),
       ),
+      path: (process.env.PATH ?? "").split(path.delimiter)[0],
     })}\n`,
   );
 if (flags.includes("--fake-crash")) {

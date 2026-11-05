@@ -1,11 +1,11 @@
 /**
  * Local OpenCode: CROT's own `opencode serve` (the bridge: random password, 127.0.0.1, stopped with CROT, an
  * owner's unprotected server reused), OpenCode Zen through it without a key, the owner's OpenCode key with
- * OpenCode's session headers, and "Start and connect OpenCode" in Workspaces. A fake OpenCode server (Node)
+ * OpenCode's session headers, and the managed server of an earlier OpenCode workspace connection. A fake OpenCode server (Node)
  * stands in for the real one.
  */
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, stat, symlink, writeFile } from "node:fs/promises";
 import http from "node:http";
 import net from "node:net";
 import path from "node:path";
@@ -426,6 +426,62 @@ describe("OpenCode bridge", () => {
     }
   }, 60_000);
 
+  it.skipIf(process.platform === "win32")(
+    "tries every OpenCode of the owner, each with its own folder first on PATH, before CROT's copy",
+    async () => {
+      const dirs = await makeTempDirs();
+      const { command: _command, ...options } = await fakeOptions(dirs.outside);
+      const directory = path.join(dirs.outside, "opencode-chat");
+      const starts = path.join(dirs.outside, "starts.jsonl");
+      const script = async (dir: string, flag: string) => {
+        await mkdir(dir, { recursive: true });
+        const file = path.join(dir, "opencode");
+        await writeFile(file, `#!/bin/sh\nexec "${process.execPath}" "${FAKE}" ${flag} "$@"\n`);
+        await chmod(file, 0o755);
+        return file;
+      };
+      // A broken npm installation on PATH, then a working one of a Node version manager (nvm), whose folder only
+      // the owner's shell puts on PATH (CROT started from the desktop does not get it).
+      const broken = path.join(dirs.outside, "broken", "bin"),
+        nvm = path.join(options.local.home, ".nvm", "versions", "node", "v22.11.0", "bin");
+      const first = await script(broken, "--fake-crash"),
+        second = await script(nvm, "");
+      await script(path.join(options.local.home, ".nvm", "versions", "node", "v18.20.0", "bin"), "--fake-old");
+      const alias = path.join(dirs.outside, "alias");
+      await symlink(broken, alias);
+      const bridge = new OpenCodeBridge({
+        ...options,
+        env: { ...options.env, FAKE_OPENCODE_STARTS: starts },
+        local: { ...options.local, env: { ...options.local.env, PATH: `${broken}:${alias}` } },
+        directory,
+        runtime: { binary: async () => undefined },
+      });
+      try {
+        const own = (await bridge.commands()).filter((c) => c.command.startsWith(dirs.outside));
+        // Newest Node version first; a folder on PATH under a second name (a link) counts once.
+        expect(own.map((c) => [c.command, c.source])).toEqual([
+          [first, "owner"],
+          [second, "owner"],
+          [path.join(options.local.home, ".nvm", "versions", "node", "v18.20.0", "bin", "opencode"), "owner"],
+        ]);
+        expect(own[1]!.env?.PATH).toBe(`${nvm}${path.delimiter}${options.env.PATH}`);
+        const server = await bridge.ensure();
+        expect(server).toMatchObject({ managed: true, source: "owner" });
+        const lines = (await readFile(starts, "utf8"))
+          .split("\n")
+          .filter(Boolean)
+          .map((line) => JSON.parse(line) as { flags: string[]; path: string });
+        // The broken one first (its exit is retried once on another port), then the working one.
+        expect([...new Set(lines.map((l) => l.path))]).toEqual([broken, nvm]);
+        expect(lines.at(-1)).toMatchObject({ flags: [], path: nvm });
+      } finally {
+        await bridge.close();
+        await dirs.cleanup();
+      }
+    },
+    60_000,
+  );
+
   it("compares OpenCode versions and keeps OpenCode's last error line, without the password", () => {
     expect(olderThan("0.15.31", OPENCODE_MIN_VERSION)).toBe(true);
     expect(olderThan("0.5.29", OPENCODE_MIN_VERSION)).toBe(true);
@@ -833,7 +889,7 @@ describe("OpenCode through the local bridge", () => {
     }
   });
 
-  it("Start and connect OpenCode (Workspaces) runs CROT's own server and stops it on request", async () => {
+  it("an earlier managed OpenCode workspace connection runs CROT's own server and stops it on request", async () => {
     const t = await setup();
     const { rpc, listed, chat, options } = t;
     try {
@@ -973,6 +1029,35 @@ describe("OpenCode through the local bridge", () => {
     } finally {
       await t.cleanup();
       await registry.close();
+    }
+  });
+
+  it("says when OpenCode's free tier refuses the copy CROT installed, which is not signed in", async () => {
+    // No OpenCode of the owner: CROT's copy serves.
+    const t = await setup(({ command: _command, ...options }) => ({
+      ...options,
+      runtimeCommand: async () => ({ command: process.execPath, args: [FAKE] }),
+    }));
+    const { rpc, options } = t;
+    try {
+      await rpc("chat.configure", { provider: ZEN, endpoint: t.endpoint });
+      await writeFile(options.mode, "limit");
+      const refused = await rpc("chat.testConnection", { provider: ZEN });
+      expect(refused).toMatchObject({
+        ok: true,
+        route: "local",
+        modelCheck: { ok: false, diagnostic: { code: "FREE_TIER_LIMIT", stage: "local", source: "crot" } },
+      });
+      expect((await rpc("opencode.status")).server).toMatchObject({ managed: true, source: "crot" });
+      const limited = await t.chat(ZEN, "big-pickle");
+      expect(limited).toMatchObject({
+        state: "failed",
+        error: expect.stringContaining("CROT's own OpenCode copy is not signed in"),
+        errorDetail: "big-pickle · HTTP 429: Free usage exceeded, subscribe to Go (https://opencode.ai/go)",
+      });
+      expect(t.zen.seen).toHaveLength(0);
+    } finally {
+      await t.cleanup();
     }
   });
 

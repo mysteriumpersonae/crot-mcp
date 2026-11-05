@@ -13,14 +13,15 @@ Baseline: `06016a1` (PR #49). This change is source implementation and repositor
 
 - Chat lists models discovered from configured callable providers; inbound MCP clients and connector credentials are not chat transports.
 - River has a named OpenAI-compatible adapter using `https://api.river.ai/v1`. A generic OpenAI-compatible entry supports servers exposing `/models` and `/chat/completions`. Neither a stored key nor the bundled endpoint implies a working connection.
-- OpenCode and Notion Agents retain their native workspace adapters. Data workspace connections remain separate from agent invocation.
+- OpenCode and Notion Agents retain their native workspace adapters for connections made earlier: Agents lists them under Connected providers with Disconnect only and no longer offers to create them (the Workspaces section was removed). Data workspace connections remain separate from agent invocation.
+- Local models (`Local HTTP`) take one Server URL; a bare port, a missing scheme, `0.0.0.0` and Ollama's `/api` path are normalized to the `/v1` endpoint shown before the check. Failures name the cause (invalid address, nothing listening, no model loaded, key required, no API at the path, unknown host, timeout).
 - A successful Save & Test verifies model inventory, not a successful generation or every model's tool capability. Empty inventories invalidate a previous green status.
 - Connection failures preserve only allowlisted code/stage, HTTP status and selected DNS/TLS/socket codes. Provider bodies, credentials, arbitrary messages and URLs are not returned as diagnostics.
 
 ## Sessions and layout
 
 - Repeated client names represent independently authorized sessions. Display groups do not merge IDs, grants, logs, revocation or rate limits. Completed owner-chat runs are detached instead of remaining connected.
-- Outbound sections are mutually exclusive, have stable summary geometry and animated details content. The parent column does not acquire a transient scrollbar; long section bodies scroll inside a bounded area. Reduced-motion preference disables transitions.
+- Outbound sections (Cloud LLM, Local models) are mutually exclusive, have stable summary geometry and animated details content. The parent column does not acquire a transient scrollbar; long section bodies scroll inside a bounded area. Reduced-motion preference disables transitions.
 
 ## Qualification limits
 

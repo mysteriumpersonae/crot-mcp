@@ -2,14 +2,16 @@
  * The owner's local OpenCode: its OpenCode Zen key (OPENCODE_API_KEY, auth.json) and its `opencode` binary
  * (PATH, the install script's and package managers' places, the Windows npm shim).
  */
-import { chmod, mkdir, writeFile } from "node:fs/promises";
+import { chmod, mkdir, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   authFileCandidates,
   binaryCandidates,
+  findOpenCodeBinaries,
   findOpenCodeBinary,
   findOpenCodeKey,
+  versionManagerCandidates,
 } from "../../src/service/opencode-local.js";
 import { makeTempDirs } from "../helpers.js";
 
@@ -104,6 +106,12 @@ describe("OpenCode binary discovery", () => {
       "/usr/local/bin/opencode",
       "/home/u/.local/bin/opencode",
       "/opt/homebrew/bin/opencode",
+      "/home/linuxbrew/.linuxbrew/bin/opencode",
+      "/home/u/.bun/bin/opencode",
+      "/home/u/.npm-global/bin/opencode",
+      "/home/u/.local/share/pnpm/opencode",
+      "/home/u/.yarn/bin/opencode",
+      "/home/u/.volta/bin/opencode",
     ]);
     expect(
       binaryCandidates({
@@ -111,6 +119,8 @@ describe("OpenCode binary discovery", () => {
           Path: 'C:\\Windows\\system32;"C:\\Program Files\\nodejs";relative;C:\\Users\\u\\AppData\\Roaming\\npm',
           USERPROFILE: "C:\\Users\\u",
           APPDATA: "C:\\Users\\u\\AppData\\Roaming",
+          LOCALAPPDATA: "C:\\Users\\u\\AppData\\Local",
+          ProgramData: "C:\\ProgramData",
         },
         home: "C:\\Users\\u",
         platform: "win32",
@@ -124,8 +134,61 @@ describe("OpenCode binary discovery", () => {
       "C:\\Users\\u\\AppData\\Roaming\\npm\\opencode.cmd",
       "C:\\Users\\u\\.opencode\\bin\\opencode.exe",
       "C:\\Users\\u\\AppData\\Roaming\\npm\\node_modules\\opencode-ai\\bin\\opencode.exe",
+      "C:\\Users\\u\\.bun\\bin\\opencode.exe",
+      "C:\\Users\\u\\AppData\\Local\\pnpm\\opencode.cmd",
+      "C:\\Users\\u\\scoop\\apps\\opencode\\current\\opencode.exe",
+      "C:\\Users\\u\\AppData\\Local\\Microsoft\\WinGet\\Links\\opencode.exe",
+      "C:\\ProgramData\\chocolatey\\bin\\opencode.exe",
     ]);
   });
+
+  it.skipIf(platform === "win32")(
+    "finds the OpenCode of Node version managers, newest Node first, and each program once",
+    async () => {
+      const dirs = await makeTempDirs();
+      try {
+        const home = path.join(dirs.outside, "home"),
+          data = path.join(dirs.outside, "data");
+        const local = { env: { PATH: "", XDG_DATA_HOME: data }, home, platform };
+        const program = async (...parts: string[]) => {
+          const file = path.join(...parts);
+          await mkdir(path.dirname(file), { recursive: true });
+          await writeFile(file, "#!/bin/sh\nexit 0\n");
+          await chmod(file, 0o755);
+          return file;
+        };
+        const nvm = (version: string) => path.join(home, ".nvm", "versions", "node", version, "bin", "opencode");
+        for (const version of ["v18.20.0", "v22.11.0", "v22.9.0"]) await program(nvm(version));
+        await mkdir(path.join(home, ".nvm", "versions", "node", "system"), { recursive: true });
+        const fnm = await program(data, "fnm", "node-versions", "v20.1.0", "installation", "bin", "opencode");
+        const mise = await program(data, "mise", "installs", "node", "23.0.0", "bin", "opencode");
+        const asdf = await program(home, ".asdf", "installs", "nodejs", "21.7.3", "bin", "opencode");
+        expect(await versionManagerCandidates(local)).toEqual([
+          nvm("v22.11.0"),
+          nvm("v22.9.0"),
+          nvm("v18.20.0"),
+          fnm,
+          mise,
+          asdf,
+        ]);
+        // PATH first; one program behind two names (a link) counts once.
+        const links = path.join(dirs.outside, "links");
+        await mkdir(links, { recursive: true });
+        await symlink(nvm("v22.11.0"), path.join(links, "opencode"));
+        const found = await findOpenCodeBinaries({ ...local, env: { ...local.env, PATH: links } });
+        expect(found.filter((file) => file.startsWith(dirs.outside))).toEqual([
+          path.join(links, "opencode"),
+          nvm("v22.9.0"),
+          nvm("v18.20.0"),
+          fnm,
+          mise,
+          asdf,
+        ]);
+      } finally {
+        await dirs.cleanup();
+      }
+    },
+  );
 
   it.skipIf(platform === "win32")("finds an executable opencode on PATH, skipping one that is not", async () => {
     const dirs = await makeTempDirs();

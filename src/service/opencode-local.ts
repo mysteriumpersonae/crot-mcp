@@ -4,7 +4,7 @@
  * never logged, persisted, returned to the UI or passed to a child process.
  */
 import { constants } from "node:fs";
-import { access, readFile, stat } from "node:fs/promises";
+import { access, readdir, readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { createEnvironmentPolicy } from "../core/platform/environment.js";
 
@@ -89,7 +89,9 @@ export async function findOpenCodeKey(local: OpenCodeLocal): Promise<OpenCodeKey
 
 /**
  * Places of the `opencode` binary: absolute PATH entries, then the install script's ~/.opencode/bin and the
- * usual package-manager directories. On Windows an npm shim (opencode.cmd) stands for the binary it starts.
+ * usual package-manager directories (Homebrew, Bun, npm's prefix, pnpm, Yarn, Volta, Scoop, WinGet,
+ * Chocolatey). A program started from the desktop often gets a short PATH without the owner's shell setup, so
+ * these places are searched as well. On Windows an npm shim (opencode.cmd) stands for the binary it starts.
  */
 export function binaryCandidates(local: OpenCodeLocal): string[] {
   const p = paths(local),
@@ -106,16 +108,101 @@ export function binaryCandidates(local: OpenCodeLocal): string[] {
       add(p.join(dir, "opencode.cmd"));
     } else add(p.join(dir, "opencode"));
   }
+  const under = (dir: string | undefined, ...parts: string[]) => (dir ? add(p.join(dir, ...parts)) : undefined);
   if (windows) {
     const profile = variable(local, "USERPROFILE") ?? local.home;
-    if (profile) add(p.join(profile, ".opencode", "bin", "opencode.exe"));
-    const appData = variable(local, "APPDATA");
-    if (appData) add(p.join(appData, "npm", "node_modules", "opencode-ai", "bin", "opencode.exe"));
+    const appData = variable(local, "APPDATA"),
+      localAppData = variable(local, "LOCALAPPDATA");
+    under(profile, ".opencode", "bin", "opencode.exe");
+    under(appData, "npm", "node_modules", "opencode-ai", "bin", "opencode.exe");
+    under(variable(local, "NPM_CONFIG_PREFIX"), "opencode.cmd");
+    under(variable(local, "NVM_SYMLINK"), "opencode.cmd");
+    under(variable(local, "PROGRAMFILES"), "nodejs", "opencode.cmd");
+    under(profile, ".bun", "bin", "opencode.exe");
+    under(variable(local, "PNPM_HOME"), "opencode.cmd");
+    under(localAppData, "pnpm", "opencode.cmd");
+    under(
+      variable(local, "SCOOP") ?? (profile ? p.join(profile, "scoop") : undefined),
+      "apps",
+      "opencode",
+      "current",
+      "opencode.exe",
+    );
+    under(localAppData, "Microsoft", "WinGet", "Links", "opencode.exe");
+    under(variable(local, "PROGRAMDATA"), "chocolatey", "bin", "opencode.exe");
   } else {
-    if (local.home) add(p.join(local.home, ".opencode", "bin", "opencode"));
+    const home = local.home || undefined;
+    under(home, ".opencode", "bin", "opencode");
     add("/usr/local/bin/opencode");
-    if (local.home) add(p.join(local.home, ".local", "bin", "opencode"));
+    under(home, ".local", "bin", "opencode");
     add("/opt/homebrew/bin/opencode");
+    add("/home/linuxbrew/.linuxbrew/bin/opencode");
+    under(variable(local, "BUN_INSTALL") ?? (home ? p.join(home, ".bun") : undefined), "bin", "opencode");
+    under(variable(local, "NPM_CONFIG_PREFIX"), "bin", "opencode");
+    under(home, ".npm-global", "bin", "opencode");
+    under(variable(local, "PNPM_HOME"), "opencode");
+    under(home, local.platform === "darwin" ? "Library/pnpm" : ".local/share/pnpm", "opencode");
+    under(home, ".yarn", "bin", "opencode");
+    under(variable(local, "VOLTA_HOME") ?? (home ? p.join(home, ".volta") : undefined), "bin", "opencode");
+    add("/usr/bin/opencode");
+  }
+  return out;
+}
+
+/** Version directories of a Node.js version manager ("v22.11.0", "22.11.0"), newest first. */
+const NODE_VERSION = /^v?(\d+)\.(\d+)\.(\d+)$/;
+const MAX_NODE_VERSIONS = 16;
+function newestFirst(a: string, b: string): number {
+  const x = NODE_VERSION.exec(a)!.slice(1).map(Number),
+    y = NODE_VERSION.exec(b)!.slice(1).map(Number);
+  return y[0]! - x[0]! || y[1]! - x[1]! || y[2]! - x[2]!;
+}
+
+/**
+ * Node.js version managers keep each Node version's global npm packages (`npm i -g opencode-ai`) in that
+ * version's own folder, which only the owner's shell puts on PATH: nvm, fnm, mise, asdf (nvm-windows and fnm
+ * on Windows). Their `opencode`, newest Node version first.
+ */
+export async function versionManagerCandidates(local: OpenCodeLocal): Promise<string[]> {
+  const p = paths(local),
+    windows = local.platform === "win32",
+    home = local.home || undefined,
+    dataHome = variable(local, "XDG_DATA_HOME") ?? (home ? p.join(home, ".local", "share") : undefined);
+  const join = (dir: string | undefined, ...parts: string[]) => (dir ? p.join(dir, ...parts) : undefined);
+  // [folder of the versions, path inside one version]
+  const managers: [string | undefined, string[]][] = windows
+    ? [
+        [
+          join(variable(local, "FNM_DIR") ?? join(variable(local, "APPDATA"), "fnm"), "node-versions"),
+          ["installation", "opencode.cmd"],
+        ],
+        [variable(local, "NVM_HOME") ?? join(variable(local, "APPDATA"), "nvm"), ["opencode.cmd"]],
+      ]
+    : [
+        [join(variable(local, "NVM_DIR") ?? join(home, ".nvm"), "versions", "node"), ["bin", "opencode"]],
+        ...[
+          variable(local, "FNM_DIR"),
+          join(dataHome, "fnm"),
+          local.platform === "darwin" ? join(home, "Library", "Application Support", "fnm") : undefined,
+          join(home, ".fnm"),
+        ].map((dir): [string | undefined, string[]] => [
+          join(dir, "node-versions"),
+          ["installation", "bin", "opencode"],
+        ]),
+        [join(variable(local, "MISE_DATA_DIR") ?? join(dataHome, "mise"), "installs", "node"), ["bin", "opencode"]],
+        [join(variable(local, "ASDF_DATA_DIR") ?? join(home, ".asdf"), "installs", "nodejs"), ["bin", "opencode"]],
+      ];
+  const out: string[] = [];
+  for (const [dir, inside] of managers) {
+    if (!dir || !p.isAbsolute(dir)) continue;
+    const versions = await readdir(dir).catch(() => [] as string[]);
+    for (const version of versions
+      .filter((v) => NODE_VERSION.test(v))
+      .sort(newestFirst)
+      .slice(0, MAX_NODE_VERSIONS)) {
+      const file = p.join(dir, version, ...inside);
+      if (!out.includes(file)) out.push(file);
+    }
   }
   return out;
 }
@@ -139,25 +226,43 @@ async function shimTarget(local: OpenCodeLocal, shim: string): Promise<string | 
   }
 }
 
+/** The program a candidate stands for (an npm shim: the binary it starts), or undefined when it is none. */
+async function program(local: OpenCodeLocal, candidate: string): Promise<string | undefined> {
+  if (!(await isFile(candidate))) return undefined;
+  if (local.platform === "win32") return /\.cmd$/i.test(candidate) ? shimTarget(local, candidate) : candidate;
+  try {
+    await access(candidate, constants.X_OK);
+    return candidate;
+  } catch {
+    return undefined; // Not executable for this user.
+  }
+}
+
+/**
+ * Every `opencode` binary of the owner, in the order to try them (PATH first): one entry per program, so a
+ * symlink and its target, or two PATH entries of one folder, count once. An old or broken one does not hide a
+ * working one in another place.
+ */
+export async function findOpenCodeBinaries(local: OpenCodeLocal): Promise<string[]> {
+  const out: string[] = [],
+    seen = new Set<string>();
+  for (const candidate of [...binaryCandidates(local), ...(await versionManagerCandidates(local))]) {
+    const file = await program(local, candidate);
+    if (!file) continue;
+    const real = await realpath(file).catch(() => file);
+    const id = local.platform === "win32" ? real.toLowerCase() : real;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    out.push(file);
+  }
+  return out;
+}
+
 /** The absolute path of the owner's `opencode` binary, or undefined when OpenCode is not installed. */
 export async function findOpenCodeBinary(local: OpenCodeLocal): Promise<string | undefined> {
-  for (const candidate of binaryCandidates(local)) {
-    if (local.platform === "win32") {
-      if (/\.cmd$/i.test(candidate)) {
-        if (await isFile(candidate)) {
-          const target = await shimTarget(local, candidate);
-          if (target) return target;
-        }
-      } else if (await isFile(candidate)) return candidate;
-      continue;
-    }
-    if (!(await isFile(candidate))) continue;
-    try {
-      await access(candidate, constants.X_OK);
-      return candidate;
-    } catch {
-      // Not executable for this user.
-    }
+  for (const candidate of [...binaryCandidates(local), ...(await versionManagerCandidates(local))]) {
+    const file = await program(local, candidate);
+    if (file) return file;
   }
   return undefined;
 }
