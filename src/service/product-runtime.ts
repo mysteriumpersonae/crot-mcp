@@ -128,6 +128,8 @@ interface State {
   onboarding?: { completedStep: number; updatedAt: string };
   browserPolicy?: BrowserTabPolicy;
   browserPolicyPrevious?: BrowserTabPolicy;
+  browserAccess?: { read: boolean; navigation: boolean };
+  browserAccessPrevious?: { read: boolean; navigation: boolean } | null;
   skills?: CustomSkill[];
   chatProviders?: Partial<Record<ChatProvider, ChatProviderConfig>>;
   security?: RuntimePolicy;
@@ -374,6 +376,15 @@ export class ProductRuntime {
       r.state.browserPolicy = r.state.browserPolicyPrevious;
       delete r.state.browserPolicyPrevious;
     }
+    if (r.state.browserAccess !== undefined && !parseProduct("browser.access.set", r.state.browserAccess))
+      fail("Invalid browser access state; restore service state");
+    if (r.state.browserAccessPrevious != null && !parseProduct("browser.access.set", r.state.browserAccessPrevious))
+      fail("Invalid previous browser access state; restore service state");
+    if (r.state.browserAccessPrevious !== undefined) {
+      if (r.state.browserAccessPrevious === null) delete r.state.browserAccess;
+      else r.state.browserAccess = r.state.browserAccessPrevious;
+      delete r.state.browserAccessPrevious;
+    }
     r.appliedTabPolicy = r.state.browserPolicy;
     if (r.state.securityPrevious) {
       host.core().permissions.runtime.replace(r.state.securityPrevious);
@@ -412,7 +423,19 @@ export class ProductRuntime {
     const active = r.state.projects.find((p) => p.id === r.state.active);
     if (!active) fail("Active project is missing from the registry");
     if (active && active.path !== root) await host.selectWorkspace(active.path);
-    if (r.state.browserPolicy) host.core().browser.setTabPolicy(r.state.browserPolicy);
+    if (host.browserLink?.()) {
+      r.appliedTabPolicy = r.state.browserPolicy ?? host.core().browser.getTabPolicy();
+      host.core().browser.setTabPolicy(r.appliedTabPolicy);
+      if (r.state.browserAccess)
+        host.core().permissions.runtime.setBrowserAccess({
+          ...r.state.browserAccess,
+          sessions: !r.appliedTabPolicy.sensitivePreset,
+        });
+      else await r.applyBrowserAccess({ read: true, navigation: true });
+    } else {
+      host.core().permissions.runtime.setBrowserAccess(undefined);
+      if (r.state.browserPolicy) host.core().browser.setTabPolicy(r.state.browserPolicy);
+    }
     r.migrateChatProviders();
     // Pre-allow network hosts for all saved provider configurations so that
     // chat.models / chat.generate do not hit NETWORK_GUARD_BLOCKED on restart.
@@ -787,6 +810,44 @@ export class ProductRuntime {
     runtime.replace(next);
     return { ok: true, halted: runtime.halted, policy: runtime.policy };
   }
+  /** Owner-only, audited product grant. It never bypasses token scopes, Core denies or approval gates. */
+  private async applyBrowserAccess(next: { read: boolean; navigation: boolean }): Promise<Record<string, unknown>> {
+    if (!this.host.browserLink?.()) return fail("Browser connection is unavailable");
+    if (!this.host.recordControlEvent) return fail("Security policy audit unavailable");
+    const previous = this.state.browserAccess;
+    this.state.browserAccessPrevious = previous ?? null;
+    this.state.browserAccess = next;
+    try {
+      await this.persist();
+      await this.host.recordControlEvent({
+        kind: "control",
+        id: newAuditEventId(),
+        timestamp: now(),
+        action: "runtime_policy",
+        actor: { channel: "control" },
+        outcome: "applied",
+        previous: JSON.stringify({ browserAccess: previous ?? null }),
+        value: JSON.stringify({ browserAccess: next }),
+      });
+      delete this.state.browserAccessPrevious;
+      await this.persist();
+    } catch (error) {
+      if (previous) this.state.browserAccess = previous;
+      else delete this.state.browserAccess;
+      delete this.state.browserAccessPrevious;
+      try {
+        await this.persist();
+      } catch {
+        this.host.core().permissions.runtime.stop();
+      }
+      throw error;
+    }
+    this.host.core().permissions.runtime.setBrowserAccess({
+      ...next,
+      sessions: !(this.appliedTabPolicy ?? this.host.core().browser.getTabPolicy()).sensitivePreset,
+    });
+    return { ok: true, access: next };
+  }
   private async dispatch(method: ProductMethod, p: Record<string, unknown>): Promise<Record<string, unknown>> {
     const id = String(p.id ?? "");
     if (method.startsWith("accounts.")) {
@@ -823,7 +884,13 @@ export class ProductRuntime {
     }
     switch (method) {
       case "browser.policy.get":
-        return { ok: true, policy: this.appliedTabPolicy ?? this.host.core().browser.getTabPolicy() };
+        return {
+          ok: true,
+          policy: this.appliedTabPolicy ?? this.host.core().browser.getTabPolicy(),
+          access: this.host.core().permissions.runtime.browserAccess ?? null,
+        };
+      case "browser.access.set":
+        return this.applyBrowserAccess({ read: p.read === true, navigation: p.navigation === true });
       case "browser.link.status":
         return { ok: true, link: this.host.browserLink?.()?.status() ?? { state: "disabled" } };
       case "browser.link.manage":
@@ -848,22 +915,55 @@ export class ProductRuntime {
       case "browser.policy.set": {
         const next = parseTabPolicy(p),
           previous = this.appliedTabPolicy ?? this.host.core().browser.getTabPolicy();
+        const oldAccess = this.state.browserAccess;
+        const modeChanged = next.mode !== previous.mode || next.activeTab !== previous.activeTab;
+        const automationEnabled = previous.automation === false && next.automation !== false;
+        const nextAccess =
+          oldAccess && (modeChanged || automationEnabled)
+            ? { read: true, navigation: modeChanged ? true : oldAccess.navigation }
+            : oldAccess;
         this.state.browserPolicyPrevious = previous;
         this.state.browserPolicy = next;
+        if (nextAccess && oldAccess && JSON.stringify(nextAccess) !== JSON.stringify(oldAccess)) {
+          this.state.browserAccessPrevious = oldAccess;
+          this.state.browserAccess = nextAccess;
+        }
         try {
           await this.persist();
           await this.event(method);
+          if (this.state.browserAccessPrevious) {
+            if (!this.host.recordControlEvent) fail("Security policy audit unavailable");
+            await this.host.recordControlEvent!({
+              kind: "control",
+              id: newAuditEventId(),
+              timestamp: now(),
+              action: "runtime_policy",
+              actor: { channel: "control" },
+              outcome: "applied",
+              previous: JSON.stringify({ browserAccess: oldAccess }),
+              value: JSON.stringify({ browserAccess: nextAccess }),
+            });
+          }
           delete this.state.browserPolicyPrevious;
+          delete this.state.browserAccessPrevious;
           await this.persist();
         } catch (error) {
           this.state.browserPolicy = previous;
+          if (oldAccess) this.state.browserAccess = oldAccess;
           delete this.state.browserPolicyPrevious;
-          await this.persist();
+          delete this.state.browserAccessPrevious;
+          try {
+            await this.persist();
+          } catch {
+            this.host.core().permissions.runtime.stop();
+          }
           throw error;
         }
         this.host.core().browser.setTabPolicy(next);
+        if (nextAccess)
+          this.host.core().permissions.runtime.setBrowserAccess({ ...nextAccess, sessions: !next.sensitivePreset });
         this.appliedTabPolicy = next;
-        return { ok: true, policy: next };
+        return { ok: true, policy: next, access: nextAccess ?? null };
       }
       case "chat.testConnection": {
         const provider = this.chatKey(p.provider as ChatProvider);

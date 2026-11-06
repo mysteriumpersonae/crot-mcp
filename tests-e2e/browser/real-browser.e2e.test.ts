@@ -2,6 +2,8 @@ import { randomBytes } from "node:crypto";
 import { access, cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { ControlClient } from "../../src/service/control-client.js";
+import { createPrivateFileProtection } from "../../src/core/platform/private-files.js";
 import * as h from "./harness.js";
 
 /**
@@ -178,7 +180,8 @@ describe.runIf(linux)(
     });
 
     it("1. real Chromium with the real extension connects: relay started via native messaging, bridge connected", async () => {
-      chrome = h.launchChrome(executable, sb);
+      // Default owner policy excludes about:blank; start on an actual HTTP fixture.
+      chrome = h.launchChrome(executable, sb, { startUrl: server.origin + "/fixture.html?initial=1" });
       const status = await waitConnected(full!);
       expect(status.browser?.extensionVersion).toBe(extensionVersion);
       expect(status.browser?.name.length).toBeGreaterThan(0);
@@ -319,7 +322,7 @@ describe.runIf(linux)(
       expect(text).not.toContain("CROT-E2E-STATIC-TEXT");
     });
 
-    it("NEGATIVE: with browser.read only, CROT denies browser.control operations and the browser is not touched", async () => {
+    it("NEGATIVE: an explicit owner deny blocks browser.control even with product defaults", async () => {
       await full!.close();
       full = undefined;
       // Production default configuration: no approvals section, so untrusted-content is on.
@@ -330,6 +333,19 @@ describe.runIf(linux)(
       ).toBe("require-approval");
       // Same real browser: the extension reconnects to the new CROT instance through a new relay.
       await waitConnected(readOnly);
+      const owner = await ControlClient.connect({
+        stateDir: path.join(sb.stateHome, "crot"),
+        privateFiles: createPrivateFileProtection(false),
+      });
+      expect(owner).toBeDefined();
+      try {
+        await owner!.request("security.setPolicy", {
+          strict: false,
+          rules: [{ capability: "browser.control", state: "deny" }],
+        });
+      } finally {
+        owner!.close();
+      }
       const requestsBefore = server.requests.length;
       const tabs = (await h.ok<{ tabs: TabInfo[] }>(readOnly.client, "browser_tabs_list")).tabs;
       const tabsBefore = tabs.length;
@@ -340,11 +356,11 @@ describe.runIf(linux)(
       const tabId = target!.tabId;
       expect(Number.isInteger(tabId) && tabId >= 0).toBe(true);
 
-      // browser.control is not granted: authorize() denies before any approval gate
+      // The owner explicitly denied browser.control: authorize() denies before any approval gate
       // (no approval details), even though browser_tabs_list exposed this session.
       const deniedByPermissions = {
         code: "PERMISSION_DENIED",
-        details: { missing: ["browser.control"] },
+        details: { missing: [] },
       };
       for (const [tool, args] of [
         ["browser_click", { tabId, selector: "#action-button" }],

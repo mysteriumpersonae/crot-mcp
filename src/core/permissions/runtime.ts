@@ -45,6 +45,14 @@ export type RuntimePolicy = z.infer<typeof RuntimePolicySchema>;
 export class RuntimePermissionState {
   private current: RuntimePolicy = { strict: false, rules: [] };
   private stopped = false;
+  /** Service-owned browser settings. Standalone Core has no automatic browser grants. */
+  private productBrowser: { read: boolean; navigation: boolean; sessions: boolean } | undefined;
+  get browserAccess(): { read: boolean; navigation: boolean; sessions: boolean } | undefined {
+    return this.productBrowser ? { ...this.productBrowser } : undefined;
+  }
+  setBrowserAccess(access: { read: boolean; navigation: boolean; sessions?: boolean } | undefined): void {
+    this.productBrowser = access ? { ...access, sessions: access.sessions !== false } : undefined;
+  }
   get halted(): boolean {
     return this.stopped;
   }

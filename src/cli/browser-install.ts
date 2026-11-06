@@ -117,6 +117,7 @@ export function hostRegistrations(
         ]
       : [
           ["Google Chrome", "google-chrome"],
+          ["Google Chrome", "google-chrome-for-testing"],
           ["Chromium", "chromium"],
           ["Microsoft Edge", "microsoft-edge"],
           ["Brave", "BraveSoftware/Brave-Browser"],

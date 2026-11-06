@@ -34,6 +34,53 @@ describe("permission policy", () => {
 });
 
 describe("PermissionEngine", () => {
+  it("limits service browser grants to scoped local agents and keeps explicit denies", () => {
+    const engine = new PermissionEngine(createPermissionPolicy({ mode: "sandbox" }));
+    const request = { context: testContext, capability: "browser.read" as const, operation: "browser.tabs_list" };
+    expect(engine.authorize(request).allowed).toBe(false);
+    engine.runtime.setBrowserAccess({ read: true, navigation: true });
+    expect(engine.authorize(request).allowed).toBe(true);
+    expect(engine.authorize({ ...request, capability: "browser.control", operation: "browser.navigate" }).allowed).toBe(
+      true,
+    );
+    expect(engine.authorize({ ...request, capability: "browser.control", operation: "browser.click" }).allowed).toBe(
+      true,
+    );
+    expect(
+      engine.authorize({ ...request, capability: "browser.control", operation: "browser.file_upload" }).allowed,
+    ).toBe(false);
+    const remote = { ...testContext, principal: { ...testContext.principal, kind: "remote" as const } };
+    expect(engine.authorize({ ...request, context: remote }).allowed).toBe(false);
+    const token = {
+      ...testContext,
+      principal: {
+        ...testContext.principal,
+        tokenAccess: { id: "test", generation: "1", scopes: ["files" as const] },
+      },
+    };
+    expect(engine.authorize({ ...request, context: token }).allowed).toBe(false);
+    engine.runtime.replace({ strict: false, rules: [{ capability: "browser.read", state: "deny" }] });
+    expect(engine.authorize(request).allowed).toBe(false);
+    engine.runtime.replace({ strict: false, rules: [] });
+    engine.runtime.setBrowserAccess({ read: true, navigation: true, sessions: false });
+    expect(engine.authorize(request).allowed).toBe(true);
+    expect(engine.authorize({ ...request, operation: "browser.page_read" }).allowed).toBe(false);
+    expect(engine.authorize({ ...request, capability: "browser.control", operation: "browser.click" }).allowed).toBe(
+      false,
+    );
+    engine.runtime.setBrowserAccess({ read: true, navigation: false });
+    expect(engine.authorize({ ...request, capability: "browser.control", operation: "browser.navigate" }).allowed).toBe(
+      false,
+    );
+    expect(engine.authorize({ ...request, capability: "browser.control", operation: "browser.click" }).allowed).toBe(
+      true,
+    );
+    engine.runtime.setBrowserAccess({ read: false, navigation: true });
+    expect(engine.authorize(request).allowed).toBe(false);
+    expect(engine.authorize({ ...request, capability: "browser.control", operation: "browser.click" }).allowed).toBe(
+      false,
+    );
+  });
   it("allows granted capabilities inside the workspace", () => {
     const engine = new PermissionEngine(createPermissionPolicy({ mode: "sandbox" }));
     expect(engine.authorize({ context: testContext, capability: "filesystem.read", paths: [inside] })).toEqual({

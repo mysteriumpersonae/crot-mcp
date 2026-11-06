@@ -1,13 +1,13 @@
 /** Browser screen (central area only; the sidebar is untouched): header, CROT Extension status card, policy cards with
  *  switches and the open tabs list. Built on the design tokens, so light and dark themes follow automatically. */
 export const BROWSER_CSS = String.raw`
-.browser-page{--browser-ok:#22c55e;--browser-wait:#f59e0b;display:flex;flex-direction:column;gap:16px;min-width:0;color:var(--text);font-size:13px;line-height:1.45}
+.browser-page{--browser-ok:#22c55e;--browser-wait:#f59e0b;display:flex;flex-direction:column;gap:12px;min-width:0;color:var(--text);font-size:var(--ui-body-size);line-height:1.45}
 :root[data-theme=dark] .browser-page{--browser-ok:var(--success);--browser-wait:var(--warning)}
 .browser-page *{box-sizing:border-box}.browser-page [hidden]{display:none!important}
 .browser-page p{margin:0}.browser-page .badge{margin:0}
 .browser-head{display:flex;align-items:center;gap:16px;min-width:0;padding:4px 0 4px}
 .browser-head-copy{flex:1;min-width:0}
-.browser-head h1{margin:0;font-size:26px;line-height:32px;font-weight:700;letter-spacing:-.4px}
+.browser-head h1{margin:0;font-size:var(--ui-title-size);line-height:30px;font-weight:700;letter-spacing:-.4px}
 .browser-head-copy p{margin:4px 0 0;font-size:14px;line-height:20px;color:var(--text-muted)}
 .browser-saved{flex:none;display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:999px;background:var(--success-tint);color:var(--success);font-size:13px;line-height:18px;font-weight:600;max-width:min(420px,45%)}
 .browser-saved svg{flex:none;width:16px;height:16px}
@@ -22,15 +22,16 @@ export const BROWSER_CSS = String.raw`
 .browser-emblem[data-browser=brave]{background:linear-gradient(135deg,#ff7a4d,#fb542b 55%,#d6380f)}
 .browser-emblem[data-browser=brave]::after{background:#fb542b}
 /* CROT Extension status card */
-.browser-status{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:14px 20px;padding:18px 24px;border:1px solid var(--border);border-radius:var(--r-lg);background:var(--bg-surface);box-shadow:var(--shadow-card)}
+.browser-status{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:12px 16px;padding:12px 16px;border:1px solid var(--border);border-radius:var(--r-lg);background:var(--bg-surface);box-shadow:var(--shadow-card)}
 .browser-status[data-state=connected]{background:var(--success-tint);border-color:color-mix(in srgb,var(--browser-ok) 38%,var(--border))}
 .browser-status:is([data-state=waiting],[data-state=pairing],[data-state=update_required],[data-state=in_use]){background:var(--warning-tint);border-color:color-mix(in srgb,var(--browser-wait) 40%,var(--border))}
-.browser-status-tile{display:grid;place-items:center;width:76px;height:76px;border-radius:16px;background:var(--bg-surface);box-shadow:var(--shadow-card)}
-.browser-status-tile .browser-emblem{--size:46px}
+.browser-status-tile{display:grid;place-items:center;width:56px;height:56px;border-radius:16px;background:var(--bg-surface);box-shadow:var(--shadow-card)}
+.browser-status-tile .browser-emblem{--size:36px}
 .browser-status-copy{min-width:0;display:flex;flex-direction:column;gap:4px}
-.browser-status h2{display:flex;align-items:center;gap:10px;margin:0;font-size:18px;line-height:25px;font-weight:700;letter-spacing:-.2px}
+.browser-status h2{display:flex;align-items:center;gap:10px;margin:0;font-size:var(--ui-heading-size);line-height:22px;font-weight:700;letter-spacing:-.2px}
 .browser-status-copy>p{font-size:14px;line-height:20px;color:var(--text-muted)}
-.browser-status-note:empty{display:none}
+.browser-status-note:empty,.browser-identity:empty{display:none}
+.browser-status-copy>.browser-identity{font-size:12px;line-height:17px}
 .browser-status-note{color:var(--warning)!important;font-weight:500}
 .browser-dot{flex:none;width:10px;height:10px;border-radius:50%;background:var(--text-muted)}
 .browser-status[data-state=connected] .browser-dot{background:var(--browser-ok);box-shadow:0 0 0 3px color-mix(in srgb,var(--browser-ok) 25%,transparent)}
@@ -53,21 +54,21 @@ export const BROWSER_CSS = String.raw`
 .browser-trusted li{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:13px}
 .browser-trusted li button{min-height:30px;padding:4px 12px;border-radius:8px;font-size:12px}
 /* Policy cards: an icon column, a head and rows with switches on the right. */
-.browser-card{background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--r-lg);padding:18px 24px 6px;box-shadow:var(--shadow-card);min-width:0}
-.browser-line{display:grid;grid-template-columns:44px minmax(0,1fr);column-gap:14px;align-items:start}
+.browser-card{background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--r-lg);padding:12px 16px 4px;box-shadow:var(--shadow-card);min-width:0}
+.browser-line{display:grid;grid-template-columns:32px minmax(0,1fr);column-gap:12px;align-items:start}
 .browser-line-icon{display:flex;justify-content:center;color:var(--text)}
-.browser-line-icon svg{width:28px;height:28px;stroke-width:1.6}
+.browser-line-icon svg{width:22px;height:22px;stroke-width:1.6}
 .browser-card-danger .browser-line-head .browser-line-icon{color:var(--danger)}
 .browser-card-danger .browser-line-head .browser-line-icon svg{stroke-width:2}
-.browser-line-head{padding-bottom:12px}
-.browser-card-head h2{margin:0;font-size:17px;line-height:24px;font-weight:700;letter-spacing:-.2px}
+.browser-line-head{padding-bottom:8px}
+.browser-card-head h2{margin:0;font-size:var(--ui-heading-size);line-height:22px;font-weight:700;letter-spacing:-.2px}
 .browser-card-head p{margin:2px 0 0;font-size:13px;line-height:18px;color:var(--text-muted)}
-.browser-line-row>:last-child{border-top:1px solid var(--border);padding:12px 0}
-.browser-line-row .browser-line-icon{padding-top:14px}
-.browser-line-note>:last-child,.browser-line-body>:last-child{padding:0 0 14px}
+.browser-line-row>:last-child{border-top:1px solid var(--border);padding:8px 0}
+.browser-line-row .browser-line-icon{padding-top:10px}
+.browser-line-note>:last-child,.browser-line-body>:last-child{padding:0 0 10px}
 .browser-row{display:flex;align-items:center;justify-content:space-between;gap:20px;min-width:0}
 .browser-row-copy{min-width:0}
-.browser-row-copy h3{margin:0;font-size:15px;line-height:21px;font-weight:600}
+.browser-row-copy h3{margin:0;font-size:var(--ui-body-size);line-height:20px;font-weight:600}
 .browser-row-copy>p{margin:2px 0 0;font-size:13px;line-height:18px;color:var(--text-muted)}
 .browser-row-body{display:flex;flex-direction:column;min-width:0}
 .browser-hint{margin:6px 0 0!important;font-size:12px;line-height:17px;color:var(--text-muted)}
@@ -102,6 +103,7 @@ export const BROWSER_CSS = String.raw`
 .browser-steps p{margin:2px 0 0}
 a.browser-link-button{display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:10px 16px;border-radius:8px;border:1px solid var(--border);text-decoration:none;font-weight:600;color:var(--text)}
 a.browser-link-button.primary{background:var(--primary);border-color:var(--primary);color:var(--text-on-primary)}
+@media(min-width:900px) and (max-width:1199px){.browser-page{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-items:start}.browser-head,.browser-status,.browser-card-tabs{grid-column:1/-1}.browser-card-scope{grid-column:1;grid-row:3 / span 2}.browser-card-data{grid-column:2;grid-row:3}.browser-card-danger{grid-column:2;grid-row:4}}
 @media(max-width:960px){.browser-status{grid-template-columns:auto minmax(0,1fr)}.browser-status-actions{grid-column:1/-1;justify-content:flex-start}}
 @media(max-width:760px){.browser-card{padding:16px 16px 4px}.browser-line{grid-template-columns:28px minmax(0,1fr);column-gap:10px}.browser-line-icon svg{width:22px;height:22px}.browser-status{grid-template-columns:minmax(0,1fr);padding:16px}.browser-status-tile{display:none}.browser-head .browser-emblem{--size:40px}.browser-head h1{font-size:22px;line-height:28px}.browser-saved{max-width:100%}}
 @media(prefers-reduced-motion:reduce){.browser-dot{animation:none!important}.browser-page .browser-switch input[type=checkbox],.browser-page .browser-switch input[type=checkbox]::before{transition:none}}

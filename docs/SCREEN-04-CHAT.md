@@ -31,7 +31,16 @@ Inventory refreshes from accounts.list, connectors.list, skills.list, mcpServers
 and agents.list. Disabled/disconnected entries are excluded. Selections survive
 language rerenders and are removed only after refreshed inventory confirms removal.
 Selections add non-secret prompt context; they do not create new model-callable
-connector RPCs. Canonical chat tools are separately opt-in and Core-authorized.
+connector RPCs. The visible Browser access checkbox starts enabled in the owner
+chat and can be turned off. It offers browser status, tab listing, page reading and snapshots to supported
+direct providers and local OpenCode. Opening and navigating tabs, clicks and
+text entry are offered when enabled by the Browser and Permissions screens.
+Tab titles and page content can be sent to the selected model. Core permissions,
+token scopes, domain rules, approvals and audit still apply. With sessions off,
+page access and actions are paused; tab titles and URLs remain available. Workspace agents do not receive CROT chat
+tools and manage their own access; the checkbox is disabled for them. A model
+that rejects tool definitions fails the turn rather than silently losing browser
+access. A connected bridge does not itself prove that a provider will call tools.
 
 OpenAI, Anthropic (Claude), Google Gemini, OpenRouter and Local HTTP are supported
 direct chat transports. Registered Notion/OpenCode/other CROT clients are visible with honest

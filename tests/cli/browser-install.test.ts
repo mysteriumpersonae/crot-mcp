@@ -118,6 +118,10 @@ describe("hostRegistrations", () => {
         manifestFile: "/home/u/.config/google-chrome/NativeMessagingHosts/com.crot.host.json",
       },
       {
+        browsers: ["Google Chrome"],
+        manifestFile: "/home/u/.config/google-chrome-for-testing/NativeMessagingHosts/com.crot.host.json",
+      },
+      {
         browsers: ["Chromium"],
         manifestFile: "/home/u/.config/chromium/NativeMessagingHosts/com.crot.host.json",
       },

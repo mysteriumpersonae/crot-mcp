@@ -47,7 +47,9 @@ function fixture() {
         ? { name: "fs_read_file", args: { path: "README.md" } }
         : owner.includes("search-needle")
           ? { name: "project_search_files", args: { query: "needle-token" } }
-          : undefined;
+          : owner.includes("browser-check")
+            ? { name: "browser_status", args: {} }
+            : undefined;
       const reply = (text: string) => {
         if (anthropic) {
           send({ index: 0, delta: { type: "text_delta", text } }, "content_block_delta");
@@ -275,6 +277,50 @@ describe("owner chat threads and project access", () => {
     expect(second!.messages.map((m) => m.role)).toEqual(["user", "assistant", "user"]);
     expect(second!.messages[1]!.content).toBe("Answer 1");
     expect(toolNames(second!)).toContain("fs_read_file");
+  });
+
+  it("offers guarded browser tools only when enabled and calls browser status instead of guessing", async () => {
+    const enabled = await turn("browser-check", { browserTools: true });
+    expect(toolNames(bodies[0]!)).toEqual(
+      expect.arrayContaining([
+        "browser_status",
+        "browser_list_tabs",
+        "browser_read_page",
+        "browser_open_tab",
+        "browser_navigate",
+        "browser_click",
+        "browser_fill",
+      ]),
+    );
+    expect(JSON.stringify(bodies[0]!.messages)).toContain("use browser_status instead of guessing");
+    expect(enabled.result.blocks).toEqual(
+      expect.arrayContaining([expect.objectContaining({ type: "tool", name: "browser_status" })]),
+    );
+    const count = bodies.length;
+    await turn("plain", { browserTools: false });
+    expect(toolNames(bodies[count]!)).not.toContain("browser_status");
+    const rejected = await turn("reject-tools browser", { browserTools: true });
+    expect(rejected.result.state).toBe("failed");
+    expect(toolNames(bodies.at(-1)!)).toContain("browser_status");
+  });
+
+  it("hides browser tools when the owner disables their permissions", async () => {
+    core.permissions.runtime.setBrowserAccess({ read: true, navigation: false, sessions: true });
+    core.browser.setTabPolicy({ ...core.browser.getTabPolicy(), automation: false });
+    await turn("plain", { browserTools: true });
+    expect(toolNames(bodies.at(-1)!)).toContain("browser_list_tabs");
+    expect(toolNames(bodies.at(-1)!)).not.toEqual(expect.arrayContaining(["browser_open_tab"]));
+    expect(toolNames(bodies.at(-1)!)).not.toContain("browser_navigate");
+    expect(toolNames(bodies.at(-1)!)).not.toContain("browser_click");
+    expect(toolNames(bodies.at(-1)!)).not.toContain("browser_fill");
+    core.permissions.runtime.setBrowserAccess({ read: true, navigation: true, sessions: false });
+    await turn("plain", { browserTools: true });
+    expect(toolNames(bodies.at(-1)!)).toContain("browser_list_tabs");
+    expect(toolNames(bodies.at(-1)!)).not.toContain("browser_read_page");
+    expect(toolNames(bodies.at(-1)!)).not.toContain("browser_open_tab");
+    core.permissions.runtime.setBrowserAccess({ read: false, navigation: true, sessions: true });
+    await turn("plain", { browserTools: true });
+    expect(toolNames(bodies.at(-1)!)).not.toContain("browser_list_tabs");
   });
 
   it("retries once without the automatic tools when the server rejects tool definitions", async () => {

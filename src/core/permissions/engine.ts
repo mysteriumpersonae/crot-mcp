@@ -430,7 +430,35 @@ export class PermissionEngine {
     }
     const policy = this.profileFor(request.context).policy;
     const scope = request.context.principal.kind === "remote" ? ", remote client" : "";
-    if (!policy.grants.has(request.capability)) {
+    const productBrowser = this.runtime.browserAccess;
+    const navigation = request.operation === "browser.tab_open" || request.operation === "browser.navigate";
+    if (productBrowser && request.capability.startsWith("browser.")) {
+      if (!productBrowser.read || (navigation && !productBrowser.navigation))
+        return { allowed: false, reason: "Browser access is turned off by the owner.", missing: [request.capability] };
+      // An existing browser profile automatically sends its session cookies. Without
+      // an isolated profile, turning sessions off must fail closed for page access.
+      if (
+        !productBrowser.sessions &&
+        request.operation !== "browser.status" &&
+        request.operation !== "browser.tabs_list"
+      )
+        return {
+          allowed: false,
+          reason: "Browser page access is paused because session access is off.",
+          missing: [request.capability],
+        };
+    }
+    // Owner settings add only these operations for local principals. Remote profiles,
+    // named-token scopes, explicit denies, approvals and the tab policy still apply.
+    const productGrant =
+      request.context.principal.kind === "local" &&
+      productBrowser?.read === true &&
+      (request.capability === "browser.read" ||
+        (request.capability === "browser.control" &&
+          ((navigation && productBrowser.navigation) ||
+            request.operation === "browser.click" ||
+            request.operation === "browser.type")));
+    if (!policy.grants.has(request.capability) && !productGrant) {
       return {
         allowed: false,
         reason: `Capability '${request.capability}' is not granted (mode: ${policy.mode}${scope}).`,

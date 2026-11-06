@@ -486,6 +486,7 @@ describe("WP-22: device controls", () => {
     });
     await waitFor(() => tray.events.some((e) => e.event === "state.changed" && e.overview.preset.effective === "off"));
     expect((await auditRecords()).filter((r) => r.kind === "control")).toEqual([
+      expect.objectContaining({ action: "runtime_policy", outcome: "applied" }),
       expect.objectContaining({ action: "preset", outcome: "applied", previous: "require-approval", value: "off" }),
     ]);
     await stopService(service);
@@ -534,7 +535,7 @@ describe("WP-22: device controls", () => {
     // Another client of the same account is not affected.
     expect(await relayStatus(relay, RELAY_B())).toBe(200);
     const controls = (await auditRecords()).filter((r) => r.kind === "control").map((r) => r.action);
-    expect(controls).toEqual(["pairing", "remote_mode", "exposure_reset", "client_revoke"]);
+    expect(controls).toEqual(["runtime_policy", "pairing", "remote_mode", "exposure_reset", "client_revoke"]);
     expect(await readFile(path.join(dirs.workspace, "r.txt"), "utf8").catch(() => "missing")).toBe("missing");
   });
 
@@ -665,7 +666,7 @@ describe("WP-28: identity and device binding", () => {
     expect(view.remote.clients[0]).toMatchObject({ ...CLIENT_A(), grantedAt: expect.any(String) });
     expect(view.remote.clients[0]).not.toHaveProperty("revokedAt");
     const controls = (await auditRecords()).filter((r) => r.kind === "control").map((r) => r.action);
-    expect(controls).toEqual(["pairing", "remote_mode", "client_revoke", "client_regrant"]);
+    expect(controls).toEqual(["runtime_policy", "pairing", "remote_mode", "client_revoke", "client_regrant"]);
   });
 
   it("unpair ends remote access at once, removes the credential, and a new pairing is a new device", async () => {

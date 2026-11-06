@@ -397,7 +397,7 @@ describe.runIf(linux)("browser v1 E2E: layout and frames (manual run 2)", () => 
     try {
       const before = await h.fails(client(), "browser_snapshot", { tabId: opened.tabId });
       expect(before.code).toBe("BROWSER_PAGE_RESTRICTED");
-      expect(before.message).toContain("http: and https:");
+      expect(before.message).toMatch(/http: and https:|excluded by owner browser policy/);
       const completed = await h.waitFor(
         async () => {
           const tabs = await h.ok<{ tabs: { tabId: number; url: string; status?: string }[] }>(

@@ -258,7 +258,7 @@ export interface ChromeInstance {
 export function launchChrome(
   executable: string,
   sb: Sandbox,
-  options: { readonly remoteDebugging?: boolean } = {},
+  options: { readonly remoteDebugging?: boolean; readonly startUrl?: string } = {},
 ): ChromeInstance {
   const extra = (process.env.CROT_E2E_CHROME_ARGS ?? "").split(/\s+/).filter((a) => a.length > 0);
   const headless = process.env.CROT_E2E_HEADLESS === "1" ? ["--headless=new"] : [];
@@ -278,7 +278,7 @@ export function launchChrome(
     ...headless,
     ...(options.remoteDebugging ? ["--remote-debugging-port=0"] : []),
     ...extra,
-    "about:blank",
+    options.startUrl ?? "about:blank",
   ];
   const child: ChildProcess = spawn(executable, args, { env: sb.env, stdio: ["ignore", "pipe", "pipe"] });
   let output = "";
