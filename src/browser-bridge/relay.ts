@@ -260,7 +260,7 @@ function relay(socket: net.Socket, auth: Uint8Array, { input, output, log }: Rel
       else if (framesFromHost === 0) {
         finish(
           1,
-          "CROT closed the browser bridge connection during the handshake (authentication failed, the handshake timed out, or another browser is already connected).",
+          "CROT closed the browser bridge connection during the handshake (authentication failed, the handshake timed out, or the session limit was reached).",
         );
       } else finish(0, "CROT closed the browser bridge connection.");
     };

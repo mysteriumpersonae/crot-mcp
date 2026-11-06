@@ -648,14 +648,16 @@ Limits:
   or when no CROT instance is listening. Its diagnostics go to stderr and never
   contain the token. The origin argument and `--parent-window` passed by the
   browser are ignored.
-- Only one extension can be connected at a time; further connections are
-  refused.
-- When the extension disconnects, pending requests fail with
-  `BROWSER_NOT_CONNECTED`.
+- Up to 16 authenticated extension sessions can be connected concurrently. The Browser
+  screen can pin one session; Auto routes to the last browser that reported focus.
+  Identical browser profiles are distinguished by a short session suffix.
+- When an extension disconnects, only that session’s pending requests fail with
+  `BROWSER_NOT_CONNECTED`; other sessions remain connected. Approved actions remain
+  bound to their original connection and fail closed if the selected session changes.
 - **Several MCP clients.** Since WP-20 the bridge belongs to the per-user CROT
   service (see [`SERVICE.md`](SERVICE.md)): every stdio client attaches to
   that service through the `crot-mcp` shim, so all clients share one bridge
-  and one connected extension, and `in_use` no longer occurs in normal use.
+  and its connected extension sessions, and `in_use` no longer occurs in normal use.
   It remains possible only when an unrelated process (for example an older
   CROT version run separately) owns the endpoint: the CROT service then stays
   `in_use` for its whole lifetime; its other tools work

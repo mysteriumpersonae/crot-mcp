@@ -302,7 +302,13 @@ describe("message validation", () => {
   });
 
   it("negotiates optional features in hello and welcome; unknown names pass, malformed lists fail", () => {
-    expect(BRIDGE_FEATURES).toEqual(["tab-policy-v2", "tabs-changed", "ui-manage", "tab-policy-envelope"]);
+    expect(BRIDGE_FEATURES).toEqual([
+      "tab-policy-v2",
+      "tabs-changed",
+      "ui-manage",
+      "tab-policy-envelope",
+      "browser-focus",
+    ]);
     expect(
       parseBrowserMessage({
         type: "hello",

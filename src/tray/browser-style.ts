@@ -39,6 +39,7 @@ export const BROWSER_CSS = String.raw`
 .browser-status:is([data-state=waiting],[data-state=pairing],[data-state=checking]) .browser-dot{animation:browser-pulse 1.6s ease-in-out infinite}
 @keyframes browser-pulse{0%,100%{opacity:1}50%{opacity:.35}}
 .browser-status-actions{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px}
+.browser-session-select{min-height:34px;max-width:220px;padding:4px 8px;border:1px solid var(--border-strong);border-radius:8px;background:var(--bg-surface);color:var(--text);font-size:12px}
 .browser-status-actions button{min-height:34px;padding:6px 10px;border-radius:10px;background:var(--bg-surface);border:1px solid var(--border-strong);font-weight:500;white-space:nowrap}
 .browser-status-actions button.primary{background:var(--primary);border-color:var(--primary);color:var(--text-on-primary)}
 .browser-requests:empty,.browser-trusted:empty{display:none}

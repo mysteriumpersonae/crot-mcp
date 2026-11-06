@@ -49,7 +49,13 @@ export const MAX_ERROR_MESSAGE_LENGTH = 2000;
  * - tabs-changed: content-free `tabs_changed` notices (the owner UI refreshes its tab list).
  * - ui-manage: the host may ask the extension to open its own management page.
  */
-export const BRIDGE_FEATURES = ["tab-policy-v2", "tabs-changed", "ui-manage", "tab-policy-envelope"] as const;
+export const BRIDGE_FEATURES = [
+  "tab-policy-v2",
+  "tabs-changed",
+  "ui-manage",
+  "tab-policy-envelope",
+  "browser-focus",
+] as const;
 export type BridgeFeature = (typeof BRIDGE_FEATURES)[number];
 const FEATURE = /^[a-z][a-z0-9-]{0,31}$/;
 const MAX_FEATURES = 16;
@@ -107,7 +113,8 @@ export type BrowserNotice =
     }
   | { readonly type: "browser_notice"; readonly event: "cdp_status"; readonly available: boolean }
   /** Tabs were opened, closed, moved or navigated; carries no tab data (the owner UI lists tabs itself). */
-  | { readonly type: "browser_notice"; readonly event: "tabs_changed" };
+  | { readonly type: "browser_notice"; readonly event: "tabs_changed" }
+  | { readonly type: "browser_notice"; readonly event: "browser_focused" };
 /** Fixed owner-UI request: no command, path, URL or tool arguments (AD-38). */
 export interface BrowserUiOpen {
   readonly type: "ui_open";
@@ -479,6 +486,8 @@ export function parseBrowserMessage(value: unknown): BrowserToHostMessage {
         Object.keys(value).every((k) => ["type", "event", "available"].includes(k))
       )
         return { type: "browser_notice", event: "cdp_status", available: value.available };
+      if (value.event === "browser_focused" && Object.keys(value).every((k) => ["type", "event"].includes(k)))
+        return { type: "browser_notice", event: "browser_focused" };
       if (value.event === "tabs_changed" && Object.keys(value).every((k) => ["type", "event"].includes(k)))
         return { type: "browser_notice", event: "tabs_changed" };
       if (

@@ -105,6 +105,24 @@ describe("HostConnection", () => {
     expect(runtime.ports.length).toBe(1);
   });
 
+  it("sends negotiated focus hints and cancels a pending hint after blur", async () => {
+    const { runtime, connection } = setup();
+    connection.ensureConnected();
+    const port = runtime.lastPort;
+    port.deliver({ ...WELCOME, features: ["browser-focus"] });
+    connection.browserFocused();
+    connection.browserBlurred();
+    await sleep(25);
+    expect(received(port)).toHaveLength(1);
+    connection.browserFocused();
+    await sleep(25);
+    expect(received(port)).toContainEqual({ type: "browser_notice", event: "browser_focused" });
+    connection.browserFocused();
+    connection.browserBlurred();
+    await sleep(25);
+    expect(received(port).filter((m) => m.type === "browser_notice")).toHaveLength(1);
+  });
+
   it("answers each request with one response", async () => {
     const { port } = connect({
       handlers: handlers({ "tabs.list": async (params) => ({ tabs: [], echo: params }) }),
@@ -416,18 +434,15 @@ describe("HostConnection loopback fallback", () => {
     expect(connection.state).not.toBe("connected");
   });
 
-  it("polls a pairing request without restarting the native host", async () => {
+  it("retries native even while an older loopback request is pending", async () => {
     const runtime = new FakeRuntime();
     const { fake, link } = fakeLoopback(runtime, [], { waiting: true });
     const { connection } = setup({ runtime, loopback: link });
     connection.ensureConnected();
-    await sleep(30);
-    expect(runtime.hosts).toEqual([]);
-    expect(fake.opened).toBeGreaterThanOrEqual(2);
-    connection.stop();
-    const opened = fake.opened;
-    await sleep(20);
-    expect(fake.opened).toBe(opened);
+    expect(runtime.hosts).toEqual([NATIVE_HOST_NAME]);
+    runtime.lastPort.deliver(WELCOME);
+    expect(connection.transport).toBe("native");
+    expect(fake.opened).toBe(0);
   });
 
   it("drops a loopback port that arrives after stop()", async () => {

@@ -127,6 +127,8 @@ export function browserLinkHost(bridge: BrowserBridge | undefined): BrowserLinkH
               manage: (state.features ?? []).includes("ui-manage"),
             }
           : {}),
+        sessions: bridge.sessions(),
+        selection: bridge.selection ?? null,
         tabsRevision: bridge.tabsRevision,
         ...(loopback
           ? {
@@ -145,6 +147,7 @@ export function browserLinkHost(bridge: BrowserBridge | undefined): BrowserLinkH
           : {}),
       };
     },
+    select: (id) => bridge.select(id),
     approve: async (id) => (await bridge.loopbackEndpoint?.approve(id)) === true,
     reject: (id) => bridge.loopbackEndpoint?.reject(id) === true,
     forget: async (id) => (await bridge.loopbackEndpoint?.forget(id)) === true,

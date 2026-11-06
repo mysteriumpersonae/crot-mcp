@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { readFile, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import http from "node:http";
 import { ControlClient } from "../../src/service/control-client.js";
@@ -13,6 +13,7 @@ describe.runIf(process.platform === "linux")("service auto-registration with a r
   let session: h.CrotSession | undefined;
   let actionSession: h.CrotSession | undefined;
   let chrome: h.ChromeInstance | undefined;
+  let secondChrome: h.ChromeInstance | undefined;
   let control: ControlClient | undefined;
   let provider: http.Server | undefined;
   it("registers before a profile exists, connects, and exposes real tabs", async () => {
@@ -36,7 +37,7 @@ describe.runIf(process.platform === "linux")("service auto-registration with a r
       if (req.method === "GET") {
         res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
         res.end(
-          '<!doctype html><title>CROT test tab</title><p id="result">Real browser fixture</p><input id="field"><button id="button" onclick="document.querySelector(\'#result\').textContent=document.querySelector(\'#field\').value">Apply</button>',
+          `<!doctype html><title>${req.url?.includes("second-profile") ? "Second profile tab" : "CROT test tab"}</title><p id="result">Real browser fixture</p><input id="field"><button id="button" onclick="document.querySelector('#result').textContent=document.querySelector('#field').value">Apply</button>`,
         );
         return;
       }
@@ -207,6 +208,48 @@ describe.runIf(process.platform === "linux")("service auto-registration with a r
       });
       await control!.request("browser.policy.set", { ...initial.policy, blockedDomains: ["127.0.0.1"] });
       expect((await h.fails(session.client, "browser_page_read")).code).toBe("BROWSER_PAGE_RESTRICTED");
+      // Two real profiles share the same owner service; pinning must route to each independently.
+      await control!.request("browser.policy.set", initial.policy);
+      const profile2 = path.join(sb.base, "profile2");
+      await mkdir(path.join(profile2, "NativeMessagingHosts"), { recursive: true });
+      await copyFile(manifest, path.join(profile2, "NativeMessagingHosts", `${h.NATIVE_HOST_NAME}.json`));
+      secondChrome = h.launchChrome(
+        executable,
+        { ...sb, profileDir: profile2 },
+        { startUrl: `http://127.0.0.1:${port}/second-profile` },
+      );
+      const pooled = await h.waitFor(
+        async () => {
+          const result = (await control!.request("browser.link.status", {})) as {
+            link: { sessions: Array<{ id: string; transport: string }> };
+          };
+          return result.link.sessions.length === 2 ? result.link : undefined;
+        },
+        60_000,
+        "two browser profiles",
+      );
+      expect(pooled.sessions.every((item) => item.transport === "native")).toBe(true);
+      expect(pooled.loopback?.pending ?? []).toEqual([]);
+      const titles: string[] = [];
+      for (const item of pooled.sessions) {
+        await control!.request("browser.link.select", { id: item.id });
+        const browserTabs = await h.ok<{ tabs: Array<{ title: string }> }>(session.client, "browser_tabs_list");
+        titles.push(...browserTabs.tabs.map((tab) => tab.title));
+      }
+      expect(titles).toContain("CROT test tab");
+      expect(titles).toContain("Second profile tab");
+      expect(JSON.stringify(pooled)).not.toContain('"code"');
+      await secondChrome.stop();
+      secondChrome = undefined;
+      await h.waitFor(
+        async () => {
+          const result = (await control!.request("browser.link.status", {})) as { link: { sessions: unknown[] } };
+          return result.link.sessions.length === 1 ? true : undefined;
+        },
+        30_000,
+        "second browser disconnect",
+      );
+      expect((await h.ok<{ tabs: unknown[] }>(session.client, "browser_tabs_list")).tabs.length).toBeGreaterThan(0);
     } catch (error) {
       throw new Error(
         `${String(error)}\nChromium: ${chrome.output().slice(-6000)}\nCROT: ${session.stderr().slice(-6000)}`,
@@ -217,6 +260,7 @@ describe.runIf(process.platform === "linux")("service auto-registration with a r
     control?.close();
     await actionSession?.close().catch(() => undefined);
     await session?.close().catch(() => undefined);
+    await secondChrome?.stop().catch(() => undefined);
     await chrome?.stop().catch(() => undefined);
     provider?.closeAllConnections();
     if (provider) await new Promise<void>((resolve) => provider!.close(() => resolve()));

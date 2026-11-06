@@ -64,6 +64,14 @@ const connection = new HostConnection({
     },
   }),
   log,
+  onConnected: () => {
+    void chrome.windows
+      .getLastFocused?.()
+      .then((window) => {
+        if (window.focused) connection.browserFocused();
+      })
+      .catch(() => undefined);
+  },
   onDisconnected: () => {
     resetQueues();
     void cdp.detachAll();
@@ -99,6 +107,10 @@ uiRuntime.onMessage?.addListener((message, sender, reply) => {
 
 // Content-free hints so CROT Desktop refreshes its tab list (no tab data is sent with them).
 const tabsChanged = () => connection.tabsChanged();
+chrome.windows.onFocusChanged?.addListener((windowId) => {
+  if (windowId >= 0) connection.browserFocused();
+  else connection.browserBlurred();
+});
 chrome.tabs.onCreated.addListener(tabsChanged);
 chrome.tabs.onRemoved.addListener(tabsChanged);
 chrome.tabs.onActivated?.addListener(tabsChanged);
