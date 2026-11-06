@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { bridgeTokenFile, readBridgeToken } from "../../src/browser-bridge/endpoint.js";
+import { browserPairingsFile } from "../../src/browser-bridge/loopback.js";
 import { browserProtectedPaths, startBrowserBridge } from "../../src/cli/browser.js";
 import { CrotError } from "../../src/core/errors.js";
 import { createPrivateFileProtection } from "../../src/core/platform/private-files.js";
@@ -48,9 +49,9 @@ describe("browser bridge wiring", () => {
     await expect(readFile(bridgeTokenFile(stateDir), "utf8")).rejects.toThrow();
   });
 
-  it("protects the bridge token file when enabled", async () => {
+  it("protects the bridge token and loopback pairings files when enabled", async () => {
     const stateDir = await tempState();
-    expect(browserProtectedPaths(true, stateDir)).toEqual([bridgeTokenFile(stateDir)]);
+    expect(browserProtectedPaths(true, stateDir)).toEqual([bridgeTokenFile(stateDir), browserPairingsFile(stateDir)]);
   });
 
   it("starts a waiting bridge and never logs the token", async () => {

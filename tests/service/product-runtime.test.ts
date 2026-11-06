@@ -206,6 +206,19 @@ it(
     await rpc("browser.policy.set", policy);
     expect((await rpc("browser.policy.get")).policy).toEqual(policy);
     await expect(rpc("browser.policy.set", { ...policy, domains: ["*.example.com"] })).rejects.toThrow();
+    // Desktop Browser screen: the active tab next to the target resource, clicks and form input off.
+    const v2 = { ...policy, activeTab: true, automation: false };
+    expect((await rpc("browser.policy.set", v2)).policy).toEqual(v2);
+    expect((await rpc("browser.policy.get")).policy).toEqual(v2);
+    await rpc("browser.policy.set", policy);
+    // No extension and, in tests, no loopback discovery port (CROT_BROWSER_LOOPBACK_PORTS=off).
+    const link = (await rpc("browser.link.status")).link;
+    expect(link).toMatchObject({ state: "waiting", tabsRevision: expect.any(Number) });
+    expect(link.loopback).toBeUndefined();
+    expect(await rpc("browser.link.manage")).toEqual({ ok: false });
+    await expect(rpc("browser.link.approve", { id: "0".repeat(32) })).rejects.toThrow();
+    await expect(rpc("browser.link.forget", { id: "f".repeat(32) })).rejects.toThrow();
+    await expect(rpc("browser.link.reject", { id: "a".repeat(32) })).rejects.toThrow();
     await expect(rpc("onboarding.advance", { step: 2 })).rejects.toThrow();
     for (const step of [1, 2, 3, 4]) await rpc("onboarding.advance", { step });
     expect((await rpc("onboarding.status")).onboarding.completedStep).toBe(4);

@@ -11,6 +11,8 @@ import { ProjectSecretRelativePathSchema } from "../core/permissions/project-sec
 import { ProjectGrantSchema, RuntimePolicySchema } from "../core/permissions/runtime.js";
 const id = z.string().min(1).max(256);
 const list = z.array(id).max(256);
+/** Loopback pairing request or pairing of the CROT Browser Extension (browser-bridge/loopback.ts). */
+const pairingId = z.string().regex(/^[0-9a-f]{32}$/);
 const grants = { projects: list.default([]), agents: list.default([]) };
 const filter = z
   .object({
@@ -73,8 +75,15 @@ export const PRODUCT_SCHEMAS = {
       domains: list,
       blockedDomains: list,
       sensitivePreset: z.boolean(),
+      activeTab: z.boolean().optional(),
+      automation: z.boolean().optional(),
     })
     .strict(),
+  "browser.link.status": z.object({}).strict(),
+  "browser.link.manage": z.object({}).strict(),
+  "browser.link.approve": z.object({ id: pairingId }).strict(),
+  "browser.link.reject": z.object({ id: pairingId }).strict(),
+  "browser.link.forget": z.object({ id: pairingId }).strict(),
   "onboarding.status": z.object({}).strict(),
   "onboarding.advance": z.object({ step: z.number().int().min(1).max(4) }).strict(),
   "system.check": z.object({}).strict(),

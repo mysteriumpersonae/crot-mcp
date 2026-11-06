@@ -169,6 +169,19 @@ const map = {
   trash: "Trash2",
   skill: "Wrench",
   chevronDown: "ChevronDown",
+  tabs: "AppWindow",
+  target: "Crosshair",
+  ban: "Ban",
+  link: "Link",
+  check: "Check",
+  puzzle: "Puzzle",
+  download: "Download",
+  cookie: "Cookie",
+  pointer: "MousePointerClick",
+  alert: "CircleAlert",
+  info: "Info",
+  layers: "Layers",
+  database: "Database",
 };
 const icons = {};
 for (const [key, name] of Object.entries(map)) {

@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -118,6 +118,10 @@ describe("hostRegistrations", () => {
         manifestFile: "/home/u/.config/google-chrome/NativeMessagingHosts/com.crot.host.json",
       },
       {
+        browsers: ["Chromium"],
+        manifestFile: "/home/u/.config/chromium/NativeMessagingHosts/com.crot.host.json",
+      },
+      {
         browsers: ["Microsoft Edge"],
         manifestFile: "/home/u/.config/microsoft-edge/NativeMessagingHosts/com.crot.host.json",
       },
@@ -138,18 +142,24 @@ describe("hostRegistrations", () => {
   it("macOS: per-browser directories in Application Support", () => {
     expect(hostRegistrations("macos", "/Users/u", "/s").map((r) => r.manifestFile)).toEqual([
       "/Users/u/Library/Application Support/Google/Chrome/NativeMessagingHosts/com.crot.host.json",
+      "/Users/u/Library/Application Support/Chromium/NativeMessagingHosts/com.crot.host.json",
       "/Users/u/Library/Application Support/Microsoft Edge/NativeMessagingHosts/com.crot.host.json",
       "/Users/u/Library/Application Support/BraveSoftware/Brave-Browser/NativeMessagingHosts/com.crot.host.json",
     ]);
   });
 
-  it("Windows: one manifest in the state directory, registered for Chrome (also read by Brave) and Edge in HKCU", () => {
+  it("Windows: one manifest in the state directory, registered for Chrome (also read by Brave), Chromium and Edge in HKCU", () => {
     const manifestFile = "C:\\Users\\u\\AppData\\Local\\CROT\\native-messaging\\com.crot.host.json";
     expect(hostRegistrations("windows", "C:\\Users\\u", "C:\\Users\\u\\AppData\\Local\\CROT")).toEqual([
       {
         browsers: ["Google Chrome", "Brave"],
         manifestFile,
         registryKey: "HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\com.crot.host",
+      },
+      {
+        browsers: ["Chromium"],
+        manifestFile,
+        registryKey: "HKCU\\Software\\Chromium\\NativeMessagingHosts\\com.crot.host",
       },
       {
         browsers: ["Microsoft Edge"],
@@ -168,6 +178,29 @@ describe("launchers", () => {
       "#!/bin/sh\n# CROT browser host launcher, written by `crot-mcp browser install`.\n" +
         `exec '/usr/bin/node' '/opt/it'\\''s/relay.js' --state-dir '/home/u/state $x' "$@"\n`,
     );
+  });
+
+  it("CROT Desktop: the launcher runs the Electron executable as Node.js (ELECTRON_RUN_AS_NODE=1)", () => {
+    expect(
+      posixLauncher({ nodePath: "/opt/CROT/crot", relayScript: "/opt/CROT/relay.js", stateDir: "/s", runAsNode: true }),
+    ).toBe(
+      "#!/bin/sh\n# CROT browser host launcher, written by `crot-mcp browser install`.\n" +
+        "ELECTRON_RUN_AS_NODE=1\nexport ELECTRON_RUN_AS_NODE\n" +
+        `exec '/opt/CROT/crot' '/opt/CROT/relay.js' --state-dir '/s' "$@"\n`,
+    );
+    expect(
+      windowsLauncher({
+        nodePath: "C:\\CROT\\CROT.exe",
+        relayScript: "C:\\relay.js",
+        stateDir: "C:\\s",
+        runAsNode: true,
+      }),
+    ).toBe(
+      "@echo off\r\nrem CROT browser host launcher, written by `crot-mcp browser install`.\r\n" +
+        'set "ELECTRON_RUN_AS_NODE=1"\r\n' +
+        '"C:\\CROT\\CROT.exe" "C:\\relay.js" --state-dir "C:\\s" %*\r\n',
+    );
+    expect(posixLauncher({ nodePath: "/n", relayScript: "/r", stateDir: "/s" })).not.toContain("ELECTRON");
   });
 
   it("Windows: double-quotes paths, doubles % and protects a trailing backslash", () => {
@@ -221,6 +254,16 @@ describe("installBrowserHost", () => {
     ]);
   });
 
+  it("CROT Desktop registration: the launcher it writes sets ELECTRON_RUN_AS_NODE for the relay", async () => {
+    const { relayScript, options } = await setup();
+    await writeFile(relayScript, "process.stdout.write(JSON.stringify([process.env.ELECTRON_RUN_AS_NODE ?? null]));\n");
+    const result = await installBrowserHost({ ...options, runAsNode: true });
+    expect(JSON.parse(await runLauncher(result.launcher))).toEqual(["1"]);
+    // A later registration by Node.js (crot-mcp browser install from a checkout) writes a plain launcher again.
+    const plain = await installBrowserHost(options);
+    expect(JSON.parse(await runLauncher(plain.launcher))).toEqual([null]);
+  });
+
   it("cleanly removes manifests and launcher", async () => {
     const { options } = await setup();
     const installed = await installBrowserHost(options);
@@ -238,6 +281,28 @@ describe("installBrowserHost", () => {
       await expect(readFile(registration.manifestFile)).rejects.toThrow();
     await expect(readFile(installed.launcher)).rejects.toThrow();
     expect(deleted).toEqual(installed.registrations.flatMap((r) => (r.registryKey ? [r.registryKey] : [])));
+  });
+
+  it("startup registration: only installed browsers, nothing written when every file is current", async () => {
+    const { home, registry, options } = await setup();
+    const startup = { ...options, existingBrowsersOnly: true };
+    const all = hostRegistrations(hostOs, home, options.stateDir, {});
+    if (!windows) {
+      expect(await installBrowserHost(startup)).toMatchObject({ registrations: [], changed: false });
+      await expect(stat(path.dirname(all[0]!.manifestFile))).rejects.toThrow();
+      // Only the browser whose profile directory exists gets a manifest.
+      await mkdir(path.dirname(path.dirname(all[0]!.manifestFile)), { recursive: true });
+    }
+    const first = await installBrowserHost(startup);
+    expect(first.changed).toBe(true);
+    expect(first.registrations).toEqual(windows ? all : [all[0]]);
+    for (const other of windows ? [] : all.slice(1)) await expect(readFile(other.manifestFile)).rejects.toThrow();
+    const writes = registry.length;
+    expect(await installBrowserHost(startup)).toMatchObject({ changed: false });
+    expect(registry.length).toBe(writes);
+    const moved = path.join(path.dirname(options.relayScript), "moved relay.mjs");
+    await writeFile(moved, FAKE_RELAY);
+    expect(await installBrowserHost({ ...startup, relayScript: moved })).toMatchObject({ changed: true });
   });
 
   it("is idempotent and replaces earlier files", async () => {

@@ -40,6 +40,19 @@ export const MAX_BROWSER_INFO_LENGTH = 200;
 export const MAX_ERROR_CODE_LENGTH = 64;
 export const MAX_ERROR_MESSAGE_LENGTH = 2000;
 
+/**
+ * Optional capabilities announced in `hello` (extension) and `welcome` (host).
+ * A side uses a feature only after the peer announced it, so either side may
+ * be older: unknown names are ignored and old peers drop the field.
+ * - tab-policy-v2: the owner policy may carry `activeTab` and `automation`.
+ * - tabs-changed: content-free `tabs_changed` notices (the owner UI refreshes its tab list).
+ * - ui-manage: the host may ask the extension to open its own management page.
+ */
+export const BRIDGE_FEATURES = ["tab-policy-v2", "tabs-changed", "ui-manage"] as const;
+export type BridgeFeature = (typeof BRIDGE_FEATURES)[number];
+const FEATURE = /^[a-z][a-z0-9-]{0,31}$/;
+const MAX_FEATURES = 16;
+
 const REQUEST_ID = /^[A-Za-z0-9_-]{1,64}$/;
 const CONNECTION_ID = /^[0-9a-f]{32,64}$/;
 const TOKEN = /^[A-Za-z0-9_-]{32,256}$/;
@@ -67,6 +80,7 @@ export interface BrowserHello {
   readonly type: "hello";
   readonly protocol: number;
   readonly browser: BrowserInfoMessage;
+  readonly features?: readonly string[];
 }
 
 /** Extension -> host: answer to one request. `result` is untrusted and validated by Core. */
@@ -90,7 +104,9 @@ export type BrowserNotice =
       readonly tabId: number;
       readonly dialogType: BrowserDialogType;
     }
-  | { readonly type: "browser_notice"; readonly event: "cdp_status"; readonly available: boolean };
+  | { readonly type: "browser_notice"; readonly event: "cdp_status"; readonly available: boolean }
+  /** Tabs were opened, closed, moved or navigated; carries no tab data (the owner UI lists tabs itself). */
+  | { readonly type: "browser_notice"; readonly event: "tabs_changed" };
 /** Fixed owner-UI request: no command, path, URL or tool arguments (AD-38). */
 export interface BrowserUiOpen {
   readonly type: "ui_open";
@@ -113,6 +129,13 @@ export interface HostWelcome {
    * gated commands (AD-11); it cannot choose or change it.
    */
   readonly connectionId?: string;
+  readonly features?: readonly string[];
+}
+
+/** Host -> extension: the owner asked to open the extension's own management page (fixed action, no arguments). */
+export interface HostUiManage {
+  readonly type: "ui_manage";
+  readonly id: string;
 }
 
 /** Host -> extension: one authorized command. */
@@ -134,7 +157,7 @@ export interface HostChunk {
   readonly data: string;
 }
 
-export type HostToBrowserMessage = HostWelcome | HostRequest | HostChunk | HostUiResult;
+export type HostToBrowserMessage = HostWelcome | HostRequest | HostChunk | HostUiResult | HostUiManage;
 
 /** Relay -> host: first frame on the IPC connection, proving the relay runs as the user. Never forwarded to the browser. */
 export interface RelayAuth {
@@ -344,7 +367,7 @@ export class ChunkReassembler {
   }
 
   /** Returns the complete message, or undefined while a chunked request is incomplete. */
-  accept(message: HostToBrowserMessage): HostWelcome | HostRequest | HostUiResult | undefined {
+  accept(message: HostToBrowserMessage): HostWelcome | HostRequest | HostUiResult | HostUiManage | undefined {
     if (message.type !== "chunk") {
       if (this.stream) throw this.fail("Message interleaved with a chunked request.");
       return message;
@@ -395,6 +418,17 @@ function invalid(what: string): never {
   throw new BrowserProtocolError("Invalid " + what + ".");
 }
 
+function parseFeatures(value: unknown, what: string): string[] | undefined {
+  if (value === undefined) return undefined;
+  if (
+    !Array.isArray(value) ||
+    value.length > MAX_FEATURES ||
+    !value.every((f) => typeof f === "string" && FEATURE.test(f))
+  )
+    invalid(what);
+  return [...new Set(value as string[])];
+}
+
 /** Validate a message from the extension (host side). Unknown keys are dropped. */
 export function parseBrowserMessage(value: unknown): BrowserToHostMessage {
   if (!isObject(value)) invalid("message");
@@ -414,7 +448,13 @@ export function parseBrowserMessage(value: unknown): BrowserToHostMessage {
       ) {
         invalid("hello");
       }
-      return { type: "hello", protocol: value.protocol, browser: { name, version, extensionVersion } };
+      const features = parseFeatures(value.features, "hello");
+      return {
+        type: "hello",
+        protocol: value.protocol,
+        browser: { name, version, extensionVersion },
+        ...(features ? { features } : {}),
+      };
     }
     case "browser_notice": {
       if (
@@ -430,6 +470,8 @@ export function parseBrowserMessage(value: unknown): BrowserToHostMessage {
         Object.keys(value).every((k) => ["type", "event", "available"].includes(k))
       )
         return { type: "browser_notice", event: "cdp_status", available: value.available };
+      if (value.event === "tabs_changed" && Object.keys(value).every((k) => ["type", "event"].includes(k)))
+        return { type: "browser_notice", event: "tabs_changed" };
       if (
         value.event === "dialog_auto_dismissed" &&
         Number.isSafeInteger(value.tabId) &&
@@ -481,12 +523,21 @@ export function parseHostMessage(value: unknown): HostToBrowserMessage {
         invalid("owner UI result");
       return { type: "ui_result", id: value.id, ok: value.ok };
 
+    case "ui_manage":
+      if (!isRequestId(value.id) || Object.keys(value).length !== 2) invalid("owner UI manage request");
+      return { type: "ui_manage", id: value.id };
+
     case "welcome": {
       if (!isProtocolNumber(value.protocol)) invalid("welcome");
       const connectionId = value.connectionId;
-      if (connectionId === undefined) return { type: "welcome", protocol: value.protocol };
-      if (!isConnectionId(connectionId)) invalid("welcome");
-      return { type: "welcome", protocol: value.protocol, connectionId };
+      const features = parseFeatures(value.features, "welcome");
+      if (connectionId !== undefined && !isConnectionId(connectionId)) invalid("welcome");
+      return {
+        type: "welcome",
+        protocol: value.protocol,
+        ...(connectionId !== undefined ? { connectionId } : {}),
+        ...(features ? { features } : {}),
+      };
     }
     case "request": {
       const { id, command, params } = value;

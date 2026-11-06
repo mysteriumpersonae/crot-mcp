@@ -1,4 +1,5 @@
 import { AGENTS_CENTER_CSS } from "./agents-center-style.js";
+import { BROWSER_CSS } from "./browser-style.js";
 import { CHAT_CSS } from "./control-center-chat.js";
 import { HOME_CSS } from "./home-style.js";
 import { LOGIN_CSS } from "./login-screen.js";
@@ -38,6 +39,7 @@ const CSS =
   LOGIN_CSS +
   HOME_CSS +
   AGENTS_CENTER_CSS +
+  BROWSER_CSS +
   CHAT_CSS;
 const RENDERER = LOGIN_RENDERER + CONTROL_CENTER_RENDERER;
 export interface TrayAsset {

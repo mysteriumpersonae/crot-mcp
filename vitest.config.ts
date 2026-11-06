@@ -31,7 +31,14 @@ export default defineConfig({
     // unless a test turns remote mode on itself. tests/service/device-settings-default.test.ts covers the default.
     // A self-registered tunnel never reaches the public relay from a test: `.invalid` never resolves (RFC 2606);
     // tests that need a relay start a local one and name it through the tunnel seams.
-    env: { CROT_REMOTE_MODE_DEFAULT: "off", CROT_SELF_RELAY_HOST: "relay.invalid" },
+    // Test services open no loopback discovery port unless a test asks for one (CROT_BROWSER_LOOPBACK_PORTS=0),
+    // and never register a native-messaging host in the browsers of the account running the tests.
+    env: {
+      CROT_REMOTE_MODE_DEFAULT: "off",
+      CROT_SELF_RELAY_HOST: "relay.invalid",
+      CROT_BROWSER_LOOPBACK_PORTS: "off",
+      CROT_BROWSER_AUTO_REGISTER: "off",
+    },
     globalSetup: ["tests/global-setup.ts"],
     environment: "node",
     testTimeout: 20_000,

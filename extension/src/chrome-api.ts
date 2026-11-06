@@ -45,6 +45,7 @@ export interface ChromeWindow {
 export interface ChromeTabChangeInfo {
   readonly status?: string;
   readonly url?: string;
+  readonly title?: string;
 }
 
 export interface ChromeTabQuery {
@@ -86,6 +87,8 @@ export interface ChromeApi {
   };
   readonly downloads?: ChromeDownloads;
   readonly runtime: {
+    /** The extension id (chrome-extension://<id> is the Origin of its requests). */
+    readonly id?: string;
     connectNative(application: string): ChromePort;
     readonly lastError?: { readonly message?: string } | undefined;
     getManifest(): { readonly version: string };
@@ -106,6 +109,7 @@ export interface ChromeApi {
     readonly onUpdated: ChromeEvent<(tabId: number, changeInfo: ChromeTabChangeInfo, tab: ChromeTab) => void>;
     readonly onRemoved: ChromeEvent<(tabId: number) => void>;
     readonly onCreated: ChromeEvent<(tab: ChromeTab) => void>;
+    readonly onActivated?: ChromeEvent<(info: { readonly tabId: number; readonly windowId: number }) => void>;
     goBack(tabId: number): Promise<void>;
     goForward(tabId: number): Promise<void>;
     reload(tabId: number, properties?: { readonly bypassCache?: boolean }): Promise<void>;
@@ -132,6 +136,13 @@ export interface ChromeApi {
   readonly alarms: {
     create(name: string, info: { readonly periodInMinutes: number }): Promise<void>;
     readonly onAlarm: ChromeEvent<(alarm: { readonly name: string }) => void>;
+  };
+  /** Extension-private storage of the loopback pairing (loopback.ts). */
+  readonly storage?: {
+    readonly local: {
+      get(key: string): Promise<Record<string, unknown>>;
+      set(items: Record<string, unknown>): Promise<void>;
+    };
   };
 }
 

@@ -46,8 +46,9 @@ describe("extension manifest", () => {
       "tabGroups",
       "downloads",
       "webNavigation",
+      "storage",
     ]);
-    // downloads is used only by the exact-owned WP-26 capture.
+    // downloads is used only by the exact-owned WP-26 capture; storage holds only the loopback pairing.
     // Scripting and captureVisibleTab need host access; the extension itself refuses non-http(s) pages.
     expect(manifest.host_permissions).toEqual(["<all_urls>"]);
     for (const key of [

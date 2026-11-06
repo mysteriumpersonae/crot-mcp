@@ -6,6 +6,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { bridgeEndpoint, readBridgeToken } from "../../src/browser-bridge/endpoint.js";
 import {
+  BRIDGE_FEATURES,
   BRIDGE_PROTOCOL_VERSION,
   ChunkReassembler,
   MAX_BROWSER_TO_HOST_FRAME_BYTES,
@@ -132,6 +133,7 @@ async function connectExtension(bridge: BrowserBridge, token: string): Promise<F
     type: "welcome",
     protocol: BRIDGE_PROTOCOL_VERSION,
     connectionId: expect.stringMatching(/^[0-9a-f]{32}$/),
+    features: [...BRIDGE_FEATURES],
   });
   client.connectionId = welcome.connectionId;
   return client;
@@ -206,6 +208,9 @@ describe("BrowserBridge", () => {
       browser: BROWSER,
       cdp: { available: false, reason: "not_probed" },
       connectionId: expect.stringMatching(/^[0-9a-f]{32}$/),
+      // The extension in these tests declares no optional features; it is connected through Native Messaging.
+      features: [],
+      transport: "native",
     });
     expect(bridge.status()).toMatchObject({ state: "connected", browser: BROWSER });
 
@@ -370,6 +375,9 @@ describe("BrowserBridge", () => {
       browser: BROWSER,
       cdp: { available: false, reason: "not_probed" },
       connectionId: expect.stringMatching(/^[0-9a-f]{32}$/),
+      // The extension in these tests declares no optional features; it is connected through Native Messaging.
+      features: [],
+      transport: "native",
     });
     await roundTrip(bridge, first);
   });

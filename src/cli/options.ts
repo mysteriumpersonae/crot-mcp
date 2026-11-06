@@ -49,10 +49,10 @@ Commands:
   secrets rotate <name>... Replace secrets with new random values (service stopped):
                            http-token, browser-token, service-token, control-token, or --all
                            (secrets commands accept -c/--config for http.auth settings)
-  browser install          Register the CROT Host with Chrome, Edge and Brave (current
-                           user) so the CROT Browser Extension can connect to it.
-                           Grants no permissions; enable the bridge with
-                           "browser": { "enabled": true } in the configuration.
+  browser install          Register the CROT Host with Chrome, Chromium, Edge and Brave
+                           (current user) so the CROT Browser Extension can connect to it.
+                           Grants no permissions; the bridge is on by default (turn it
+                           off with "browser": { "enabled": false } in the configuration).
 
 Without a config file, --workspace is required. The default mode is sandbox.
 Default locations: Linux ~/.config/crot, macOS ~/Library/Application Support/CROT,

@@ -34,7 +34,7 @@
  * crashed instance is removed at start (POSIX) once a connection attempt has
  * shown that nobody listens on it.
  */
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHmac, randomBytes, randomUUID } from "node:crypto";
 import { chmod, lstat, mkdir, rmdir, stat, unlink } from "node:fs/promises";
 import net from "node:net";
 import type {
@@ -55,6 +55,7 @@ import {
   type BridgeEndpoint,
 } from "./endpoint.js";
 import {
+  BRIDGE_FEATURES,
   BRIDGE_PROTOCOL_VERSION,
   BrowserProtocolError,
   MAX_BROWSER_TO_HOST_FRAME_BYTES,
@@ -118,7 +119,28 @@ export interface BrowserBridgeStatus {
   readonly endpoint: BridgeEndpoint;
   readonly tokenFile: string;
   readonly browser?: BrowserInfo;
+  readonly transport?: BridgeTransport;
 }
+
+/** How the connected extension reached the bridge: native messaging (relay) or the paired loopback channel. */
+export type BridgeTransport = "native" | "loopback";
+
+/**
+ * Byte stream of one extension connection: a relay socket, or the loopback
+ * channel after its pairing handshake (src/browser-bridge/loopback.ts).
+ */
+export interface BridgeSocket {
+  readonly destroyed: boolean;
+  write(chunk: Uint8Array): unknown;
+  end(): unknown;
+  destroy(): unknown;
+  on(event: "data", listener: (chunk: Buffer) => void): unknown;
+  on(event: "close", listener: () => void): unknown;
+  on(event: "error", listener: (error: Error) => void): unknown;
+}
+
+/** Owner-facing loopback endpoint (loopback.ts) attached to this bridge; closed with it. */
+type Loopback = import("./loopback.js").LoopbackServer;
 
 interface PendingRequest {
   readonly resolve: (value: unknown) => void;
@@ -129,9 +151,12 @@ interface PendingRequest {
 }
 
 interface ConnectedExtension {
-  readonly socket: net.Socket;
+  readonly socket: BridgeSocket;
   readonly browser: BrowserInfo;
   readonly connectionId: string;
+  readonly transport: BridgeTransport;
+  /** Features the extension announced in hello (BRIDGE_FEATURES it understands). */
+  readonly features: readonly string[];
   cdp?: { available: boolean; reason: string | null };
   noticeWindow?: number;
   noticeCount?: number;
@@ -163,7 +188,10 @@ export class BrowserBridge implements BrowserConnection {
   }
   private server: net.Server | undefined;
   private extension: ConnectedExtension | undefined;
-  private readonly handshakes = new Set<net.Socket>();
+  private readonly handshakes = new Set<BridgeSocket>();
+  private loopback: Loopback | undefined;
+  private tabsVersion = 0;
+  private readonly tabsListeners = new Set<() => void>();
   private readonly pending = new Map<string, PendingRequest>();
   private readonly abandoned = new Set<string>();
   private closed = false;
@@ -218,6 +246,8 @@ export class BrowserBridge implements BrowserConnection {
         browser: this.extension.browser,
         connectionId: this.extension.connectionId,
         cdp: this.extension.cdp ?? { available: false, reason: "not_probed" },
+        transport: this.extension.transport,
+        features: this.extension.features,
       };
     if (this.updateRequired) return { kind: "update_required" };
     return this.server || this.closed ? { kind: "waiting" } : { kind: "in_use" };
@@ -230,7 +260,71 @@ export class BrowserBridge implements BrowserConnection {
       endpoint: this.endpoint,
       tokenFile: this.tokenFile,
       ...(browser ? { browser } : {}),
+      ...(this.extension ? { transport: this.extension.transport } : {}),
     };
+  }
+
+  /** Whether this instance owns the bridge endpoint (not in_use by another CROT instance). */
+  get owner(): boolean {
+    return this.server !== undefined;
+  }
+
+  /** Changes on every connect, disconnect and tabs_changed notice: the owner UI reloads its tab list then. */
+  get tabsRevision(): number {
+    return this.tabsVersion;
+  }
+
+  onTabsChanged(listener: () => void): () => void {
+    this.tabsListeners.add(listener);
+    return () => this.tabsListeners.delete(listener);
+  }
+
+  /** The loopback endpoint lives and dies with this bridge. */
+  attachLoopback(loopback: Loopback): void {
+    if (this.closed) {
+      void loopback.close();
+      return;
+    }
+    this.loopback = loopback;
+  }
+
+  get loopbackEndpoint(): Loopback | undefined {
+    return this.loopback;
+  }
+
+  /**
+   * Key of the loopback pairings (loopback.ts), derived from the bridge token:
+   * rotating the token revokes every pairing. The token itself never leaves the bridge.
+   */
+  loopbackKey(): Buffer {
+    return createHmac("sha256", this.token).update("crot-loopback-pairing-v1", "utf8").digest();
+  }
+
+  /**
+   * A loopback connection whose pairing handshake succeeded (loopback.ts):
+   * it continues at `hello`, exactly like a relay connection after `auth`.
+   */
+  acceptLoopback(socket: BridgeSocket): void {
+    this.accept(socket, "hello", "loopback");
+  }
+
+  /** Owner action from the Control Center: the extension opens its own management page. False when unsupported. */
+  manageExtension(): boolean {
+    const extension = this.extension;
+    if (!extension || extension.socket.destroyed || !extension.features.includes("ui-manage")) return false;
+    extension.socket.write(encodeMessage({ type: "ui_manage", id: "ui_" + randomUUID().replace(/-/g, "") }, 4096));
+    return true;
+  }
+
+  private tabsChanged(): void {
+    this.tabsVersion++;
+    for (const listener of this.tabsListeners) {
+      try {
+        listener();
+      } catch {
+        // Listeners are owner-UI refresh hints only.
+      }
+    }
   }
 
   request<C extends BrowserCommand>(
@@ -305,6 +399,9 @@ export class BrowserBridge implements BrowserConnection {
     this.handshakes.clear();
     this.extension?.socket.destroy();
     this.extension = undefined;
+    const loopback = this.loopback;
+    this.loopback = undefined;
+    await loopback?.close().catch(() => undefined);
     const server = this.server;
     this.server = undefined;
     if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -395,7 +492,7 @@ export class BrowserBridge implements BrowserConnection {
 
   // ---------------------------------------------------------------- connections
 
-  private accept(socket: net.Socket): void {
+  private accept(socket: BridgeSocket, start: "auth" | "hello" = "auth", transport: BridgeTransport = "native"): void {
     // Socket errors (EPIPE, ECONNRESET) end in 'close'.
     socket.on("error", () => undefined);
     if (this.closed || this.handshakes.size >= MAX_HANDSHAKES) {
@@ -404,7 +501,7 @@ export class BrowserBridge implements BrowserConnection {
     }
     this.handshakes.add(socket);
     const reader = new MessageReader(MAX_HANDSHAKE_FRAME_BYTES);
-    let phase: "auth" | "hello" | "ready" = "auth";
+    let phase: "auth" | "hello" | "ready" = start;
     const timer = setTimeout(() => socket.destroy(), this.handshakeTimeoutMs);
     timer.unref?.();
     const refuse = (reason: string) => {
@@ -463,11 +560,18 @@ export class BrowserBridge implements BrowserConnection {
             clearTimeout(timer);
             this.handshakes.delete(socket);
             const connectionId = randomBytes(16).toString("hex");
-            this.extension = { socket, browser: hello.browser, connectionId };
+            const features = (hello.features ?? []).filter((f) => (BRIDGE_FEATURES as readonly string[]).includes(f));
+            this.extension = { socket, browser: hello.browser, connectionId, transport, features };
             phase = "ready";
             reader.maxFrameBytes = MAX_BROWSER_TO_HOST_FRAME_BYTES;
-            for (const frame of encodeHostMessage({ type: "welcome", protocol: BRIDGE_PROTOCOL_VERSION, connectionId }))
+            for (const frame of encodeHostMessage({
+              type: "welcome",
+              protocol: BRIDGE_PROTOCOL_VERSION,
+              connectionId,
+              features: [...BRIDGE_FEATURES],
+            }))
               socket.write(frame);
+            this.tabsChanged();
             const b = hello.browser;
             this.log(
               "browser bridge: connected to " +
@@ -476,7 +580,8 @@ export class BrowserBridge implements BrowserConnection {
                 clean(b.version) +
                 " (CROT Browser Extension " +
                 clean(b.extensionVersion) +
-                ")",
+                ")" +
+                (transport === "loopback" ? " over the paired loopback channel" : ""),
             );
           } else {
             this.receive(message);
@@ -524,6 +629,7 @@ export class BrowserBridge implements BrowserConnection {
       if (extension.noticeCount > 120) throw new BrowserProtocolError("Browser notice rate exceeded.");
       if (response.event === "cdp_status")
         extension.cdp = { available: response.available, reason: response.available ? null : "debugger_unavailable" };
+      else if (response.event === "tabs_changed") this.tabsChanged();
       else if (response.event === "upload_released") {
         for (const listener of this.uploadListeners) listener(response.token, extension.connectionId);
       } else
@@ -560,6 +666,7 @@ export class BrowserBridge implements BrowserConnection {
 
   private disconnected(): void {
     this.extension = undefined;
+    this.tabsChanged();
     this.abandoned.clear();
     this.failPending(new CrotError("BROWSER_NOT_CONNECTED", "The CROT Browser Extension disconnected."));
     if (!this.closed) this.log("browser bridge: browser extension disconnected");

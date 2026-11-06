@@ -6,6 +6,7 @@ import { PassThrough } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
 import { bridgeEndpoint, generateBridgeToken, readBridgeToken } from "../../src/browser-bridge/endpoint.js";
 import {
+  BRIDGE_FEATURES,
   BRIDGE_PROTOCOL_VERSION,
   MAX_BROWSER_TO_HOST_FRAME_BYTES,
   MAX_HANDSHAKE_FRAME_BYTES,
@@ -230,12 +231,16 @@ describe("crot-browser-relay with the BrowserBridge", () => {
       type: "welcome",
       protocol: BRIDGE_PROTOCOL_VERSION,
       connectionId: expect.stringMatching(/^[0-9a-f]{32}$/),
+      features: [...BRIDGE_FEATURES],
     });
     expect(bridge.state()).toEqual({
       kind: "connected",
       browser: BROWSER,
       cdp: { available: false, reason: "not_probed" },
       connectionId: expect.stringMatching(/^[0-9a-f]{32}$/),
+      // The extension in these tests declares no optional features; it is connected through Native Messaging.
+      features: [],
+      transport: "native",
     });
 
     const pending = bridge.request("tabs.close", { tabId: 7 }, options());
@@ -267,6 +272,7 @@ describe("crot-browser-relay with the BrowserBridge", () => {
       type: "welcome",
       protocol: BRIDGE_PROTOCOL_VERSION,
       connectionId: expect.stringMatching(/^[0-9a-f]{32}$/),
+      features: [...BRIDGE_FEATURES],
     });
     expect(restarted.state().kind).toBe("connected");
   });

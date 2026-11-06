@@ -198,8 +198,8 @@ describe.runIf(process.platform === "linux")("crot-mcp browser bridge (built)", 
     return { client, status, stateDir: host.stateDir, stderr: () => stderr };
   }
 
-  it("is disabled by default and creates no bridge files", async () => {
-    const s = await serve(undefined);
+  it("browser.enabled false creates no bridge files", async () => {
+    const s = await serve({ enabled: false });
     try {
       expect((await s.status())?.browser.state).toBe("disabled");
       await expect(stat(path.join(s.stateDir, "browser-token"))).rejects.toThrow();

@@ -25,8 +25,11 @@
         <button id="refresh">Refresh status</button>
       </section>
       <section id="install" class="panel">
-        <p class="note">Start the desktop service with npm start, then refresh the connection.</p>
-        <button id="download" class="primary">Installation & downloads</button>
+        <p id="install-note" class="note">Install and start CROT Desktop. The extension connects automatically.</p>
+        <p id="pair-code" class="pair-code" data-no-i18n hidden></p>
+        <div id="desktops" class="desktops" hidden></div>
+        <button id="download" class="primary">Install CROT Desktop</button>
+        <button id="pair" hidden>Request again</button>
       </section>
       <div class="actions">
         <button id="open-app" class="primary">Open CROT App</button>
