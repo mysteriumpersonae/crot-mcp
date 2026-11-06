@@ -34,7 +34,7 @@ export async function runChatGroupScenarios({ evaluate, until, size, screenshot,
   })()`);
   await until("document.querySelector('.chat-agent-pill[aria-pressed=true]')");
   assert(
-    await evaluate("document.querySelector('.chat-browser-access input').checked"),
+    await evaluate("document.querySelector('.chat-browser-toggle').getAttribute('aria-pressed')==='true'"),
     "Browser access must be visible and enabled for direct chat",
   );
   const open = async (group) => {
@@ -130,7 +130,7 @@ export async function runChatGroupScenarios({ evaluate, until, size, screenshot,
   );
   // Technical failures are CROT messages inside the thread, never orange text under the composer.
   await evaluate(
-    "window.groupFailure=true;document.querySelector('.chat-browser-access input').click();(()=>{const m=document.querySelector('.chat-compose textarea');m.value='Failure fixture';m.dispatchEvent(new Event('input'));document.querySelector('.chat-send').click();})()",
+    "window.groupFailure=true;document.querySelector('.chat-browser-toggle').click();(()=>{const m=document.querySelector('.chat-compose textarea');m.value='Failure fixture';m.dispatchEvent(new Event('input'));document.querySelector('.chat-send').click();})()",
   );
   await until("document.querySelector('.chat-transcript .chat-system[data-chat-notice=error]')");
   assert(

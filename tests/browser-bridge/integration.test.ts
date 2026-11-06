@@ -124,7 +124,12 @@ class FakeExtension {
 
   /** hello -> welcome, as the extension does after connectNative. */
   async handshake(): Promise<void> {
-    this.send({ type: "hello", protocol: BRIDGE_PROTOCOL_VERSION, browser: BROWSER });
+    this.send({
+      type: "hello",
+      protocol: BRIDGE_PROTOCOL_VERSION,
+      browser: BROWSER,
+      features: ["tab-policy-envelope"],
+    });
     await waitFor(() => this.welcomed, 10_000).catch(() => {
       throw new Error(`no welcome from the relay; relay stderr: ${this.stderr}`);
     });
@@ -339,14 +344,13 @@ describe("browser extension chain (built crot-mcp + crot-browser-relay)", () => 
       expect(
         extension.requests.every(
           (r) =>
-            JSON.stringify(r.params.__crotTabPolicy) ===
+            JSON.stringify(r.tabPolicy) ===
             JSON.stringify({ mode: "background", domains: [], blockedDomains: [], sensitivePreset: false }),
         ),
       ).toBe(true);
       expect(
         extension.requests.map((r) => {
-          const { __crotTabPolicy: _policy, ...params } = r.params;
-          return [r.command, params];
+          return [r.command, r.params];
         }),
       ).toEqual([
         ["tabs.list", {}],

@@ -1,3 +1,4 @@
+import type { BrowserTabPolicy } from "./tab-policy.js";
 import type { BrowserImageFormat, BrowserInfo, BrowserPageFormat } from "./schemas.js";
 
 /**
@@ -190,6 +191,8 @@ export interface BrowserRequestOptions {
    * rejected with PERMISSION_DENIED without being sent (AD-9, AD-11).
    */
   readonly connectionId?: string;
+  /** Owner policy, transported separately from validated command arguments. */
+  readonly tabPolicy?: BrowserTabPolicy;
 }
 
 export interface BrowserConnection {

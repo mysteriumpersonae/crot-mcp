@@ -279,7 +279,10 @@ export class HostConnection {
     let response: BrowserResponse;
     try {
       // The id is read when a command checks it, right before acting: a dropped port has none.
-      const context = { connectionId: () => (this.port === port && this.connected ? this.connectionId : undefined) };
+      const context = {
+        connectionId: () => (this.port === port && this.connected ? this.connectionId : undefined),
+        tabPolicy: request.tabPolicy,
+      };
       const result = await this.options.handlers[request.command](request.params, context);
       response = { type: "response", id: request.id, ok: true, result };
     } catch (error) {

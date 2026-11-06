@@ -346,7 +346,7 @@ try {
           );
           assert(
             await evaluate(
-              "JSON.stringify([...document.querySelectorAll('#browser-page input[role=switch]')].map(i=>[i.dataset.switch,i.checked]))===JSON.stringify([['active',true],['background',false],['targeted',true],['access',true],['sessions',true],['automation',true]])",
+              "JSON.stringify([...document.querySelectorAll('#browser-page input[role=switch]')].map(i=>[i.dataset.switch,i.checked]))===JSON.stringify([['active',true],['background',false],['targeted',true],['sessions',true],['automation',true]])",
             ),
             "browser switches must reflect the saved policy",
           );
@@ -439,19 +439,19 @@ try {
     const browserSwitch = (key) => evaluate(`document.querySelector('#browser-page [data-switch=${key}]').click()`);
     const lastPolicy = "actions.filter(a=>a[0]==='browser.policy.set').at(-1)?.[1]";
     // The Browser and Permissions screens edit the same owner policy.
-    await browserSwitch("access");
-    await until("window.browserAccess.read===false");
     await route("Permissions");
     const permissionInput = (label) =>
       `([...document.querySelectorAll('#browser-permissions label')].find(l=>l.querySelector('span')?.textContent===${JSON.stringify(label)})?.querySelector('input'))`;
-    await until(`${permissionInput("Browser access")} && !${permissionInput("Browser access")}.checked`);
+    await until(`${permissionInput("Browser access")}?.checked`);
     await evaluate(`${permissionInput("Browser access")}.click()`);
-    await until(`window.browserAccess.read===true && ${permissionInput("Browser access")}?.checked`);
+    await until(`window.browserAccess.read===false`);
+    await evaluate(`${permissionInput("Browser access")}.click()`);
+    await until(`window.browserAccess.read===true`);
     await evaluate(`${permissionInput("Allow auto-clicks and form filling")}.click()`);
     await until("window.browserPolicy.automation===false");
     await route("Browser");
     await until(
-      "document.querySelector('[data-switch=access]')?.checked && !document.querySelector('[data-switch=automation]')?.disabled && !document.querySelector('[data-switch=automation]')?.checked",
+      "!document.querySelector('[data-switch=access]') && !document.querySelector('[data-switch=automation]')?.disabled && !document.querySelector('[data-switch=automation]')?.checked",
     );
     await browserSwitch("automation");
     await until("window.browserPolicy.automation!==false");

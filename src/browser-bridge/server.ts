@@ -353,6 +353,14 @@ export class BrowserBridge implements BrowserConnection {
         ),
       );
     }
+    if (options.tabPolicy && !extension.features.includes("tab-policy-envelope")) {
+      return Promise.reject(
+        new CrotError(
+          "OPERATION_FAILED",
+          "Update and reload the CROT browser extension to enforce browser policy safely.",
+        ),
+      );
+    }
     if (this.pending.size >= this.maxPending) {
       return Promise.reject(
         new CrotError("RESOURCE_BUSY", "Too many browser requests in flight (at most " + this.maxPending + ")."),
@@ -361,7 +369,7 @@ export class BrowserBridge implements BrowserConnection {
     const id = randomUUID();
     let frames: Uint8Array[];
     try {
-      frames = encodeHostMessage(createRequest(id, command, params));
+      frames = encodeHostMessage(createRequest(id, command, params, options.tabPolicy));
     } catch (error) {
       return Promise.reject(
         new CrotError("LIMIT_EXCEEDED", "The browser request cannot be sent: " + (error as Error).message),

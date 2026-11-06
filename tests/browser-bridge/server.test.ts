@@ -184,6 +184,15 @@ describe("BrowserBridge", () => {
     expect(logs).toEqual([]);
   });
 
+  it("refuses policy-bearing commands when an older extension cannot enforce the envelope", async () => {
+    const { bridge, token } = await startBridge();
+    await connectExtension(bridge, token);
+    const policy = { mode: "active" as const, domains: [], blockedDomains: [], sensitivePreset: false };
+    const error = await rejection(bridge.request("tabs.list", {}, { ...options(), tabPolicy: policy }));
+    expect(error.code).toBe("OPERATION_FAILED");
+    expect(error.message).toContain("reload the CROT browser extension");
+  });
+
   it("keeps the token across restarts", async () => {
     const first = await startBridge();
     await first.bridge.close();

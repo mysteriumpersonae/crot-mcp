@@ -31,6 +31,7 @@ describe.runIf(process.platform === "linux")("service auto-registration with a r
       messages: Array<{ role: string; content: unknown }>;
       tools?: Array<{ function?: { name: string } }>;
     }> = [];
+    let fixtureTabId = 0;
     provider = http.createServer((req, res) => {
       if (req.method === "GET") {
         res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
@@ -48,10 +49,28 @@ describe.runIf(process.platform === "linux")("service auto-registration with a r
         const hasToolResult = body.messages.some((message) => message.role === "tool");
         const toolMessage = body.messages.find((message) => message.role === "tool");
         const toolResult = toolMessage ? JSON.parse(String(toolMessage.content)) : undefined;
-        const tabs = toolResult?.content?.[0]?.text ? JSON.parse(toolResult.content[0].text).tabs : [];
+        const value = toolResult?.content?.[0]?.text ? JSON.parse(toolResult.content[0].text) : {};
+        const pageQuestion = body.messages.some(
+          (message) => message.role === "user" && JSON.stringify(message.content).includes("Прочитай"),
+        );
         const delta = hasToolResult
-          ? { content: `Открытые вкладки: ${(tabs as Array<{ title: string }>).map((tab) => tab.title).join(", ")}` }
-          : { tool_calls: [{ index: 0, id: "call_tabs", function: { name: "browser_list_tabs", arguments: "{}" } }] };
+          ? {
+              content: pageQuestion
+                ? `Страница: ${value.content}`
+                : `Открытые вкладки: ${(value.tabs as Array<{ title: string }>).map((tab) => tab.title).join(", ")}`,
+            }
+          : {
+              tool_calls: [
+                {
+                  index: 0,
+                  id: pageQuestion ? "call_page" : "call_tabs",
+                  function: {
+                    name: pageQuestion ? "browser_read_page" : "browser_list_tabs",
+                    arguments: pageQuestion ? JSON.stringify({ tabId: fixtureTabId }) : "{}",
+                  },
+                },
+              ],
+            };
         res.end(`data: ${JSON.stringify({ choices: [{ delta }] })}\n\ndata: [DONE]\n\n`);
       });
     });
@@ -80,8 +99,9 @@ describe.runIf(process.platform === "linux")("service auto-registration with a r
         60_000,
         "extension connection",
       );
-      const tabs = await h.ok<{ tabs: unknown[] }>(session.client, "browser_tabs_list");
+      const tabs = await h.ok<{ tabs: Array<{ tabId: number; title: string }> }>(session.client, "browser_tabs_list");
       expect(tabs.tabs.length).toBeGreaterThan(0);
+      fixtureTabId = tabs.tabs.find((tab) => tab.title === "CROT test tab")!.tabId;
       control = await ControlClient.connect({
         stateDir: path.join(sb.stateHome, "crot"),
         privateFiles: createPrivateFileProtection(false),
@@ -115,6 +135,37 @@ describe.runIf(process.platform === "linux")("service auto-registration with a r
       expect(requests[0]!.tools?.map((tool) => tool.function?.name)).toContain("browser_list_tabs");
       const toolResult = requests[1]!.messages.find((message) => message.role === "tool");
       expect(JSON.stringify(toolResult?.content)).toContain("tabId");
+      await control!.request("browser.policy.set", {
+        mode: "background",
+        domains: [],
+        blockedDomains: [],
+        sensitivePreset: false,
+      });
+      const pageStarted = (await control!.request("chat.start", {
+        provider: "Local HTTP",
+        model: "fixture",
+        message: "Прочитай текущую страницу",
+        browserTools: true,
+      })) as { id: string };
+      const pageChat = await h.waitFor(
+        async () => {
+          const result = (await control!.request("chat.poll", { id: pageStarted.id })) as {
+            state: string;
+            blocks: Array<{ type: string; name?: string; status?: string; text?: string }>;
+          };
+          return result.state === "running" ? undefined : result;
+        },
+        20_000,
+        "chat page read",
+      );
+      expect(pageChat.state).toBe("completed");
+      expect(pageChat.blocks, JSON.stringify(pageChat.blocks)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ type: "tool", name: "browser_read_page", status: "completed" }),
+          expect.objectContaining({ type: "assistant", text: expect.stringContaining("Real browser fixture") }),
+        ]),
+      );
+      expect(JSON.stringify(pageChat.blocks)).not.toContain("_crotTabPolicy");
       // Exercise the same guarded operations backing the chat aliases, without any manual grant.
       actionSession = await h.startCrot(sb, config, path.join(sb.base, "audit.jsonl"));
       const opened = await h.ok<{ tabId: number }>(actionSession.client, "browser_tab_open", {

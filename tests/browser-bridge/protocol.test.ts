@@ -272,6 +272,20 @@ describe("message validation", () => {
     expect(() => createRequest("bad id", "tabs.list", {})).toThrow(BrowserProtocolError);
   });
 
+  it("validates an owner policy in the request envelope", () => {
+    const policy = {
+      mode: "active" as const,
+      domains: [],
+      blockedDomains: ["bank.com"],
+      sensitivePreset: false,
+      automation: false,
+    };
+    const request = createRequest("r1", "tabs.list", {}, policy);
+    expect(parseHostMessage(request)).toEqual(request);
+    expect(request.params).toEqual({});
+    expect(() => parseHostMessage({ ...request, tabPolicy: { ...policy, mode: "all" } })).toThrow(BrowserProtocolError);
+  });
+
   it.each([
     { type: "response", id: "a", ok: true, result: 1 },
     { type: "request", id: "a", command: "page.evaluate", params: {} },
@@ -288,7 +302,7 @@ describe("message validation", () => {
   });
 
   it("negotiates optional features in hello and welcome; unknown names pass, malformed lists fail", () => {
-    expect(BRIDGE_FEATURES).toEqual(["tab-policy-v2", "tabs-changed", "ui-manage"]);
+    expect(BRIDGE_FEATURES).toEqual(["tab-policy-v2", "tabs-changed", "ui-manage", "tab-policy-envelope"]);
     expect(
       parseBrowserMessage({
         type: "hello",

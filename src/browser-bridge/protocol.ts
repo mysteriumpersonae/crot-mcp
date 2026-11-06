@@ -14,6 +14,7 @@
  * This module has no dependencies on Node.js or zod so that the extension can
  * reuse it.
  */
+import { parseTabPolicy, type BrowserTabPolicy } from "../core/capabilities/browser/tab-policy.js";
 import {
   BROWSER_COMMANDS,
   type BrowserCommand,
@@ -48,7 +49,7 @@ export const MAX_ERROR_MESSAGE_LENGTH = 2000;
  * - tabs-changed: content-free `tabs_changed` notices (the owner UI refreshes its tab list).
  * - ui-manage: the host may ask the extension to open its own management page.
  */
-export const BRIDGE_FEATURES = ["tab-policy-v2", "tabs-changed", "ui-manage"] as const;
+export const BRIDGE_FEATURES = ["tab-policy-v2", "tabs-changed", "ui-manage", "tab-policy-envelope"] as const;
 export type BridgeFeature = (typeof BRIDGE_FEATURES)[number];
 const FEATURE = /^[a-z][a-z0-9-]{0,31}$/;
 const MAX_FEATURES = 16;
@@ -144,6 +145,7 @@ export interface HostRequest {
   readonly id: string;
   readonly command: BrowserCommand;
   readonly params: Readonly<Record<string, unknown>>;
+  readonly tabPolicy?: BrowserTabPolicy;
 }
 
 /** Host -> extension: one piece of a request too large for a single frame. */
@@ -179,9 +181,16 @@ export function createRequest<C extends BrowserCommand>(
   id: string,
   command: C,
   params: BrowserCommandParams[C],
+  tabPolicy?: BrowserTabPolicy,
 ): HostRequest {
   if (!isRequestId(id)) throw new BrowserProtocolError("Invalid request id.");
-  return { type: "request", id, command, params: params as Readonly<Record<string, unknown>> };
+  return {
+    type: "request",
+    id,
+    command,
+    params: params as Readonly<Record<string, unknown>>,
+    ...(tabPolicy ? { tabPolicy } : {}),
+  };
 }
 
 // ---------------------------------------------------------------- framing
@@ -543,7 +552,15 @@ export function parseHostMessage(value: unknown): HostToBrowserMessage {
       const { id, command, params } = value;
       if (!isRequestId(id) || typeof command !== "string" || !COMMANDS.has(command) || !isObject(params))
         invalid("request");
-      return { type: "request", id, command: command as BrowserCommand, params };
+      let tabPolicy: BrowserTabPolicy | undefined;
+      if (value.tabPolicy !== undefined) {
+        try {
+          tabPolicy = parseTabPolicy(value.tabPolicy);
+        } catch {
+          invalid("request policy");
+        }
+      }
+      return { type: "request", id, command: command as BrowserCommand, params, ...(tabPolicy ? { tabPolicy } : {}) };
     }
     case "chunk": {
       const { id, index, count, data } = value;

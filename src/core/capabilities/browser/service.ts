@@ -1,12 +1,5 @@
 import { publicationBrowserControlTarget, publicationBrowserTarget } from "../../publications/browser-boundary.js";
-import {
-  DEFAULT_TAB_POLICY,
-  TAB_POLICY_V2_FEATURE,
-  legacyTabPolicy,
-  parseTabPolicy,
-  tabPolicyAllowsAutomation,
-  type BrowserTabPolicy,
-} from "./tab-policy.js";
+import { DEFAULT_TAB_POLICY, parseTabPolicy, tabPolicyAllowsAutomation, type BrowserTabPolicy } from "./tab-policy.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { TabQueue } from "./tab-queue.js";
 import type { ExposureScope } from "../../auth/principal.js";
@@ -1215,14 +1208,6 @@ export class BrowserService {
       connectionId ??= active.connectionId;
     }
     if (!tabPolicyAllowsAutomation(this.tabPolicy, command)) throw automationOff();
-    if (this.tabPolicy) {
-      // An extension without tab-policy-v2 rejects unknown keys: it gets the narrower legacy policy
-      // (no active-tab extension of targeted mode); automation is enforced here either way.
-      const state = this.deps.connection?.state();
-      const v2 = state?.kind === "connected" && state.features?.includes(TAB_POLICY_V2_FEATURE) === true;
-      const policy = this.getTabPolicy();
-      params = { ...params, __crotTabPolicy: v2 ? policy : legacyTabPolicy(policy) } as BrowserCommandParams[C];
-    }
     const connection = bound ? this.boundConnection(bound) : this.requireConnection();
     const controller = new AbortController();
     this.pending.add(controller);
@@ -1244,6 +1229,7 @@ export class BrowserService {
           timeoutMs,
           signal: controller.signal,
           ...(connectionId !== undefined ? { connectionId } : {}),
+          ...(this.tabPolicy ? { tabPolicy: this.getTabPolicy() } : {}),
         }),
         interrupted,
       ]);
