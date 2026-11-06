@@ -67,7 +67,8 @@ export function launcherFileName(os: OsFamily): string {
 
 /**
  * Manifest locations for the current user.
- * - Linux (and other POSIX): $XDG_CONFIG_HOME (default ~/.config)/<browser>/NativeMessagingHosts.
+ * - Linux (and other POSIX): $XDG_CONFIG_HOME (default ~/.config)/<browser>/NativeMessagingHosts;
+ *   Linux also registers the Snap Chromium profile path.
  * - macOS: ~/Library/Application Support/<browser>/NativeMessagingHosts.
  * - Windows: one manifest in <state>/native-messaging, registered under
  *   HKCU\Software\Google\Chrome\NativeMessagingHosts (read by Chrome and Brave),
@@ -122,10 +123,17 @@ export function hostRegistrations(
           ["Microsoft Edge", "microsoft-edge"],
           ["Brave", "BraveSoftware/Brave-Browser"],
         ];
-  return dirs.map(([browser, dir]) => ({
+  const registrations = dirs.map(([browser, dir]) => ({
     browsers: [browser],
     manifestFile: p.join(base, dir, "NativeMessagingHosts", MANIFEST_FILE_NAME),
   }));
+  if (os === "linux") {
+    registrations.push({
+      browsers: ["Chromium"],
+      manifestFile: p.join(home, "snap", "chromium", "common", "chromium", "NativeMessagingHosts", MANIFEST_FILE_NAME),
+    });
+  }
+  return registrations;
 }
 
 export interface LauncherTarget {

@@ -184,6 +184,15 @@ describe("BrowserBridge", () => {
     expect(logs).toEqual([]);
   });
 
+  it("refuses policy-bearing commands when an older extension cannot enforce the envelope", async () => {
+    const { bridge, token } = await startBridge();
+    await connectExtension(bridge, token);
+    const policy = { mode: "active" as const, domains: [], blockedDomains: [], sensitivePreset: false };
+    const error = await rejection(bridge.request("tabs.list", {}, { ...options(), tabPolicy: policy }));
+    expect(error.code).toBe("OPERATION_FAILED");
+    expect(error.message).toContain("reload the CROT browser extension");
+  });
+
   it("keeps the token across restarts", async () => {
     const first = await startBridge();
     await first.bridge.close();
@@ -363,23 +372,33 @@ describe("BrowserBridge", () => {
     await connectExtension(bridge, token);
   });
 
-  it("accepts one extension at a time", async () => {
+  it("isolates concurrent browser sessions, routing, focus and disconnects", async () => {
     const { bridge, token } = await startBridge();
     const first = await connectExtension(bridge, token);
-    const second = await FakeClient.connect(bridge.endpoint.path);
-    second.send({ type: "auth", protocol: 1, token });
-    second.send({ type: "hello", protocol: 1, browser: { ...BROWSER, name: "Edge" } });
-    await second.closed;
-    expect(bridge.state()).toEqual({
-      kind: "connected",
-      browser: BROWSER,
-      cdp: { available: false, reason: "not_probed" },
-      connectionId: expect.stringMatching(/^[0-9a-f]{32}$/),
-      // The extension in these tests declares no optional features; it is connected through Native Messaging.
-      features: [],
-      transport: "native",
+    const second = await connectExtension(bridge, token);
+    expect(bridge.sessions()).toHaveLength(2);
+    expect(bridge.state()).toMatchObject({ connectionId: first.connectionId });
+    second.send({ type: "browser_notice", event: "browser_focused" });
+    await waitFor(() => {
+      const state = bridge.state();
+      return state.kind === "connected" && state.connectionId === second.connectionId;
     });
+    await roundTrip(bridge, second);
+    expect(bridge.select(first.connectionId)).toBe(true);
+    second.send({ type: "browser_notice", event: "browser_focused" });
+    await sleep(20);
+    expect(bridge.state()).toMatchObject({ connectionId: first.connectionId });
+    const pending = bridge.request("tabs.list", {}, options());
+    const request = await first.nextRequest();
+    // A different browser cannot answer an outstanding request even with the correct id.
+    second.send({ type: "response", id: request.id, ok: true, result: { tabs: ["stolen"] } });
+    await second.closed;
+    first.send({ type: "response", id: request.id, ok: true, result: { tabs: [] } });
+    expect(await pending).toEqual({ tabs: [] });
+    expect(bridge.sessions()).toHaveLength(1);
     await roundTrip(bridge, first);
+    expect(bridge.select(second.connectionId)).toBe(false);
+    expect(bridge.select()).toBe(true);
   });
 
   it("closes the connection on anything but a response to a pending request", async () => {

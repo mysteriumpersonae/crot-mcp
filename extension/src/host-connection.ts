@@ -29,7 +29,7 @@ import type { LoopbackLink } from "./loopback.js";
  *    one `response`, plus bounded content-free lifecycle notices: the browser side cannot
  *    initiate operations, and authorization belongs to Core's PermissionEngine.
  * 3. Any protocol violation closes the port. After a disconnect (CROT not
- *    running, relay exit, another extension already connected) it reconnects
+ *    running or relay exit) it reconnects
  *    with exponential backoff; background.ts also calls ensureConnected()
  *    from a periodic alarm, since timers do not survive the service worker
  *    being suspended. An open native port keeps the service worker alive.
@@ -62,6 +62,8 @@ export interface HostConnectionOptions {
   readonly log?: (message: string) => void;
   /** Called after a connection ends (refs and debugger sessions of it become invalid, AD-16 point 5). */
   readonly onDisconnected?: () => void;
+  /** Check whether the newly connected browser has OS focus. */
+  readonly onConnected?: () => void;
   readonly reconnectMinMs?: number;
   readonly reconnectMaxMs?: number;
   readonly welcomeTimeoutMs?: number;
@@ -114,6 +116,8 @@ export class HostConnection {
   private tabsTimer: ReturnType<typeof setTimeout> | undefined;
   private lastTabsNotice = 0;
   private lastManage = 0;
+  private focusTimer: ReturnType<typeof setTimeout> | undefined;
+  private lastFocusNotice = 0;
 
   constructor(private readonly options: HostConnectionOptions) {
     this.log = options.log ?? (() => undefined);
@@ -141,6 +145,23 @@ export class HostConnection {
     }, wait);
   }
 
+  /** Content-free focus hint; only sent to a host supporting the pool protocol. */
+  browserFocused(): void {
+    if (!this.connected || !this.hostFeatures.includes("browser-focus") || this.focusTimer) return;
+    const wait = Math.max(0, 2000 - (Date.now() - this.lastFocusNotice));
+    this.focusTimer = setTimeout(() => {
+      this.focusTimer = undefined;
+      if (!this.connected) return;
+      this.lastFocusNotice = Date.now();
+      this.notify({ type: "browser_notice", event: "browser_focused" });
+    }, wait);
+  }
+
+  browserBlurred(): void {
+    clearTimeout(this.focusTimer);
+    this.focusTimer = undefined;
+  }
+
   /** Fixed passive telemetry, never a request to execute a Core operation. */
   notify(notice: BrowserNotice): void {
     if (this.port && this.connected) this.post(this.port, notice);
@@ -158,13 +179,14 @@ export class HostConnection {
   stop(): void {
     this.stopped = true;
     clearTimeout(this.reconnectTimer);
+    clearTimeout(this.focusTimer);
+    this.focusTimer = undefined;
     this.reconnectTimer = undefined;
     if (this.port) this.drop(this.port, "stopped");
   }
 
   private connect(): void {
-    // A pairing request waiting for the owner is polled without retrying native messaging each time.
-    if (this.options.loopback?.waiting) return this.connectLoopback();
+    // Always retry native first: a host may have been registered while loopback waited.
     let port: ChromePort;
     try {
       port = this.options.runtime.connectNative(NATIVE_HOST_NAME);
@@ -252,10 +274,17 @@ export class HostConnection {
       this.connectionId = message.connectionId;
       this.hostFeatures = message.features ?? [];
       this.failures = 0;
+      this.options.onConnected?.();
       this.log("connected to the CROT Host" + (this.portTransport === "loopback" ? " (loopback)" : ""));
       return;
     }
     if (!this.connected) return this.drop(port, "protocol error: request before welcome");
+    if (message.type === "loopback_bootstrap") {
+      if (this.portTransport !== "native" || !this.hostFeatures.includes("loopback-auto"))
+        return this.drop(port, "protocol error: unexpected loopback bootstrap");
+      void this.options.loopback?.bootstrap(message);
+      return;
+    }
     if (message.type === "ui_result") return this.drop(port, "protocol error: chunked UI result");
     if (message.type === "ui_manage") {
       const now = Date.now();
@@ -279,7 +308,10 @@ export class HostConnection {
     let response: BrowserResponse;
     try {
       // The id is read when a command checks it, right before acting: a dropped port has none.
-      const context = { connectionId: () => (this.port === port && this.connected ? this.connectionId : undefined) };
+      const context = {
+        connectionId: () => (this.port === port && this.connected ? this.connectionId : undefined),
+        tabPolicy: request.tabPolicy,
+      };
       const result = await this.options.handlers[request.command](request.params, context);
       response = { type: "response", id: request.id, ok: true, result };
     } catch (error) {
@@ -318,6 +350,7 @@ export class HostConnection {
     this.welcomeTimer = undefined;
     clearTimeout(this.tabsTimer);
     this.tabsTimer = undefined;
+    this.browserBlurred();
     this.port = undefined;
     this.connected = false;
     this.connectionId = undefined;
@@ -344,8 +377,7 @@ export class HostConnection {
     if (this.stopped) return;
     const min = this.options.reconnectMinMs ?? RECONNECT_MIN_MS;
     const max = this.options.reconnectMaxMs ?? RECONNECT_MAX_MS;
-    // A pairing request waiting for the owner is polled at a fixed short interval.
-    const delay = this.options.loopback?.retryMs ?? Math.min(max, min * 2 ** Math.min(this.failures, 30));
+    const delay = Math.min(max, min * 2 ** Math.min(this.failures, 30));
     this.failures++;
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = undefined;

@@ -82,6 +82,7 @@ export const PRODUCT_SCHEMAS = {
     .strict(),
   "browser.link.status": z.object({}).strict(),
   "browser.link.manage": z.object({}).strict(),
+  "browser.link.select": z.object({ id: pairingId.nullable() }).strict(),
   "browser.link.approve": z.object({ id: pairingId }).strict(),
   "browser.link.reject": z.object({ id: pairingId }).strict(),
   "browser.link.forget": z.object({ id: pairingId }).strict(),

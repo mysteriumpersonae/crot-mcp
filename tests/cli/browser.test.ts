@@ -1,10 +1,15 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { bridgeTokenFile, readBridgeToken } from "../../src/browser-bridge/endpoint.js";
 import { browserPairingsFile } from "../../src/browser-bridge/loopback.js";
-import { browserProtectedPaths, startBrowserBridge } from "../../src/cli/browser.js";
+import {
+  browserBootstrapPath,
+  browserProtectedPaths,
+  provisionBrowserBootstrap,
+  startBrowserBridge,
+} from "../../src/cli/browser.js";
 import { CrotError } from "../../src/core/errors.js";
 import { createPrivateFileProtection } from "../../src/core/platform/private-files.js";
 
@@ -28,6 +33,43 @@ async function start(enabled: boolean, stateDir: string) {
   if (bridge) cleanups.push(() => bridge.close());
   return { bridge, logs };
 }
+
+describe("automatic bootstrap file", () => {
+  it("writes an owner-only file and rejects exposed resources or symlinks", async () => {
+    const base = await mkdtemp(path.join(os.tmpdir(), "crot-bootstrap-test-"));
+    cleanups.push(() => rm(base, { recursive: true, force: true }));
+    const ext = path.join(base, "extension");
+    await mkdir(ext);
+    await cp(path.resolve("extension/manifest.json"), path.join(ext, "manifest.json"));
+    const credential = { instance: "a".repeat(32), pairing: "b".repeat(32), secret: "c".repeat(64) };
+    const protection = windows
+      ? (await import("../../src/service/private-files.js")).createServicePrivateFiles(true)
+      : privateFiles;
+    await provisionBrowserBootstrap(ext, credential, protection);
+    const file = browserBootstrapPath(ext);
+    expect(JSON.parse(await readFile(file, "utf8"))).toMatchObject({ version: 1, ...credential });
+    if (!windows) expect((await lstat(file)).mode & 0o777).toBe(0o600);
+    const manifestPath = path.join(ext, "manifest.json");
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+    await writeFile(
+      manifestPath,
+      JSON.stringify({ ...manifest, web_accessible_resources: [{ resources: ["*"], matches: ["<all_urls>"] }] }),
+    );
+    await expect(provisionBrowserBootstrap(ext, credential, protection)).rejects.toThrow("resource policy");
+    await writeFile(manifestPath, JSON.stringify(manifest));
+    if (!windows) {
+      await rm(file);
+      const victim = path.join(base, "victim");
+      await writeFile(victim, "safe");
+      await symlink(victim, file);
+      await expect(provisionBrowserBootstrap(ext, credential, protection)).rejects.toThrow("unsafe");
+      expect(await readFile(victim, "utf8")).toBe("safe");
+    }
+    await expect(provisionBrowserBootstrap(ext, credential, { ...protection, enforced: false })).rejects.toThrow(
+      "protection",
+    );
+  });
+});
 
 describe("browser bridge wiring", () => {
   it("is off by default: no bridge, nothing created, nothing protected", async () => {

@@ -16,7 +16,7 @@
 import { detectBrowser } from "./browser-info.js";
 import { CdpSessions } from "./cdp.js";
 import { createCommandHandlers } from "./commands.js";
-import { ownerUiAction, ownerUiPairInstance } from "./owner-ui.js";
+import { ownerUiAction } from "./owner-ui.js";
 import { HostConnection } from "./host-connection.js";
 import { LoopbackLink, type LoopbackSocket } from "./loopback.js";
 
@@ -41,6 +41,7 @@ const loopback = extensionId
       socket: (url) => new WebSocket(url) as unknown as LoopbackSocket,
       storage: chrome.storage?.local,
       origin: "chrome-extension://" + extensionId,
+      ...(chrome.runtime.getURL ? { bootstrapUrl: chrome.runtime.getURL(".bridge-secret.json") } : {}),
       browser,
       log,
     })
@@ -64,6 +65,14 @@ const connection = new HostConnection({
     },
   }),
   log,
+  onConnected: () => {
+    void chrome.windows
+      .getLastFocused?.()
+      .then((window) => {
+        if (window.focused) connection.browserFocused();
+      })
+      .catch(() => undefined);
+  },
   onDisconnected: () => {
     resetQueues();
     void cdp.detachAll();
@@ -86,12 +95,6 @@ uiRuntime.onMessage?.addListener((message, sender, reply) => {
     void connection.openControlCenter().then((ok) => reply({ ok }));
     return true;
   }
-  if (action === "pair") {
-    loopback?.pair(ownerUiPairInstance(message));
-    connection.ensureConnected();
-    reply({ ok: loopback !== undefined });
-    return;
-  }
   // An open popup or welcome page looks for CROT Desktop right away instead of waiting for the backoff.
   connection.ensureConnected();
   reply({ connection: connection.state, transport: connection.transport, link: loopback?.view });
@@ -99,6 +102,10 @@ uiRuntime.onMessage?.addListener((message, sender, reply) => {
 
 // Content-free hints so CROT Desktop refreshes its tab list (no tab data is sent with them).
 const tabsChanged = () => connection.tabsChanged();
+chrome.windows.onFocusChanged?.addListener((windowId) => {
+  if (windowId >= 0) connection.browserFocused();
+  else connection.browserBlurred();
+});
 chrome.tabs.onCreated.addListener(tabsChanged);
 chrome.tabs.onRemoved.addListener(tabsChanged);
 chrome.tabs.onActivated?.addListener(tabsChanged);

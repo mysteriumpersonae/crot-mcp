@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { parseRelayConfig } from "../../src/cloud-relay/config.js";
 import { WindowCounter } from "../../src/cloud-relay/limits.js";
 import { INITIAL_CONNECTION_WINDOW, INITIAL_STREAM_WINDOW, OUTCOME_HEADER } from "../../src/tunnel/protocol.js";
-import { RelayHarness, sleep, waitFor, type PairedDevice } from "./harness.js";
+import { RelayHarness, waitFor, type PairedDevice } from "./harness.js";
 let h: RelayHarness;
 const sockets: Socket[] = [];
 afterEach(async () => {
@@ -175,7 +175,8 @@ describe("WP-29 limits/load", () => {
     expect(text).toContain("503");
     expect(text).toContain("Retry-After: 1");
     sockets[0]!.destroy();
-    await sleep(30);
+    // Client-side close is asynchronous: wait for the server to release the source slot.
+    await waitFor(() => h.relay.activeSourceConnections === 1);
     const free = await socket(h.relay.port);
     free.write("GET /.crot/health HTTP/1.1\r\nHost: x\r\nX-Forwarded-For: 203.0.113.1\r\nConnection: close\r\n\r\n");
     let response = "";

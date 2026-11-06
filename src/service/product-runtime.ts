@@ -156,6 +156,7 @@ export interface BrowserLinkHost {
   forget(id: string): Promise<boolean>;
   /** Ask the connected extension to open its management page; false when it cannot. */
   manage(): boolean;
+  select?(id?: string): boolean;
 }
 export interface ProductHost {
   stateDir: string;
@@ -895,6 +896,14 @@ export class ProductRuntime {
         return { ok: true, link: this.host.browserLink?.()?.status() ?? { state: "disabled" } };
       case "browser.link.manage":
         return { ok: this.host.browserLink?.()?.manage() === true };
+      case "browser.link.select": {
+        const link = this.host.browserLink?.();
+        if (!link?.select) return fail("Browser selection is unavailable");
+        await this.event(method);
+        if (!link.select(typeof p.id === "string" ? p.id : undefined))
+          return fail("Browser connection no longer exists");
+        return { ok: true, link: link.status() };
+      }
       case "browser.link.approve":
       case "browser.link.reject":
       case "browser.link.forget": {

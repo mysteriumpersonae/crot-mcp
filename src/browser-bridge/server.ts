@@ -16,9 +16,8 @@
  *    token (constant-time comparison); then the extension's `hello` arrives.
  *    Both must arrive within the handshake timeout, in frames of at most
  *    MAX_HANDSHAKE_FRAME_BYTES. The bridge answers `welcome`.
- * 2. Only one extension is connected at a time; further connections are
- *    refused while one is active.
- * 3. On disconnect every pending request fails with BROWSER_NOT_CONNECTED.
+ * 2. Multiple authenticated extensions may connect concurrently.
+ * 3. On disconnect only requests belonging to that connection fail.
  * 4. Every accepted hello gets a new random connectionId (AD-9), reported in
  *    state() and sent to the extension in `welcome`. A request that names a
  *    connectionId (a gated, approved operation) is sent only on that
@@ -72,6 +71,7 @@ export const BRIDGE_HANDSHAKE_TIMEOUT_MS = 5_000;
 export const BRIDGE_MAX_PENDING_REQUESTS = 16;
 /** Connections still in the handshake at the same time. */
 const MAX_HANDSHAKES = 4;
+const MAX_EXTENSIONS = 16;
 /** Ids of requests Core gave up on whose late answers are discarded. */
 const MAX_ABANDONED = 256;
 const LIVENESS_TIMEOUT_MS = 1_000;
@@ -148,6 +148,7 @@ interface PendingRequest {
   readonly cleanup: () => void;
   /** The request carried an expected browser subject: only then may the extension answer PERMISSION_DENIED (AD-11). */
   readonly expectsSubject: boolean;
+  readonly connectionId: string;
 }
 
 interface ConnectedExtension {
@@ -162,6 +163,7 @@ interface ConnectedExtension {
   noticeCount?: number;
   uiWindow?: number;
   uiCount?: number;
+  lastActiveAt: number;
 }
 
 const notConnected = () => new CrotError("BROWSER_NOT_CONNECTED", "The CROT Browser Extension is not connected.");
@@ -187,13 +189,35 @@ export class BrowserBridge implements BrowserConnection {
     return () => this.dialogListeners.delete(listener);
   }
   private server: net.Server | undefined;
-  private extension: ConnectedExtension | undefined;
+  private readonly extensions = new Map<string, ConnectedExtension>();
+  private selectedId: string | undefined;
+  private autoId: string | undefined;
+  private get extension(): ConnectedExtension | undefined {
+    return this.extensions.get(this.selectedId ?? this.autoId ?? "");
+  }
+  sessions(): { id: string; browser: BrowserInfo; transport: BridgeTransport; lastActiveAt: number }[] {
+    return [...this.extensions.values()].map(({ connectionId: id, browser, transport, lastActiveAt }) => ({
+      id,
+      browser,
+      transport,
+      lastActiveAt,
+    }));
+  }
+  get selection(): string | undefined {
+    return this.selectedId;
+  }
+  select(id?: string): boolean {
+    if (id !== undefined && !this.extensions.has(id)) return false;
+    this.selectedId = id;
+    this.tabsChanged();
+    return true;
+  }
   private readonly handshakes = new Set<BridgeSocket>();
   private loopback: Loopback | undefined;
   private tabsVersion = 0;
   private readonly tabsListeners = new Set<() => void>();
   private readonly pending = new Map<string, PendingRequest>();
-  private readonly abandoned = new Set<string>();
+  private readonly abandoned = new Map<string, string>();
   private closed = false;
   private readonly log: (message: string) => void;
   private readonly handshakeTimeoutMs: number;
@@ -286,6 +310,13 @@ export class BrowserBridge implements BrowserConnection {
       return;
     }
     this.loopback = loopback;
+    for (const extension of this.extensions.values()) this.sendLoopbackBootstrap(extension);
+  }
+
+  private sendLoopbackBootstrap(extension: ConnectedExtension): void {
+    if (extension.transport !== "native" || !extension.features.includes("loopback-auto")) return;
+    const credential = this.loopback?.nativeBootstrap();
+    if (credential) extension.socket.write(encodeMessage({ type: "loopback_bootstrap", ...credential }, 4096));
   }
 
   get loopbackEndpoint(): Loopback | undefined {
@@ -353,6 +384,14 @@ export class BrowserBridge implements BrowserConnection {
         ),
       );
     }
+    if (options.tabPolicy && !extension.features.includes("tab-policy-envelope")) {
+      return Promise.reject(
+        new CrotError(
+          "OPERATION_FAILED",
+          "Update and reload the CROT browser extension to enforce browser policy safely.",
+        ),
+      );
+    }
     if (this.pending.size >= this.maxPending) {
       return Promise.reject(
         new CrotError("RESOURCE_BUSY", "Too many browser requests in flight (at most " + this.maxPending + ")."),
@@ -361,7 +400,7 @@ export class BrowserBridge implements BrowserConnection {
     const id = randomUUID();
     let frames: Uint8Array[];
     try {
-      frames = encodeHostMessage(createRequest(id, command, params));
+      frames = encodeHostMessage(createRequest(id, command, params, options.tabPolicy));
     } catch (error) {
       return Promise.reject(
         new CrotError("LIMIT_EXCEEDED", "The browser request cannot be sent: " + (error as Error).message),
@@ -383,7 +422,7 @@ export class BrowserBridge implements BrowserConnection {
         options.signal.removeEventListener("abort", onAbort);
       };
       const expectsSubject = isObjectWithExpect(params);
-      this.pending.set(id, { resolve, reject, cleanup, expectsSubject });
+      this.pending.set(id, { resolve, reject, cleanup, expectsSubject, connectionId: extension.connectionId });
       options.signal.addEventListener("abort", onAbort, { once: true });
       // All frames of one request are written consecutively (chunked requests must not interleave).
       for (const frame of frames) extension.socket.write(frame);
@@ -397,8 +436,10 @@ export class BrowserBridge implements BrowserConnection {
     this.failPending(new CrotError("BROWSER_NOT_CONNECTED", "The browser bridge is closed."));
     for (const socket of this.handshakes) socket.destroy();
     this.handshakes.clear();
-    this.extension?.socket.destroy();
-    this.extension = undefined;
+    for (const extension of this.extensions.values()) extension.socket.destroy();
+    this.extensions.clear();
+    this.selectedId = undefined;
+    this.autoId = undefined;
     const loopback = this.loopback;
     this.loopback = undefined;
     await loopback?.close().catch(() => undefined);
@@ -512,7 +553,8 @@ export class BrowserBridge implements BrowserConnection {
     socket.on("close", () => {
       clearTimeout(timer);
       this.handshakes.delete(socket);
-      if (this.extension?.socket === socket) this.disconnected();
+      const extension = [...this.extensions.values()].find((item) => item.socket === socket);
+      if (extension) this.disconnected(extension);
     });
 
     socket.on("data", (chunk: Buffer) => {
@@ -553,15 +595,23 @@ export class BrowserBridge implements BrowserConnection {
               return;
             }
             this.updateRequired = false;
-            if (this.extension) {
-              refuse("a browser extension is already connected");
+            if (this.extensions.size >= MAX_EXTENSIONS) {
+              refuse("too many browser extensions connected");
               return;
             }
             clearTimeout(timer);
             this.handshakes.delete(socket);
             const connectionId = randomBytes(16).toString("hex");
             const features = (hello.features ?? []).filter((f) => (BRIDGE_FEATURES as readonly string[]).includes(f));
-            this.extension = { socket, browser: hello.browser, connectionId, transport, features };
+            this.extensions.set(connectionId, {
+              socket,
+              browser: hello.browser,
+              connectionId,
+              transport,
+              features,
+              lastActiveAt: Date.now(),
+            });
+            this.autoId ??= connectionId;
             phase = "ready";
             reader.maxFrameBytes = MAX_BROWSER_TO_HOST_FRAME_BYTES;
             for (const frame of encodeHostMessage({
@@ -571,6 +621,7 @@ export class BrowserBridge implements BrowserConnection {
               features: [...BRIDGE_FEATURES],
             }))
               socket.write(frame);
+            this.sendLoopbackBootstrap(this.extensions.get(connectionId)!);
             this.tabsChanged();
             const b = hello.browser;
             this.log(
@@ -584,7 +635,9 @@ export class BrowserBridge implements BrowserConnection {
                 (transport === "loopback" ? " over the paired loopback channel" : ""),
             );
           } else {
-            this.receive(message);
+            const extension = [...this.extensions.values()].find((item) => item.socket === socket);
+            if (!extension) throw new BrowserProtocolError("Connection no longer exists.");
+            this.receive(message, extension);
           }
         } catch (error) {
           refuse(describe(error));
@@ -595,11 +648,9 @@ export class BrowserBridge implements BrowserConnection {
   }
 
   /** A message on the connected extension's socket: only answers to requests this bridge sent are accepted. */
-  private receive(message: unknown): void {
+  private receive(message: unknown, extension: ConnectedExtension): void {
     const response = parseBrowserMessage(message);
     if (response.type === "ui_open") {
-      const extension = this.extension;
-      if (!extension) throw new BrowserProtocolError("UI request before welcome.");
       const now = Date.now();
       if (!extension.uiWindow || now - extension.uiWindow >= 60_000) {
         extension.uiWindow = now;
@@ -612,14 +663,12 @@ export class BrowserBridge implements BrowserConnection {
       void (allowed && this.openControlCenter ? this.openControlCenter() : Promise.resolve(false))
         .catch(() => false)
         .then((ok) => {
-          if (this.extension === extension && !extension.socket.destroyed)
+          if (this.extensions.get(extension.connectionId) === extension && !extension.socket.destroyed)
             extension.socket.write(encodeMessage({ type: "ui_result", id: response.id, ok }, 4096));
         });
       return;
     }
     if (response.type === "browser_notice") {
-      const extension = this.extension;
-      if (!extension) throw new BrowserProtocolError("Notice without an active connection.");
       const now = Date.now();
       if (!extension.noticeWindow || now - extension.noticeWindow >= 60_000) {
         extension.noticeWindow = now;
@@ -629,7 +678,11 @@ export class BrowserBridge implements BrowserConnection {
       if (extension.noticeCount > 120) throw new BrowserProtocolError("Browser notice rate exceeded.");
       if (response.event === "cdp_status")
         extension.cdp = { available: response.available, reason: response.available ? null : "debugger_unavailable" };
-      else if (response.event === "tabs_changed") this.tabsChanged();
+      else if (response.event === "browser_focused") {
+        extension.lastActiveAt = Date.now();
+        this.autoId = extension.connectionId;
+        if (!this.selectedId) this.tabsChanged();
+      } else if (response.event === "tabs_changed") this.tabsChanged();
       else if (response.event === "upload_released") {
         for (const listener of this.uploadListeners) listener(response.token, extension.connectionId);
       } else
@@ -642,9 +695,14 @@ export class BrowserBridge implements BrowserConnection {
     const pending = this.pending.get(response.id);
     if (!pending) {
       // Late answer to a request Core already gave up on.
-      if (this.abandoned.delete(response.id)) return;
+      if (this.abandoned.get(response.id) === extension.connectionId) {
+        this.abandoned.delete(response.id);
+        return;
+      }
       throw new BrowserProtocolError("Response to an unknown request.");
     }
+    if (pending.connectionId !== extension.connectionId)
+      throw new BrowserProtocolError("Response belongs to another connection.");
     this.pending.delete(response.id);
     pending.cleanup();
     if (response.ok) pending.resolve(response.result);
@@ -656,19 +714,28 @@ export class BrowserBridge implements BrowserConnection {
     if (!pending) return;
     this.pending.delete(id);
     pending.cleanup();
-    this.abandoned.add(id);
+    this.abandoned.set(id, pending.connectionId);
     if (this.abandoned.size > MAX_ABANDONED) {
-      const oldest = this.abandoned.values().next().value;
+      const oldest = this.abandoned.keys().next().value;
       if (oldest !== undefined) this.abandoned.delete(oldest);
     }
     pending.reject(error);
   }
 
-  private disconnected(): void {
-    this.extension = undefined;
+  private disconnected(extension: ConnectedExtension): void {
+    this.extensions.delete(extension.connectionId);
+    if (this.selectedId === extension.connectionId) this.selectedId = undefined;
+    if (this.autoId === extension.connectionId) {
+      this.autoId = [...this.extensions.values()].sort((a, b) => b.lastActiveAt - a.lastActiveAt)[0]?.connectionId;
+    }
+    for (const [id, pending] of this.pending) {
+      if (pending.connectionId !== extension.connectionId) continue;
+      this.pending.delete(id);
+      pending.cleanup();
+      pending.reject(new CrotError("BROWSER_NOT_CONNECTED", "The CROT Browser Extension disconnected."));
+    }
+    for (const [id, owner] of this.abandoned) if (owner === extension.connectionId) this.abandoned.delete(id);
     this.tabsChanged();
-    this.abandoned.clear();
-    this.failPending(new CrotError("BROWSER_NOT_CONNECTED", "The CROT Browser Extension disconnected."));
     if (!this.closed) this.log("browser bridge: browser extension disconnected");
   }
 

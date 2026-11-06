@@ -14,6 +14,7 @@
  * This module has no dependencies on Node.js or zod so that the extension can
  * reuse it.
  */
+import { parseTabPolicy, type BrowserTabPolicy } from "../core/capabilities/browser/tab-policy.js";
 import {
   BROWSER_COMMANDS,
   type BrowserCommand,
@@ -48,7 +49,14 @@ export const MAX_ERROR_MESSAGE_LENGTH = 2000;
  * - tabs-changed: content-free `tabs_changed` notices (the owner UI refreshes its tab list).
  * - ui-manage: the host may ask the extension to open its own management page.
  */
-export const BRIDGE_FEATURES = ["tab-policy-v2", "tabs-changed", "ui-manage"] as const;
+export const BRIDGE_FEATURES = [
+  "tab-policy-v2",
+  "tabs-changed",
+  "ui-manage",
+  "tab-policy-envelope",
+  "browser-focus",
+  "loopback-auto",
+] as const;
 export type BridgeFeature = (typeof BRIDGE_FEATURES)[number];
 const FEATURE = /^[a-z][a-z0-9-]{0,31}$/;
 const MAX_FEATURES = 16;
@@ -106,7 +114,8 @@ export type BrowserNotice =
     }
   | { readonly type: "browser_notice"; readonly event: "cdp_status"; readonly available: boolean }
   /** Tabs were opened, closed, moved or navigated; carries no tab data (the owner UI lists tabs itself). */
-  | { readonly type: "browser_notice"; readonly event: "tabs_changed" };
+  | { readonly type: "browser_notice"; readonly event: "tabs_changed" }
+  | { readonly type: "browser_notice"; readonly event: "browser_focused" };
 /** Fixed owner-UI request: no command, path, URL or tool arguments (AD-38). */
 export interface BrowserUiOpen {
   readonly type: "ui_open";
@@ -138,12 +147,21 @@ export interface HostUiManage {
   readonly id: string;
 }
 
+/** Private bootstrap sent only on an authenticated native connection. */
+export interface HostLoopbackBootstrap {
+  readonly type: "loopback_bootstrap";
+  readonly instance: string;
+  readonly pairing: string;
+  readonly secret: string;
+}
+
 /** Host -> extension: one authorized command. */
 export interface HostRequest {
   readonly type: "request";
   readonly id: string;
   readonly command: BrowserCommand;
   readonly params: Readonly<Record<string, unknown>>;
+  readonly tabPolicy?: BrowserTabPolicy;
 }
 
 /** Host -> extension: one piece of a request too large for a single frame. */
@@ -157,7 +175,8 @@ export interface HostChunk {
   readonly data: string;
 }
 
-export type HostToBrowserMessage = HostWelcome | HostRequest | HostChunk | HostUiResult | HostUiManage;
+export type HostToBrowserMessage =
+  HostWelcome | HostRequest | HostChunk | HostUiResult | HostUiManage | HostLoopbackBootstrap;
 
 /** Relay -> host: first frame on the IPC connection, proving the relay runs as the user. Never forwarded to the browser. */
 export interface RelayAuth {
@@ -179,9 +198,16 @@ export function createRequest<C extends BrowserCommand>(
   id: string,
   command: C,
   params: BrowserCommandParams[C],
+  tabPolicy?: BrowserTabPolicy,
 ): HostRequest {
   if (!isRequestId(id)) throw new BrowserProtocolError("Invalid request id.");
-  return { type: "request", id, command, params: params as Readonly<Record<string, unknown>> };
+  return {
+    type: "request",
+    id,
+    command,
+    params: params as Readonly<Record<string, unknown>>,
+    ...(tabPolicy ? { tabPolicy } : {}),
+  };
 }
 
 // ---------------------------------------------------------------- framing
@@ -367,7 +393,9 @@ export class ChunkReassembler {
   }
 
   /** Returns the complete message, or undefined while a chunked request is incomplete. */
-  accept(message: HostToBrowserMessage): HostWelcome | HostRequest | HostUiResult | HostUiManage | undefined {
+  accept(
+    message: HostToBrowserMessage,
+  ): HostWelcome | HostRequest | HostUiResult | HostUiManage | HostLoopbackBootstrap | undefined {
     if (message.type !== "chunk") {
       if (this.stream) throw this.fail("Message interleaved with a chunked request.");
       return message;
@@ -470,6 +498,8 @@ export function parseBrowserMessage(value: unknown): BrowserToHostMessage {
         Object.keys(value).every((k) => ["type", "event", "available"].includes(k))
       )
         return { type: "browser_notice", event: "cdp_status", available: value.available };
+      if (value.event === "browser_focused" && Object.keys(value).every((k) => ["type", "event"].includes(k)))
+        return { type: "browser_notice", event: "browser_focused" };
       if (value.event === "tabs_changed" && Object.keys(value).every((k) => ["type", "event"].includes(k)))
         return { type: "browser_notice", event: "tabs_changed" };
       if (
@@ -518,6 +548,18 @@ export function parseBrowserMessage(value: unknown): BrowserToHostMessage {
 export function parseHostMessage(value: unknown): HostToBrowserMessage {
   if (!isObject(value)) invalid("message");
   switch (value.type) {
+    case "loopback_bootstrap":
+      if (
+        Object.keys(value).length !== 4 ||
+        typeof value.instance !== "string" ||
+        !/^[0-9a-f]{32}$/.test(value.instance) ||
+        typeof value.pairing !== "string" ||
+        !/^[0-9a-f]{32}$/.test(value.pairing) ||
+        typeof value.secret !== "string" ||
+        !/^[0-9a-f]{64}$/.test(value.secret)
+      )
+        invalid("loopback bootstrap");
+      return { type: "loopback_bootstrap", instance: value.instance, pairing: value.pairing, secret: value.secret };
     case "ui_result":
       if (!isRequestId(value.id) || typeof value.ok !== "boolean" || Object.keys(value).length !== 3)
         invalid("owner UI result");
@@ -543,7 +585,15 @@ export function parseHostMessage(value: unknown): HostToBrowserMessage {
       const { id, command, params } = value;
       if (!isRequestId(id) || typeof command !== "string" || !COMMANDS.has(command) || !isObject(params))
         invalid("request");
-      return { type: "request", id, command: command as BrowserCommand, params };
+      let tabPolicy: BrowserTabPolicy | undefined;
+      if (value.tabPolicy !== undefined) {
+        try {
+          tabPolicy = parseTabPolicy(value.tabPolicy);
+        } catch {
+          invalid("request policy");
+        }
+      }
+      return { type: "request", id, command: command as BrowserCommand, params, ...(tabPolicy ? { tabPolicy } : {}) };
     }
     case "chunk": {
       const { id, index, count, data } = value;

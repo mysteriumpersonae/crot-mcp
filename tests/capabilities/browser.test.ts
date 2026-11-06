@@ -56,7 +56,7 @@ function defaultResponse(command: BrowserCommand, p: Record<string, unknown>): u
 /** Stands in for the browser bridge. Records every request it receives. */
 class FakeConnection implements BrowserConnection {
   current: BrowserConnectionState = { kind: "connected", browser: BROWSER, connectionId: CONNECTION_ID };
-  readonly calls: { command: BrowserCommand; params: Record<string, unknown> }[] = [];
+  readonly calls: { command: BrowserCommand; params: Record<string, unknown>; options: BrowserRequestOptions }[] = [];
   readonly handlers = new Map<BrowserCommand, Handler>();
 
   state(): BrowserConnectionState {
@@ -69,7 +69,7 @@ class FakeConnection implements BrowserConnection {
     options: BrowserRequestOptions,
   ): Promise<unknown> {
     const p = { ...(params as unknown as Record<string, unknown>) };
-    this.calls.push({ command, params: p });
+    this.calls.push({ command, params: p, options });
     const handler = this.handlers.get(command);
     return handler ? handler(p, options) : defaultResponse(command, p);
   }
@@ -652,14 +652,12 @@ describe("owner tab policy v2 (Desktop Browser screen)", () => {
     await expect(service.navigate(ctx, { tabId: 1, url: "https://example.com/next" })).resolves.toBeDefined();
   });
 
-  it("sends activeTab and automation only to an extension that announced tab-policy-v2", async () => {
+  it("carries the owner policy outside strictly validated command parameters", async () => {
     const { service, fake } = setup({ mode: "full_control" });
     const v2 = { ...policy, activeTab: true };
     service.setTabPolicy(v2);
     await service.listTabs(ctx);
-    expect(fake.calls.at(-1)?.params.__crotTabPolicy).toEqual(policy);
-    fake.current = { ...fake.current, features: ["tab-policy-v2"] } as typeof fake.current;
-    await service.listTabs(ctx);
-    expect(fake.calls.at(-1)?.params.__crotTabPolicy).toEqual(v2);
+    expect(fake.calls.at(-1)?.params).toEqual({});
+    expect(fake.calls.at(-1)?.options.tabPolicy).toEqual(v2);
   });
 });

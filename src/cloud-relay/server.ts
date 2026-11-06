@@ -448,6 +448,11 @@ export class CloudRelay {
     return (this.server?.address() as AddressInfo | undefined)?.port ?? 0;
   }
 
+  /** Number of admitted TCP sockets, for lifecycle diagnostics without exposing peer addresses. */
+  get activeSourceConnections(): number {
+    return [...this.sources.values()].reduce((total, count) => total + count, 0);
+  }
+
   status(): RelayStatus {
     const tunnels = { handshake: 0, ready: 0, draining: 0 };
     let openStreams = 0;

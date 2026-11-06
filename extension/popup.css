@@ -49,7 +49,7 @@
   min-height: 100px;
 }
 .popup #install.connected {
-  visibility: hidden;
+  display: none;
 }
 .popup .pair-code {
   font-size: 28px;

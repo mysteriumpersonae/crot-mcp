@@ -1,14 +1,14 @@
 /** Browser screen (central area only; the sidebar is untouched): header, CROT Extension status card, policy cards with
  *  switches and the open tabs list. Built on the design tokens, so light and dark themes follow automatically. */
 export const BROWSER_CSS = String.raw`
-.browser-page{--browser-ok:#22c55e;--browser-wait:#f59e0b;display:flex;flex-direction:column;gap:12px;min-width:0;color:var(--text);font-size:var(--ui-body-size);line-height:1.45}
+.browser-page{--browser-ok:#22c55e;--browser-wait:#f59e0b;display:flex;flex-direction:column;gap:3px;min-width:0;color:var(--text);font-size:14px;line-height:1.35}
 :root[data-theme=dark] .browser-page{--browser-ok:var(--success);--browser-wait:var(--warning)}
 .browser-page *{box-sizing:border-box}.browser-page [hidden]{display:none!important}
 .browser-page p{margin:0}.browser-page .badge{margin:0}
-.browser-head{display:flex;align-items:center;gap:16px;min-width:0;padding:4px 0 4px}
+.browser-head{display:flex;align-items:center;gap:12px;min-width:0;padding:0}.browser-head .browser-emblem{--size:40px}
 .browser-head-copy{flex:1;min-width:0}
-.browser-head h1{margin:0;font-size:var(--ui-title-size);line-height:30px;font-weight:700;letter-spacing:-.4px}
-.browser-head-copy p{margin:4px 0 0;font-size:14px;line-height:20px;color:var(--text-muted)}
+.browser-head h1{margin:0;font-size:24px;line-height:28px;font-weight:700;letter-spacing:-.4px}
+.browser-head-copy p{margin:2px 0 0;font-size:12px;line-height:16px;color:var(--text-muted)}
 .browser-saved{flex:none;display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:999px;background:var(--success-tint);color:var(--success);font-size:13px;line-height:18px;font-weight:600;max-width:min(420px,45%)}
 .browser-saved svg{flex:none;width:16px;height:16px}
 .browser-saved.browser-saved-error{background:var(--danger-tint);color:var(--danger)}
@@ -22,16 +22,16 @@ export const BROWSER_CSS = String.raw`
 .browser-emblem[data-browser=brave]{background:linear-gradient(135deg,#ff7a4d,#fb542b 55%,#d6380f)}
 .browser-emblem[data-browser=brave]::after{background:#fb542b}
 /* CROT Extension status card */
-.browser-status{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:12px 16px;padding:12px 16px;border:1px solid var(--border);border-radius:var(--r-lg);background:var(--bg-surface);box-shadow:var(--shadow-card)}
+.browser-status{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:8px 12px;padding:8px 12px;border:1px solid var(--border);border-radius:var(--r-lg);background:var(--bg-surface);box-shadow:var(--shadow-card)}
 .browser-status[data-state=connected]{background:var(--success-tint);border-color:color-mix(in srgb,var(--browser-ok) 38%,var(--border))}
 .browser-status:is([data-state=waiting],[data-state=pairing],[data-state=update_required],[data-state=in_use]){background:var(--warning-tint);border-color:color-mix(in srgb,var(--browser-wait) 40%,var(--border))}
-.browser-status-tile{display:grid;place-items:center;width:56px;height:56px;border-radius:16px;background:var(--bg-surface);box-shadow:var(--shadow-card)}
-.browser-status-tile .browser-emblem{--size:36px}
+.browser-status-tile{display:grid;place-items:center;width:40px;height:40px;border-radius:12px;background:var(--bg-surface);box-shadow:var(--shadow-card)}
+.browser-status-tile .browser-emblem{--size:28px}
 .browser-status-copy{min-width:0;display:flex;flex-direction:column;gap:4px}
-.browser-status h2{display:flex;align-items:center;gap:10px;margin:0;font-size:var(--ui-heading-size);line-height:22px;font-weight:700;letter-spacing:-.2px}
-.browser-status-copy>p{font-size:14px;line-height:20px;color:var(--text-muted)}
+.browser-status h2{display:flex;align-items:center;gap:10px;margin:0;font-size:14px;line-height:18px;font-weight:700;letter-spacing:-.2px}
+.browser-status-copy>p{font-size:12px;line-height:16px;color:var(--text-muted)}
 .browser-status-note:empty,.browser-identity:empty{display:none}
-.browser-status-copy>.browser-identity{font-size:12px;line-height:17px}
+.browser-status-copy>.browser-identity{font-size:11px;line-height:14px}
 .browser-status-note{color:var(--warning)!important;font-weight:500}
 .browser-dot{flex:none;width:10px;height:10px;border-radius:50%;background:var(--text-muted)}
 .browser-status[data-state=connected] .browser-dot{background:var(--browser-ok);box-shadow:0 0 0 3px color-mix(in srgb,var(--browser-ok) 25%,transparent)}
@@ -39,7 +39,8 @@ export const BROWSER_CSS = String.raw`
 .browser-status:is([data-state=waiting],[data-state=pairing],[data-state=checking]) .browser-dot{animation:browser-pulse 1.6s ease-in-out infinite}
 @keyframes browser-pulse{0%,100%{opacity:1}50%{opacity:.35}}
 .browser-status-actions{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px}
-.browser-status-actions button{min-height:40px;padding:8px 16px;border-radius:10px;background:var(--bg-surface);border:1px solid var(--border-strong);font-weight:500;white-space:nowrap}
+.browser-session-select{min-height:34px;max-width:220px;padding:4px 8px;border:1px solid var(--border-strong);border-radius:8px;background:var(--bg-surface);color:var(--text);font-size:12px}
+.browser-status-actions button{min-height:34px;padding:6px 10px;border-radius:10px;background:var(--bg-surface);border:1px solid var(--border-strong);font-weight:500;white-space:nowrap}
 .browser-status-actions button.primary{background:var(--primary);border-color:var(--primary);color:var(--text-on-primary)}
 .browser-requests:empty,.browser-trusted:empty{display:none}
 .browser-requests{display:flex;flex-direction:column;gap:8px;margin-top:8px}
@@ -54,24 +55,24 @@ export const BROWSER_CSS = String.raw`
 .browser-trusted li{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:13px}
 .browser-trusted li button{min-height:30px;padding:4px 12px;border-radius:8px;font-size:12px}
 /* Policy cards: an icon column, a head and rows with switches on the right. */
-.browser-card{background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--r-lg);padding:12px 16px 4px;box-shadow:var(--shadow-card);min-width:0}
+.browser-card{background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--r-lg);padding:6px 16px 2px;box-shadow:var(--shadow-card);min-width:0}
 .browser-line{display:grid;grid-template-columns:32px minmax(0,1fr);column-gap:12px;align-items:start}
 .browser-line-icon{display:flex;justify-content:center;color:var(--text)}
 .browser-line-icon svg{width:22px;height:22px;stroke-width:1.6}
 .browser-card-danger .browser-line-head .browser-line-icon{color:var(--danger)}
 .browser-card-danger .browser-line-head .browser-line-icon svg{stroke-width:2}
-.browser-line-head{padding-bottom:8px}
-.browser-card-head h2{margin:0;font-size:var(--ui-heading-size);line-height:22px;font-weight:700;letter-spacing:-.2px}
-.browser-card-head p{margin:2px 0 0;font-size:13px;line-height:18px;color:var(--text-muted)}
-.browser-line-row>:last-child{border-top:1px solid var(--border);padding:8px 0}
+.browser-line-head{padding-bottom:2px}
+.browser-card-head h2{margin:0;font-size:14px;line-height:18px;font-weight:700;letter-spacing:-.2px}
+.browser-card-head p{margin:2px 0 0;font-size:12px;line-height:16px;color:var(--text-muted)}
+.browser-line-row>:last-child{border-top:1px solid var(--border);padding:2px 0}
 .browser-line-row .browser-line-icon{padding-top:10px}
-.browser-line-note>:last-child,.browser-line-body>:last-child{padding:0 0 10px}
+.browser-line-note>:last-child,.browser-line-body>:last-child{padding:0 0 4px}
 .browser-row{display:flex;align-items:center;justify-content:space-between;gap:20px;min-width:0}
 .browser-row-copy{min-width:0}
-.browser-row-copy h3{margin:0;font-size:var(--ui-body-size);line-height:20px;font-weight:600}
-.browser-row-copy>p{margin:2px 0 0;font-size:13px;line-height:18px;color:var(--text-muted)}
+.browser-row-copy h3{margin:0;font-size:14px;line-height:18px;font-weight:600}
+.browser-row-copy>p{margin:2px 0 0;font-size:12px;line-height:16px;color:var(--text-muted)}
 .browser-row-body{display:flex;flex-direction:column;min-width:0}
-.browser-hint{margin:6px 0 0!important;font-size:12px;line-height:17px;color:var(--text-muted)}
+.browser-hint{margin:2px 0 0!important;font-size:12px;line-height:15px;color:var(--text-muted)}
 .browser-hint-warning{color:var(--warning)}
 .browser-switch{flex:none;display:inline-flex;align-items:center;cursor:pointer}
 .browser-page .browser-switch input[type=checkbox]{appearance:none;-webkit-appearance:none;position:relative;flex:none;width:48px;min-width:48px;height:28px;min-height:28px;margin:0;padding:0;border:0;border-radius:14px;background:var(--border-strong);cursor:pointer;transition:background var(--dur) var(--ease)}
@@ -80,13 +81,13 @@ export const BROWSER_CSS = String.raw`
 .browser-page .browser-switch input[type=checkbox]:checked::before{transform:translateX(20px)}
 .browser-page .browser-switch input[type=checkbox]:disabled{opacity:.5;cursor:default}
 .browser-page .browser-switch input[type=checkbox]:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
-.browser-input{display:flex;align-items:center;gap:10px;margin-top:10px;height:44px;padding:0 14px;border:1px solid var(--border-strong);border-radius:10px;background:var(--bg-surface);color:var(--text-muted)}
+.browser-input{display:flex;align-items:center;gap:10px;margin-top:3px;height:34px;padding:0 14px;border:1px solid var(--border-strong);border-radius:10px;background:var(--bg-surface);color:var(--text-muted)}
 .browser-input svg{flex:none;width:18px;height:18px}
-.browser-page .browser-input input{flex:1;min-width:0;height:42px;min-height:0;margin:0;padding:0;border:0;border-radius:0;background:transparent;font-size:14px;color:var(--text);outline:none;box-shadow:none}
+.browser-page .browser-input input{flex:1;min-width:0;height:32px;min-height:0;margin:0;padding:0;border:0;border-radius:0;background:transparent;font-size:14px;color:var(--text);outline:none;box-shadow:none}
 .browser-input:focus-within{border-color:var(--primary);box-shadow:var(--focus-ring)}
 .browser-row-off .browser-input{opacity:.55}
 .browser-page input::placeholder,.browser-page textarea::placeholder{color:var(--text-muted);opacity:.85}
-.browser-page .browser-blocked textarea{display:block;width:100%;min-height:70px;margin:0;padding:10px 14px;border:1px solid var(--border-strong);border-radius:10px;background:var(--bg-surface);font-size:14px;line-height:21px;color:var(--text);resize:vertical}
+.browser-page .browser-blocked textarea{display:block;width:100%;min-height:44px;margin:0;padding:4px 10px;border:1px solid var(--border-strong);border-radius:10px;background:var(--bg-surface);font-size:14px;line-height:21px;color:var(--text);resize:vertical}
 .browser-page .browser-blocked textarea:focus-visible{outline:none;border-color:var(--primary);box-shadow:var(--focus-ring)}
 /* Open tabs */
 .browser-tab-list{display:flex;flex-direction:column;min-width:0}
@@ -103,7 +104,6 @@ export const BROWSER_CSS = String.raw`
 .browser-steps p{margin:2px 0 0}
 a.browser-link-button{display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:10px 16px;border-radius:8px;border:1px solid var(--border);text-decoration:none;font-weight:600;color:var(--text)}
 a.browser-link-button.primary{background:var(--primary);border-color:var(--primary);color:var(--text-on-primary)}
-@media(min-width:900px) and (max-width:1199px){.browser-page{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-items:start}.browser-head,.browser-status,.browser-card-tabs{grid-column:1/-1}.browser-card-scope{grid-column:1;grid-row:3 / span 2}.browser-card-data{grid-column:2;grid-row:3}.browser-card-danger{grid-column:2;grid-row:4}}
 @media(max-width:960px){.browser-status{grid-template-columns:auto minmax(0,1fr)}.browser-status-actions{grid-column:1/-1;justify-content:flex-start}}
 @media(max-width:760px){.browser-card{padding:16px 16px 4px}.browser-line{grid-template-columns:28px minmax(0,1fr);column-gap:10px}.browser-line-icon svg{width:22px;height:22px}.browser-status{grid-template-columns:minmax(0,1fr);padding:16px}.browser-status-tile{display:none}.browser-head .browser-emblem{--size:40px}.browser-head h1{font-size:22px;line-height:28px}.browser-saved{max-width:100%}}
 @media(prefers-reduced-motion:reduce){.browser-dot{animation:none!important}.browser-page .browser-switch input[type=checkbox],.browser-page .browser-switch input[type=checkbox]::before{transition:none}}

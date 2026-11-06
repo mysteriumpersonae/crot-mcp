@@ -40,7 +40,13 @@ import { CrotHttpServer } from "../adapters/http/server.js";
 import { localContextResolver } from "../adapters/mcp/context.js";
 import { createCrotMcpServer } from "../adapters/mcp/server.js";
 import type { BrowserBridge } from "../browser-bridge/server.js";
-import { browserLinkHost, browserProtectedPaths, loopbackPorts, startBrowserBridge } from "../cli/browser.js";
+import {
+  browserBootstrapPath,
+  browserLinkHost,
+  browserProtectedPaths,
+  loopbackPorts,
+  startBrowserBridge,
+} from "../cli/browser.js";
 import type { ServeCommand } from "../cli/options.js";
 import type { UntrustedContentSetting } from "../core/approvals/exposure.js";
 import { REMOTE_EXPOSURE_FILE_NAME, RemoteExposureStore } from "../core/approvals/index.js";
@@ -150,6 +156,7 @@ export interface ServiceOptions {
    * (tests, embedding): nothing outside the state directory is written.
    */
   readonly registerBrowserHost?: () => Promise<void>;
+  readonly browserExtensionDir?: string;
 }
 
 interface ShimClient {
@@ -429,6 +436,7 @@ export class CrotService {
         ...secrets.store.backend.paths,
         ...(configuredTokenFile ? [configuredTokenFile] : []),
         ...(legacyTokenFile ? [legacyTokenFile] : []),
+        ...(this.options.browserExtensionDir ? [browserBootstrapPath(this.options.browserExtensionDir)] : []),
       ];
       // Configuration, secret store, bridge token, service credentials and the service log are never modifiable through CROT tools.
       const protectedPaths = [
@@ -464,6 +472,7 @@ export class CrotService {
         token: () => secrets.store.readOrCreate("browser-token"),
         log,
         loopbackPorts: loopbackPorts(process.env),
+        ...(this.options.browserExtensionDir ? { extensionDir: this.options.browserExtensionDir } : {}),
       });
       if (this.bridge?.owner && this.options.registerBrowserHost)
         void this.options

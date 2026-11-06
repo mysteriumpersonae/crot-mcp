@@ -201,35 +201,30 @@ async function open(l: LoopbackLink): Promise<ChromePort | undefined> {
   return port;
 }
 
-describe("LoopbackLink discovery and pairing", () => {
-  it("reports that no CROT Desktop answers", async () => {
+describe("LoopbackLink automatic credentials", () => {
+  it("reports no Desktop and never requests a pairing code", async () => {
     const { link: l } = link([]);
     await expect(open(l)).resolves.toBeUndefined();
     expect(l.view).toEqual({ state: "absent" });
+    const desktop = new FakeDesktop(43115);
+    const noCredential = link([desktop]);
+    await expect(open(noCredential.link)).resolves.toBeUndefined();
+    expect(desktop.requests.size).toBe(0);
+    expect(desktop.frames).toHaveLength(0);
   });
 
-  it("requests one pairing from the only CROT Desktop and connects after the owner approves it", async () => {
-    const desktop = new FakeDesktop(43116);
-    const { link: l, storage } = link([desktop], { pingMs: 15 });
-    await expect(open(l)).resolves.toBeUndefined();
-    expect(desktop.requests.size).toBe(1);
-    expect(desktop.browsers).toEqual([BROWSER]);
-    expect(l.view).toMatchObject({ state: "pairing", code: "100000", user: "owner" });
-    expect(l.waiting).toBe(true);
-    // Still waiting for the owner: the same request is polled, no new one is created.
-    await expect(open(l)).resolves.toBeUndefined();
-    expect(desktop.requests.size).toBe(1);
-    expect(l.view).toMatchObject({ state: "pairing", code: "100000" });
-
-    desktop.decide("approved");
-    const port = await open(l);
+  it("persists native bootstrap and reconnects with mutual proof", async () => {
+    const desktop = new FakeDesktop(43115);
+    const pairing = hex(16),
+      secret = hex(32);
+    desktop.known.set(pairing, secret);
+    const first = link([desktop], { pingMs: 15 });
+    await first.link.bootstrap({ instance: desktop.instance, pairing, secret });
+    const port = await open(first.link);
     expect(port).toBeDefined();
-    expect(l.view).toEqual({ state: "paired", user: "owner" });
-    expect(l.waiting).toBe(false);
-    const stored = (storage as MemoryStorage).items[LOOPBACK_STORAGE_KEY] as { link?: { secret?: string } };
-    expect(stored.link?.secret).toMatch(/^[0-9a-f]{64}$/);
-
-    // The bridge protocol then runs as one JSON text message per WebSocket message.
+    expect(first.link.view).toEqual({ state: "paired", user: "owner" });
+    const stored = (first.storage as MemoryStorage).items[LOOPBACK_STORAGE_KEY] as { link?: { secret?: string } };
+    expect(stored.link?.secret === secret).toBe(true);
     const received: unknown[] = [];
     port!.onMessage.addListener((message) => received.push(message));
     port!.postMessage({ type: "hello", protocol: 1 });
@@ -238,111 +233,55 @@ describe("LoopbackLink discovery and pairing", () => {
     await new Promise((resolve) => setTimeout(resolve, 40));
     expect(received).toEqual([{ type: "welcome", protocol: 1 }]);
     expect(desktop.pings).toBeGreaterThan(0);
-  });
-
-  it("reconnects with the stored pairing and no new request", async () => {
-    const desktop = new FakeDesktop(43115);
-    const first = link([desktop]);
-    await open(first.link);
-    desktop.decide("approved");
-    expect(await open(first.link)).toBeDefined();
     const again = link([desktop], { storage: first.storage });
     expect(await open(again.link)).toBeDefined();
     expect(desktop.requests.size).toBe(0);
-    expect(desktop.frames.filter((f) => f.includes("loopback_auth"))).toHaveLength(2);
   });
 
-  it("never proves itself to a program that cannot prove the pairing secret first", async () => {
+  it("never proves itself to an impostor", async () => {
     const desktop = new FakeDesktop(43115);
-    const { link: l, storage } = link([desktop]);
-    await open(l);
-    desktop.decide("approved");
-    expect(await open(l)).toBeDefined();
+    const pairing = hex(16),
+      secret = hex(32);
+    desktop.known.set(pairing, secret);
+    const { link: l } = link([desktop]);
+    await l.bootstrap({ instance: desktop.instance, pairing, secret });
     desktop.impostor = true;
-    const frames = desktop.frames.length;
-    const again = link([desktop], { storage });
-    await expect(open(again.link)).resolves.toBeUndefined();
-    expect(again.link.view).toEqual({
-      state: "error",
-      message: "The program on the CROT port could not prove it is your CROT Desktop",
-    });
-    expect(desktop.frames.slice(frames).map((f) => (JSON.parse(f) as { type: string }).type)).toEqual([
-      "loopback_auth",
-    ]);
+    await expect(open(l)).resolves.toBeUndefined();
+    expect(l.view).toMatchObject({ state: "error" });
+    expect(desktop.frames.map((f) => (JSON.parse(f) as { type: string }).type)).toEqual(["loopback_auth"]);
   });
 
-  it("pairs again after the owner forgot the pairing in CROT Desktop", async () => {
+  it("drops unknown credentials without requesting codes", async () => {
     const desktop = new FakeDesktop(43115);
     const { link: l, storage } = link([desktop]);
-    await open(l);
-    desktop.decide("approved");
-    expect(await open(l)).toBeDefined();
-    desktop.known.clear();
-    const again = link([desktop], { storage, now: () => Date.now() + 120_000 });
-    await expect(open(again.link)).resolves.toBeUndefined();
+    await l.bootstrap({ instance: desktop.instance, pairing: hex(16), secret: hex(32) });
+    await expect(open(l)).resolves.toBeUndefined();
     expect(desktop.sockets.at(-1)!.closed).toBe(4401);
-    expect(again.link.view).toMatchObject({ state: "pairing" });
+    expect(desktop.requests.size).toBe(0);
     expect(((storage as MemoryStorage).items[LOOPBACK_STORAGE_KEY] as { link?: unknown }).link).toBeUndefined();
   });
 
-  it("respects a decline until the owner asks again from the popup", async () => {
+  it("loads an isolated extension resource and shares concurrent attempts", async () => {
     const desktop = new FakeDesktop(43115);
-    const { link: l } = link([desktop]);
-    await open(l);
-    desktop.decide("rejected");
-    await open(l);
-    expect(l.view).toEqual({ state: "rejected" });
-    await open(l);
-    expect(l.view).toEqual({ state: "rejected" });
-    expect(desktop.browsers).toHaveLength(1);
-    l.pair();
-    expect(l.retryMs).toBeDefined();
-    await open(l);
-    expect(desktop.browsers).toHaveLength(2);
-    expect(l.view).toMatchObject({ state: "pairing", code: "100001" });
-  });
-
-  it("creates at most one automatic request per minute", async () => {
-    let now = Date.now();
-    const desktop = new FakeDesktop(43115);
-    const { link: l } = link([desktop], { now: () => now });
-    await open(l);
-    // CROT Desktop restarted and no longer knows the request.
-    desktop.requests.clear();
-    await open(l);
-    expect(desktop.browsers).toHaveLength(1);
-    expect(l.view).toEqual({ state: "searching" });
-    now += 61_000;
-    await open(l);
-    expect(desktop.browsers).toHaveLength(2);
-    expect(l.view).toMatchObject({ state: "pairing" });
-  });
-
-  it("lets the owner choose when several CROT Desktops answer", async () => {
-    const a = new FakeDesktop(43115, "alice"),
-      b = new FakeDesktop(43117, "bob");
-    const { link: l } = link([a, b]);
-    await open(l);
-    expect(l.view).toEqual({
-      state: "choose",
-      desktops: [
-        { instance: a.instance, user: "alice" },
-        { instance: b.instance, user: "bob" },
-      ],
+    const pairing = hex(16),
+      secret = hex(32);
+    desktop.known.set(pairing, secret);
+    let fetches = 0;
+    const { link: l } = link([desktop], {
+      bootstrapUrl: "chrome-extension://example/.bridge-secret.json",
+      fetch: async (url) => {
+        if (url.startsWith("chrome-extension:")) {
+          fetches++;
+          return json(200, { version: 1, instance: desktop.instance, pairing, secret });
+        }
+        const u = new URL(url);
+        return Number(u.port) === desktop.port ? desktop.respond(u, {}) : Promise.reject(new TypeError("unavailable"));
+      },
     });
-    expect(a.browsers.length + b.browsers.length).toBe(0);
-    l.pair(b.instance);
-    await open(l);
-    expect(a.browsers).toHaveLength(0);
-    expect(b.browsers).toHaveLength(1);
-    expect(l.view).toMatchObject({ state: "pairing", user: "bob" });
-  });
-
-  it("shares one attempt between concurrent callers", async () => {
-    const desktop = new FakeDesktop(43115);
-    const { link: l } = link([desktop]);
-    await Promise.all([open(l), open(l), open(l)]);
-    expect(desktop.browsers).toHaveLength(1);
+    const results = await Promise.all([open(l), open(l), open(l)]);
+    expect(results.every(Boolean)).toBe(true);
+    expect(fetches).toBe(1);
+    expect(desktop.requests.size).toBe(0);
     await tick();
   });
 });

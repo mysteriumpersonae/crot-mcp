@@ -1,6 +1,6 @@
 /** Unified Chat only: leave the shared sidebar and Home geometry untouched. */
 export const CHAT_CSS = String.raw`
-.chat-compose-left{display:flex;align-items:center;gap:12px;flex-wrap:wrap}.chat-browser-access.field{margin:0;min-height:36px;gap:6px;font-size:13px}.chat-browser-access input[type=checkbox]{width:16px;height:16px;min-height:16px}
+.chat-compose-left{display:flex;align-items:center;gap:12px;flex-wrap:wrap}.chat-browser-toggle{display:grid;place-items:center;width:28px;min-width:28px;height:28px;min-height:28px;padding:3px;border:1px solid var(--border);border-radius:7px;background:var(--bg-surface);color:var(--text-muted);cursor:pointer}.chat-browser-toggle svg{width:20px;height:20px}.chat-browser-toggle.active{color:var(--primary);background:var(--primary-tint, #e8f0ff);border-color:var(--primary)}.chat-browser-toggle:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
 
 .chat-active main.content{width:100%;height:100%;align-self:stretch;margin:0;padding:20px;overflow:hidden;max-width:none;background:linear-gradient(135deg,#fcfdff,#f7faff)}
 .chat-active #notice{display:none}.chat-active #page{height:100%;min-height:0}

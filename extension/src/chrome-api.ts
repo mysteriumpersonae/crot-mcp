@@ -89,6 +89,7 @@ export interface ChromeApi {
   readonly runtime: {
     /** The extension id (chrome-extension://<id> is the Origin of its requests). */
     readonly id?: string;
+    getURL?(path: string): string;
     connectNative(application: string): ChromePort;
     readonly lastError?: { readonly message?: string } | undefined;
     getManifest(): { readonly version: string };
@@ -119,6 +120,8 @@ export interface ChromeApi {
     update(id: number, properties: { title: string }): Promise<unknown>;
   };
   readonly windows: {
+    readonly onFocusChanged?: ChromeEvent<(windowId: number) => void>;
+    getLastFocused?(): Promise<ChromeWindow>;
     get(windowId: number): Promise<ChromeWindow>;
     update(windowId: number, properties: { readonly focused?: boolean; readonly state?: "normal" }): Promise<unknown>;
   };

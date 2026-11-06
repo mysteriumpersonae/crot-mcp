@@ -1,30 +1,9 @@
 import type { BrowserInfoMessage } from "../../src/browser-bridge/protocol.js";
 import type { ChromeEvent, ChromePort } from "./chrome-api.js";
 
-/**
- * Loopback discovery and pairing with CROT Desktop (docs/BROWSER_EXTENSION.md,
- * "Automatic connection"; the Desktop side is src/browser-bridge/loopback.ts).
- *
- * Native messaging stays the primary, zero-click channel. When it is not
- * available (no host manifest for this browser), HostConnection asks this
- * module for a port:
- * 1. Discovery: GET http://127.0.0.1:43115-43119/extension/status. Only answers
- *    that identify CROT count; they carry no secrets and no tab data.
- * 2. Pairing, once per browser and Desktop: POST /extension/pair creates a
- *    request with a 6-digit code that both the popup and CROT Desktop show; the
- *    owner approves it on the Desktop Browser screen and the extension collects
- *    the pairing secret with the request key (POST /extension/pair/<id>).
- *    Requests start automatically only when exactly one CROT answers and the
- *    owner has not declined; otherwise the owner starts them from the popup.
- * 3. Connection: WebSocket /extension/command with a mutual HMAC-SHA256
- *    challenge over both nonces and the extension origin. CROT proves first,
- *    so a program squatting on the port learns nothing usable. The bridge
- *    protocol (hello, welcome, requests) then runs as one JSON text message per
- *    WebSocket message, with a keepalive ping that also keeps the service worker alive.
- *
- * The pairing secret is stored in chrome.storage.local (extension-private). A
- * pairing the owner forgets in CROT Desktop is refused (close code 4401); the
- * extension then drops it and pairs again.
+/** Loopback uses credentials received from Native Messaging or an owner-only
+ * unpacked-extension resource. Desktop proves the secret first using HMAC;
+ * no credential is distributed via HTTP and no manual code is required.
  */
 
 export const LOOPBACK_PORTS: readonly number[] = Object.freeze([43115, 43116, 43117, 43118, 43119]);
@@ -32,21 +11,14 @@ export const LOOPBACK_PROTOCOL_VERSION = 1;
 export const LOOPBACK_STORAGE_KEY = "crot.loopback";
 /** Keepalive: an active WebSocket keeps the service worker alive only while messages flow (< 30 s apart). */
 export const LOOPBACK_PING_MS = 20_000;
-/** How often a pending pairing request is polled. */
-export const LOOPBACK_POLL_MS = 2_000;
 export const LOOPBACK_PING = '{"type":"loopback_ping"}';
 export const LOOPBACK_PONG = '{"type":"loopback_pong"}';
 const PROBE_TIMEOUT_MS = 800;
-const REQUEST_TIMEOUT_MS = 5_000;
 const HANDSHAKE_TIMEOUT_MS = 5_000;
-/** At most one automatic pairing request per minute (the Desktop also limits requests). */
-const AUTO_REQUEST_INTERVAL_MS = 60_000;
 const UNKNOWN_PAIRING = 4401;
 const BAD_PROOF = 4403;
 const HEX32 = /^[0-9a-f]{32}$/;
 const HEX64 = /^[0-9a-f]{64}$/;
-const KEY = /^[A-Za-z0-9_-]{43}$/;
-const CODE = /^[0-9]{6}$/;
 
 /** The WebSocket members this module uses (the browser's WebSocket; a fake in tests). */
 export interface LoopbackSocket {
@@ -61,6 +33,7 @@ export interface LoopbackSocket {
 export interface LoopbackStorage {
   get(key: string): Promise<Record<string, unknown>>;
   set(items: Record<string, unknown>): Promise<void>;
+  setAccessLevel?(options: { accessLevel: "TRUSTED_CONTEXTS" }): Promise<void>;
 }
 
 export interface LoopbackOptions {
@@ -71,17 +44,16 @@ export interface LoopbackOptions {
   /** chrome-extension://<id>: the Origin the browser sends, bound into every proof. */
   readonly origin: string;
   readonly browser: BrowserInfoMessage;
+  /** Private extension resource, not a web-accessible resource. */
+  readonly bootstrapUrl?: string;
   readonly ports?: readonly number[];
-  readonly now?: () => number;
   readonly log?: (message: string) => void;
   readonly pingMs?: number;
 }
 
 /** What the popup and the welcome page show about the loopback channel. */
 export type LoopbackView =
-  | { readonly state: "idle" | "searching" | "absent" | "rejected" }
-  | { readonly state: "choose"; readonly desktops: readonly { readonly instance: string; readonly user: string }[] }
-  | { readonly state: "pairing"; readonly code: string; readonly user: string; readonly expiresAt: number }
+  | { readonly state: "idle" | "searching" | "absent" }
   | { readonly state: "paired"; readonly user: string }
   | { readonly state: "error"; readonly message: string };
 
@@ -98,21 +70,8 @@ interface StoredLink {
   readonly user: string;
 }
 
-interface StoredRequest {
-  readonly instance: string;
-  readonly id: string;
-  readonly key: string;
-  readonly code: string;
-  readonly expiresAt: number;
-  readonly user: string;
-}
-
 interface Stored {
   link?: StoredLink;
-  pending?: StoredRequest;
-  /** Desktop instance whose owner declined: no automatic requests to it until the owner asks again. */
-  declined?: string;
-  lastRequest?: number;
 }
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -133,29 +92,6 @@ function parseStored(value: unknown): Stored {
     HEX64.test(link.secret)
   )
     stored.link = { instance: link.instance, pairing: link.pairing, secret: link.secret, user: userName(link.user) };
-  const p = value.pending;
-  if (
-    isObject(p) &&
-    typeof p.instance === "string" &&
-    HEX32.test(p.instance) &&
-    typeof p.id === "string" &&
-    HEX32.test(p.id) &&
-    typeof p.key === "string" &&
-    KEY.test(p.key) &&
-    typeof p.code === "string" &&
-    CODE.test(p.code) &&
-    typeof p.expiresAt === "number"
-  )
-    stored.pending = {
-      instance: p.instance,
-      id: p.id,
-      key: p.key,
-      code: p.code,
-      expiresAt: p.expiresAt,
-      user: userName(p.user),
-    };
-  if (typeof value.declined === "string" && HEX32.test(value.declined)) stored.declined = value.declined;
-  if (typeof value.lastRequest === "number") stored.lastRequest = value.lastRequest;
   return stored;
 }
 
@@ -287,33 +223,20 @@ export class LoopbackLink {
   private current: LoopbackView = { state: "idle" };
   private opening: Promise<ChromePort | undefined> | undefined;
   private memory: Stored = {};
-  /** Owner request from the popup: pair now (optionally with one Desktop), even after a decline. */
-  private wanted: { instance?: string } | undefined;
-  private readonly now: () => number;
   private readonly log: (message: string) => void;
 
   constructor(private readonly options: LoopbackOptions) {
-    this.now = options.now ?? Date.now;
     this.log = options.log ?? (() => undefined);
+  }
+
+  /** Accept a credential only from the already authenticated native channel. */
+  async bootstrap(value: { instance: string; pairing: string; secret: string }): Promise<void> {
+    if (!HEX32.test(value.instance) || !HEX32.test(value.pairing) || !HEX64.test(value.secret)) return;
+    await this.save({ link: { instance: value.instance, pairing: value.pairing, secret: value.secret, user: "" } });
   }
 
   get view(): LoopbackView {
     return this.current;
-  }
-
-  /** While a pairing request waits for the owner, it is polled quickly and native messaging is skipped. */
-  get waiting(): boolean {
-    return this.current.state === "pairing";
-  }
-
-  /** Delay before the next attempt (HostConnection), or undefined for its normal backoff. */
-  get retryMs(): number | undefined {
-    return this.current.state === "pairing" || this.wanted ? LOOPBACK_POLL_MS : undefined;
-  }
-
-  /** Owner action from the popup or welcome page: request a pairing now. */
-  pair(instance?: string): void {
-    this.wanted = instance && HEX32.test(instance) ? { instance } : {};
   }
 
   /** One attempt to obtain an authenticated port; never throws. Concurrent calls share the attempt. */
@@ -346,6 +269,7 @@ export class LoopbackLink {
   private async save(stored: Stored): Promise<void> {
     this.memory = stored;
     try {
+      await this.options.storage?.setAccessLevel?.({ accessLevel: "TRUSTED_CONTEXTS" });
       await this.options.storage?.set({ [LOOPBACK_STORAGE_KEY]: stored });
     } catch {
       // Storage is unavailable: the pairing lasts for this service worker.
@@ -355,6 +279,23 @@ export class LoopbackLink {
   private async attempt(): Promise<ChromePort | undefined> {
     if (this.current.state === "idle") this.set({ state: "searching" });
     const stored = await this.load();
+    if (this.options.bootstrapUrl) {
+      const response = await this.call(this.options.bootstrapUrl, { method: "GET" }, PROBE_TIMEOUT_MS);
+      const body = response?.ok ? await this.json(response) : undefined;
+      if (
+        body &&
+        body.version === 1 &&
+        typeof body.instance === "string" &&
+        HEX32.test(body.instance) &&
+        typeof body.pairing === "string" &&
+        HEX32.test(body.pairing) &&
+        typeof body.secret === "string" &&
+        HEX64.test(body.secret)
+      ) {
+        stored.link = { instance: body.instance, pairing: body.pairing, secret: body.secret, user: "" };
+        await this.save(stored);
+      }
+    }
     const desktops = await this.discover();
     if (!desktops.length) {
       this.set({ state: "absent" });
@@ -362,7 +303,7 @@ export class LoopbackLink {
     }
     const link = stored.link;
     const linked = link && desktops.find((d) => d.instance === link.instance);
-    if (link && linked && !this.wanted) {
+    if (link && linked) {
       const result = await this.handshake(linked.port, link);
       if ("port" in result) {
         this.set({ state: "paired", user: link.user || linked.user });
@@ -378,83 +319,12 @@ export class LoopbackLink {
         });
         return undefined;
       }
-      // Forgotten in CROT Desktop (or its bridge token was rotated): pair again.
-      this.log("loopback: CROT Desktop no longer knows this pairing; requesting a new one");
+      // A rotated or revoked credential must be replaced by a trusted bootstrap.
+      this.log("loopback: CROT Desktop no longer knows this credential");
       delete stored.link;
       await this.save(stored);
     }
-    return this.pairing(stored, desktops);
-  }
-
-  private async pairing(stored: Stored, desktops: readonly Desktop[]): Promise<ChromePort | undefined> {
-    const wanted = this.wanted;
-    const request = stored.pending;
-    if (request && (!wanted || wanted.instance === undefined || wanted.instance === request.instance)) {
-      const desktop = desktops.find((d) => d.instance === request.instance);
-      if (desktop && request.expiresAt > this.now()) {
-        const polled = await this.poll(desktop.port, request);
-        if (polled === "pending") {
-          this.wanted = undefined;
-          this.set({ state: "pairing", code: request.code, user: request.user, expiresAt: request.expiresAt });
-          return undefined;
-        }
-        if (polled === "rejected") {
-          delete stored.pending;
-          stored.declined = request.instance;
-          await this.save(stored);
-          this.wanted = undefined;
-          this.set({ state: "rejected" });
-          return undefined;
-        }
-        if (polled !== "unknown") {
-          stored.link = polled;
-          delete stored.pending;
-          delete stored.declined;
-          await this.save(stored);
-          this.wanted = undefined;
-          const result = await this.handshake(desktop.port, polled);
-          if ("port" in result) {
-            this.set({ state: "paired", user: polled.user });
-            return result.port;
-          }
-          this.set({ state: "error", message: "CROT Desktop did not accept the connection" });
-          return undefined;
-        }
-      }
-      // Expired, or CROT restarted and forgot it.
-      delete stored.pending;
-      await this.save(stored);
-    }
-    const candidates = wanted?.instance ? desktops.filter((d) => d.instance === wanted.instance) : desktops;
-    if (candidates.length !== 1) {
-      this.wanted = undefined;
-      this.set({ state: "choose", desktops: desktops.map(({ instance, user }) => ({ instance, user })) });
-      return undefined;
-    }
-    const desktop = candidates[0]!;
-    if (!wanted) {
-      if (stored.declined === desktop.instance) {
-        this.set({ state: "rejected" });
-        return undefined;
-      }
-      if (stored.lastRequest !== undefined && Math.abs(this.now() - stored.lastRequest) < AUTO_REQUEST_INTERVAL_MS) {
-        this.set({ state: "searching" });
-        return undefined;
-      }
-    }
-    this.wanted = undefined;
-    stored.lastRequest = this.now();
-    const created = await this.request(desktop);
-    if (typeof created === "string") {
-      await this.save(stored);
-      this.set({ state: "error", message: created });
-      return undefined;
-    }
-    stored.pending = created;
-    delete stored.declined;
-    await this.save(stored);
-    this.log("loopback: pairing request " + created.code + " waits for approval in CROT Desktop");
-    this.set({ state: "pairing", code: created.code, user: created.user, expiresAt: created.expiresAt });
+    this.set({ state: "absent" });
     return undefined;
   }
 
@@ -513,65 +383,6 @@ export class LoopbackLink {
     for (const desktop of found)
       if (desktop && !desktops.some((d) => d.instance === desktop.instance)) desktops.push(desktop);
     return desktops;
-  }
-
-  /** A new pairing request, or the message the owner sees when CROT Desktop refuses it. */
-  private async request(desktop: Desktop): Promise<StoredRequest | string> {
-    const response = await this.call(
-      `http://127.0.0.1:${desktop.port}/extension/pair`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ browser: this.options.browser }),
-      },
-      REQUEST_TIMEOUT_MS,
-    );
-    if (response?.status === 429) return "Too many connection requests. Try again in a few minutes.";
-    const body = response?.status === 201 ? await this.json(response) : undefined;
-    if (
-      !body ||
-      typeof body.id !== "string" ||
-      !HEX32.test(body.id) ||
-      typeof body.key !== "string" ||
-      !KEY.test(body.key) ||
-      typeof body.code !== "string" ||
-      !CODE.test(body.code) ||
-      typeof body.expiresAt !== "number" ||
-      body.instance !== desktop.instance
-    )
-      return "CROT Desktop did not accept the connection request";
-    return {
-      instance: desktop.instance,
-      id: body.id,
-      key: body.key,
-      code: body.code,
-      expiresAt: body.expiresAt,
-      user: userName(body.user) || desktop.user,
-    };
-  }
-
-  private async poll(port: number, request: StoredRequest): Promise<"pending" | "rejected" | "unknown" | StoredLink> {
-    const response = await this.call(
-      `http://127.0.0.1:${port}/extension/pair/${request.id}`,
-      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key: request.key }) },
-      REQUEST_TIMEOUT_MS,
-    );
-    // Not reachable right now: keep waiting.
-    if (!response) return "pending";
-    const body = await this.json(response);
-    if (!response.ok || !body) return "unknown";
-    if (body.state === "pending") return "pending";
-    if (body.state === "rejected") return "rejected";
-    if (
-      body.state === "approved" &&
-      typeof body.pairing === "string" &&
-      HEX32.test(body.pairing) &&
-      typeof body.secret === "string" &&
-      HEX64.test(body.secret) &&
-      body.instance === request.instance
-    )
-      return { instance: request.instance, pairing: body.pairing, secret: body.secret, user: request.user };
-    return "unknown";
   }
 
   /** The mutual challenge on /extension/command; resolves with the bridge port once CROT Desktop is proven. */
