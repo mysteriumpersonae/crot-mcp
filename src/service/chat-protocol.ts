@@ -77,7 +77,10 @@ export const ChatStartSchema = z
       .min(1)
       .max(256)
       .regex(/^[^\r\n\0]*$/),
-    message: z.string().min(1).max(32000),
+    // Raised from 32 000 to 200 000 to support long technical specs and
+    // large Ctrl+C pastes without silent truncation. Modern provider
+    // context windows (GPT-4o, Claude 3.x, Gemini 1.5+) handle this.
+    message: z.string().min(1).max(200_000),
     /** Continue this conversation thread: earlier turns are sent to the provider as history. */
     thread: z.string().uuid().optional(),
     /** Read-only tools for the open project (list, read, stat, search); on by default. */
