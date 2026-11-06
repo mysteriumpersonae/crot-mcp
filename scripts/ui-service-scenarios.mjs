@@ -358,25 +358,19 @@ export async function runServiceScenarios({ real, evaluate, until, size, screens
     "window.crot.product('browser.policy.get').then(r=>r.policy.mode==='targeted'&&r.policy.domains.join()==='127.0.0.1'&&r.policy.blockedDomains.join()==='localhost')",
   );
   await until("document.getElementById('browser-saved')?.hidden===false");
-  // Zero-config connection: a browser without the native host finds this service on its loopback port,
-  // the owner confirms the matching code once, and the extension connects (docs/BROWSER_EXTENSION.md).
+  // Use the isolated owner-only bootstrap file; no confirmation or code is involved.
   await until("document.getElementById('browser-status')?.dataset.state==='waiting'");
   const { link } = await evaluate("window.crot.product('browser.link.status')");
   if (!Number.isInteger(link?.loopback?.port))
     throw Error("Loopback discovery port is not open: " + JSON.stringify(link));
   const extension = await real.startExtension(link.loopback.port);
-  for (const end = Date.now() + 15000; extension.view.state !== "pairing"; await delay(100))
-    if (Date.now() > end) throw Error("Extension did not request pairing: " + JSON.stringify(extension.view));
-  await until(
-    `document.getElementById('browser-status').dataset.state==='pairing'&&document.querySelector('#browser-status .browser-code')?.textContent.replace(/\\s/g,'')===${JSON.stringify(extension.view.code)}`,
-  );
-  await screenshot("browser-pairing-real-service");
-  await click("Connect", "#browser-status button");
   await until("document.getElementById('browser-status').dataset.state==='connected'");
   await until(
     "document.querySelectorAll('#browser-tabs .browser-tab').length===1&&document.getElementById('browser-tabs').textContent.includes('Example Domain')",
   );
   if (extension.state !== "connected") throw Error("Extension is not connected: " + extension.state);
+  if (await evaluate("!!document.querySelector('#browser-status .browser-code')"))
+    throw Error("Unexpected pairing code");
   await evaluate("window.CrotI18n.setLanguage('ru')");
   await until("document.getElementById('browser-status').innerText.includes('CROT Extension — Подключено и активно')");
   await screenshot("browser-connected-real-service-ru");

@@ -20,6 +20,9 @@ export async function serviceHarness() {
   const base = await mkdtemp(path.join(tmpdir(), "crot-ui-service-")),
     workspace = path.join(base, "workspace");
   await mkdir(workspace);
+  const extensionDir = path.join(base, "extension");
+  await mkdir(extensionDir);
+  await writeFile(path.join(extensionDir, "manifest.json"), await readFile(path.resolve("extension/manifest.json")));
   const env = {
     ...process.env,
     HOME: base,
@@ -32,7 +35,7 @@ export async function serviceHarness() {
     // Browser auto-discovery on a free port (never the owner's 43115-43119); no browser manifests or registry keys.
     CROT_BROWSER_LOOPBACK_PORTS: "0",
     CROT_BROWSER_AUTO_REGISTER: "off",
-    CROT_BROWSER_EXTENSION_DIR: "off",
+    CROT_BROWSER_EXTENSION_DIR: extensionDir,
   };
   const stateDir =
     process.platform === "win32"
@@ -288,7 +291,8 @@ export async function serviceHarness() {
     /** The shipped extension's loopback client (built modules) against the real service's discovery port. */
     async startExtension(port) {
       extension?.stop();
-      extension = await loopbackExtension(port);
+      const credential = JSON.parse(await readFile(path.join(extensionDir, ".bridge-secret.json"), "utf8"));
+      extension = await loopbackExtension(port, credential);
       return extension;
     },
     async close() {
@@ -308,7 +312,7 @@ export async function serviceHarness() {
  * LoopbackLink + HostConnection (extension/dist), a WebSocket over node:http
  * that sends the Origin header like the browser does, and one open tab.
  */
-async function loopbackExtension(port) {
+async function loopbackExtension(port, credential) {
   const { LoopbackLink } = await import("../extension/dist/extension/src/loopback.js");
   const { HostConnection } = await import("../extension/dist/extension/src/host-connection.js");
   const { connectWebSocket } = await import("../dist/tunnel/websocket.js");
@@ -365,6 +369,7 @@ async function loopbackExtension(port) {
     browser,
     ports: [port],
   });
+  await link.bootstrap(credential);
   const tab = {
     tabId: 1,
     windowId: 1,
