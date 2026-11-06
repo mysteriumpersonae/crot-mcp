@@ -18,7 +18,8 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json && npm run build:extension",
+    "build": "npm run build:server && npm run build:extension",
+    "build:server": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "npm run audit:runtime && eslint . && npm run check:docs",
     "format": "prettier --write .",
