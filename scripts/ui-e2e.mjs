@@ -320,6 +320,15 @@ try {
             "document.getElementById('browser-status').dataset.state==='connected'&&document.querySelectorAll('#browser-tabs .browser-tab').length===2&&!document.querySelector('#browser-page input[role=switch]:disabled')",
           );
           if (lang === "ru") {
+            await size(1280, 800);
+            await delay(150);
+            assert(
+              await evaluate(
+                "document.querySelector('.browser-card-danger').getBoundingClientRect().bottom <= innerHeight",
+              ),
+              "all three browser policy cards must fit in a 1280x800 viewport",
+            );
+            await screenshot("browser-1280x800-ru");
             await size(1054, 820);
             await screenshot("browser-compact-1054-ru");
             await size(1280, 820);
