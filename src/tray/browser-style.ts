@@ -1,7 +1,7 @@
 /** Browser screen (central area only; the sidebar is untouched): header, CROT Extension status card, policy cards with
  *  switches and the open tabs list. Built on the design tokens, so light and dark themes follow automatically. */
 export const BROWSER_CSS = String.raw`
-.browser-page{--browser-ok:#22c55e;--browser-wait:#f59e0b;display:flex;flex-direction:column;gap:4px;min-width:0;color:var(--text);font-size:14px;line-height:1.35}
+.browser-page{--browser-ok:#22c55e;--browser-wait:#f59e0b;display:flex;flex-direction:column;gap:3px;min-width:0;color:var(--text);font-size:14px;line-height:1.35}
 :root[data-theme=dark] .browser-page{--browser-ok:var(--success);--browser-wait:var(--warning)}
 .browser-page *{box-sizing:border-box}.browser-page [hidden]{display:none!important}
 .browser-page p{margin:0}.browser-page .badge{margin:0}
@@ -54,7 +54,7 @@ export const BROWSER_CSS = String.raw`
 .browser-trusted li{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:13px}
 .browser-trusted li button{min-height:30px;padding:4px 12px;border-radius:8px;font-size:12px}
 /* Policy cards: an icon column, a head and rows with switches on the right. */
-.browser-card{background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--r-lg);padding:8px 16px 2px;box-shadow:var(--shadow-card);min-width:0}
+.browser-card{background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--r-lg);padding:6px 16px 2px;box-shadow:var(--shadow-card);min-width:0}
 .browser-line{display:grid;grid-template-columns:32px minmax(0,1fr);column-gap:12px;align-items:start}
 .browser-line-icon{display:flex;justify-content:center;color:var(--text)}
 .browser-line-icon svg{width:22px;height:22px;stroke-width:1.6}
@@ -63,15 +63,15 @@ export const BROWSER_CSS = String.raw`
 .browser-line-head{padding-bottom:2px}
 .browser-card-head h2{margin:0;font-size:14px;line-height:18px;font-weight:700;letter-spacing:-.2px}
 .browser-card-head p{margin:2px 0 0;font-size:12px;line-height:16px;color:var(--text-muted)}
-.browser-line-row>:last-child{border-top:1px solid var(--border);padding:4px 0}
+.browser-line-row>:last-child{border-top:1px solid var(--border);padding:2px 0}
 .browser-line-row .browser-line-icon{padding-top:10px}
-.browser-line-note>:last-child,.browser-line-body>:last-child{padding:0 0 10px}
+.browser-line-note>:last-child,.browser-line-body>:last-child{padding:0 0 4px}
 .browser-row{display:flex;align-items:center;justify-content:space-between;gap:20px;min-width:0}
 .browser-row-copy{min-width:0}
 .browser-row-copy h3{margin:0;font-size:14px;line-height:18px;font-weight:600}
 .browser-row-copy>p{margin:2px 0 0;font-size:12px;line-height:16px;color:var(--text-muted)}
 .browser-row-body{display:flex;flex-direction:column;min-width:0}
-.browser-hint{margin:4px 0 0!important;font-size:12px;line-height:15px;color:var(--text-muted)}
+.browser-hint{margin:2px 0 0!important;font-size:12px;line-height:15px;color:var(--text-muted)}
 .browser-hint-warning{color:var(--warning)}
 .browser-switch{flex:none;display:inline-flex;align-items:center;cursor:pointer}
 .browser-page .browser-switch input[type=checkbox]{appearance:none;-webkit-appearance:none;position:relative;flex:none;width:48px;min-width:48px;height:28px;min-height:28px;margin:0;padding:0;border:0;border-radius:14px;background:var(--border-strong);cursor:pointer;transition:background var(--dur) var(--ease)}
@@ -80,9 +80,9 @@ export const BROWSER_CSS = String.raw`
 .browser-page .browser-switch input[type=checkbox]:checked::before{transform:translateX(20px)}
 .browser-page .browser-switch input[type=checkbox]:disabled{opacity:.5;cursor:default}
 .browser-page .browser-switch input[type=checkbox]:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
-.browser-input{display:flex;align-items:center;gap:10px;margin-top:6px;height:36px;padding:0 14px;border:1px solid var(--border-strong);border-radius:10px;background:var(--bg-surface);color:var(--text-muted)}
+.browser-input{display:flex;align-items:center;gap:10px;margin-top:3px;height:34px;padding:0 14px;border:1px solid var(--border-strong);border-radius:10px;background:var(--bg-surface);color:var(--text-muted)}
 .browser-input svg{flex:none;width:18px;height:18px}
-.browser-page .browser-input input{flex:1;min-width:0;height:34px;min-height:0;margin:0;padding:0;border:0;border-radius:0;background:transparent;font-size:14px;color:var(--text);outline:none;box-shadow:none}
+.browser-page .browser-input input{flex:1;min-width:0;height:32px;min-height:0;margin:0;padding:0;border:0;border-radius:0;background:transparent;font-size:14px;color:var(--text);outline:none;box-shadow:none}
 .browser-input:focus-within{border-color:var(--primary);box-shadow:var(--focus-ring)}
 .browser-row-off .browser-input{opacity:.55}
 .browser-page input::placeholder,.browser-page textarea::placeholder{color:var(--text-muted);opacity:.85}
