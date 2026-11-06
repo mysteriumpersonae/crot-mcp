@@ -173,6 +173,10 @@ export type BrowserConnectionState =
       /** Random id (>= 128 bits) of this accepted connection; new for every hello, never reused (AD-9). Not shown to agents. */
       readonly connectionId: string;
       readonly cdp?: { readonly available: boolean; readonly reason: string | null };
+      /** native: relay over native messaging; loopback: the paired 127.0.0.1 channel. */
+      readonly transport?: "native" | "loopback";
+      /** Optional protocol features the extension announced (src/browser-bridge/protocol.ts BRIDGE_FEATURES). */
+      readonly features?: readonly string[];
     }
   | { readonly kind: "in_use" };
 

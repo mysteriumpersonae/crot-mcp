@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
+  BRIDGE_FEATURES,
   BRIDGE_PROTOCOL_VERSION,
   BrowserProtocolError,
   CHUNK_DATA_UNITS,
@@ -284,6 +285,53 @@ describe("message validation", () => {
     { type: "chunk", id: "a", index: 0.5, count: 2, data: "x" },
   ])("rejects host message %j", (value) => {
     expect(() => parseHostMessage(value)).toThrow(BrowserProtocolError);
+  });
+
+  it("negotiates optional features in hello and welcome; unknown names pass, malformed lists fail", () => {
+    expect(BRIDGE_FEATURES).toEqual(["tab-policy-v2", "tabs-changed", "ui-manage"]);
+    expect(
+      parseBrowserMessage({
+        type: "hello",
+        protocol: 1,
+        browser,
+        features: [...BRIDGE_FEATURES, "future-x", "ui-manage"],
+      }),
+    ).toEqual({ type: "hello", protocol: 1, browser, features: [...BRIDGE_FEATURES, "future-x"] });
+    expect(parseHostMessage({ type: "welcome", protocol: 1, features: ["tabs-changed"] })).toEqual({
+      type: "welcome",
+      protocol: 1,
+      features: ["tabs-changed"],
+    });
+    for (const features of [
+      "tabs-changed",
+      [1],
+      ["Upper"],
+      ["x".repeat(33)],
+      Array.from({ length: 17 }, (_, i) => "f" + i),
+    ]) {
+      expect(() => parseBrowserMessage({ type: "hello", protocol: 1, browser, features })).toThrow(
+        BrowserProtocolError,
+      );
+      expect(() => parseHostMessage({ type: "welcome", protocol: 1, features })).toThrow(BrowserProtocolError);
+    }
+  });
+
+  it("accepts the content-free tabs_changed notice and the fixed ui_manage action only", () => {
+    expect(parseBrowserMessage({ type: "browser_notice", event: "tabs_changed" })).toEqual({
+      type: "browser_notice",
+      event: "tabs_changed",
+    });
+    // A notice never carries tab data.
+    expect(() =>
+      parseBrowserMessage({ type: "browser_notice", event: "tabs_changed", tabs: [{ url: "https://example.com" }] }),
+    ).toThrow(BrowserProtocolError);
+    expect(parseHostMessage({ type: "ui_manage", id: "m1" })).toEqual({ type: "ui_manage", id: "m1" });
+    for (const value of [
+      { type: "ui_manage" },
+      { type: "ui_manage", id: "bad id!" },
+      { type: "ui_manage", id: "m1", url: "https://example.com" },
+    ])
+      expect(() => parseHostMessage(value)).toThrow(BrowserProtocolError);
   });
 
   it("validates relay authentication", () => {

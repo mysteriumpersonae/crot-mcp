@@ -5,8 +5,13 @@ browser: tabs, page content, screenshots, clicks and typing. It is part of
 ARCHITECTURE.md §16, step 11, and builds on the Native Host platform layer
 (step 10, see [`NATIVE_HOST.md`](NATIVE_HOST.md)).
 
-Supported browsers: **Chromium-based browsers only** — Google Chrome, Microsoft
-Edge and Brave (Chrome 120 or newer). Firefox is not supported.
+Supported browsers: **Chromium-based browsers only** — Google Chrome, Chromium,
+Microsoft Edge and Brave (Chrome 120 or newer). Firefox is not supported.
+
+The connection is zero-config: CROT Desktop registers the native-messaging
+host for the installed browsers when it starts, and an extension that cannot
+use native messaging finds CROT Desktop on a loopback port and connects after
+one owner approval (see [Automatic connection](#automatic-connection)).
 
 ## Terminology
 
@@ -58,8 +63,10 @@ Rules:
    of commands with built-in page functions; there is no `eval` and no way to
    send arbitrary JavaScript.
 
-The bridge and the relay communicate over local IPC only; no TCP port is
-opened and no public server is involved.
+The bridge and the relay communicate over local IPC only; no public server is
+involved. The only TCP listener is the loopback discovery endpoint on
+`127.0.0.1` (see [Automatic connection](#automatic-connection)); tab data and
+requests reach it only over a paired, authenticated channel.
 
 ## File transfers (WP-26 / AD-33)
 
@@ -116,6 +123,15 @@ newer, and Chrome, Edge or Brave 120 or newer.
 
 ### 1. Register the native-messaging host
 
+The CROT service registers the host by itself when it starts, for every
+supported browser that is installed for the current user (its configuration
+directory exists); nothing is written when the registration is already
+current, and a failure is only logged. Set `CROT_BROWSER_AUTO_REGISTER=off` to
+turn this off. When CROT Desktop runs the service, the launcher starts the
+CROT Desktop executable with `ELECTRON_RUN_AS_NODE=1`, the way CROT Desktop
+starts its own service, so no separate Node.js installation is needed. To
+register by hand (for example for a browser installed later):
+
 ```sh
 node dist/bin/crot-mcp.js browser install
 ```
@@ -126,7 +142,8 @@ fails with `NOT_FOUND`). It writes:
 
 - a launcher `<state>/native-messaging/crot-browser-host` (POSIX shell script,
   mode `0700`) or `crot-browser-host.cmd` (Windows). It runs the current Node
-  executable with `dist/bin/crot-browser-relay.js --state-dir <state>`;
+  executable (under CROT Desktop: its executable with `ELECTRON_RUN_AS_NODE=1`)
+  with `dist/bin/crot-browser-relay.js --state-dir <state>`;
 - the host manifest `com.crot.host.json` (`"type": "stdio"`, `path` = the
   launcher), which allows only the CROT extension:
   `chrome-extension://bllcepanlhojbddfbbpegmnokpaakool/`.
@@ -135,26 +152,27 @@ The manifest is registered for each supported browser:
 
 | OS | Location |
 | --- | --- |
-| Linux | `$XDG_CONFIG_HOME` (or `~/.config`) + `google-chrome/`, `microsoft-edge/`, `BraveSoftware/Brave-Browser/`, each `NativeMessagingHosts/com.crot.host.json` |
-| macOS | `~/Library/Application Support/` + `Google/Chrome/`, `Microsoft Edge/`, `BraveSoftware/Brave-Browser/`, each `NativeMessagingHosts/com.crot.host.json` |
-| Windows | manifest at `<state>\native-messaging\com.crot.host.json`; registry keys `HKCU\Software\Google\Chrome\NativeMessagingHosts\com.crot.host` (Chrome and Brave) and `HKCU\Software\Microsoft\Edge\NativeMessagingHosts\com.crot.host`, written with `%SystemRoot%\System32\reg.exe` |
+| Linux | `$XDG_CONFIG_HOME` (or `~/.config`) + `google-chrome/`, `chromium/`, `microsoft-edge/`, `BraveSoftware/Brave-Browser/`, each `NativeMessagingHosts/com.crot.host.json` |
+| macOS | `~/Library/Application Support/` + `Google/Chrome/`, `Chromium/`, `Microsoft Edge/`, `BraveSoftware/Brave-Browser/`, each `NativeMessagingHosts/com.crot.host.json` |
+| Windows | manifest at `<state>\native-messaging\com.crot.host.json`; registry keys `HKCU\Software\Google\Chrome\NativeMessagingHosts\com.crot.host` (Chrome and Brave), `HKCU\Software\Chromium\NativeMessagingHosts\com.crot.host` and `HKCU\Software\Microsoft\Edge\NativeMessagingHosts\com.crot.host`, written with `%SystemRoot%\System32\reg.exe` |
 
 Files are written atomically. `<state>` is the CROT state directory (see
 [Default locations](../README.md#default-locations)). Rerun the command after
 moving the CROT checkout or changing the Node.js installation, because the
 launcher contains absolute paths.
 
-### 2. Enable the browser bridge
+### 2. The browser bridge
 
-Add to the CROT configuration and restart CROT:
+The bridge is on by default. `browser.enabled` (default `true`) only starts
+the bridge and the loopback discovery endpoint; it grants nothing (step 3). To
+turn the browser connection off, add to the CROT configuration and restart
+CROT:
 
 ```json
 {
-  "browser": { "enabled": true }
+  "browser": { "enabled": false }
 }
 ```
-
-`browser.enabled` (default `false`) only starts the bridge. It grants nothing.
 
 ### 3. Grant browser capabilities
 
@@ -199,6 +217,7 @@ corresponding private key is not part of the repository.
 | State | Meaning |
 | --- | --- |
 | `disabled` | `browser.enabled` is `false`, or the bridge could not start |
+| `update_required` | an extension with another protocol version tried to connect; update the extension or CROT |
 | `waiting` | the bridge is listening; no extension is connected |
 | `connected` | an extension completed the handshake |
 | `in_use` | another process owns the bridge endpoint (not in normal use since WP-20, see below) |
@@ -209,6 +228,74 @@ tool reports the same state but requires `browser.read`.
 
 The extension logs connection events to its service worker console (open it
 from the extensions page) with the prefix `CROT: `.
+
+CROT Desktop → **Browser** shows the same state: a green card "CROT Extension —
+Connected and active" with the browser, or "Waiting for connection" with
+**Install extension** and **Check connection**. The screen checks the
+connection every 3 seconds, so no restart is needed after installing the
+extension. The extension popup and its welcome page show "CROT Ready" once
+connected, or an **Install CROT Desktop** button
+(<https://crot.network/#download>) while no CROT Desktop answers.
+
+## Automatic connection
+
+Native messaging stays the primary channel: no click, no network listener. It
+needs the host manifest of step 1 for the browser in use. When `connectNative`
+fails (the host is not registered for this browser, or a sandboxed browser
+cannot start it), the extension falls back to the loopback discovery endpoint
+of CROT Desktop ([`src/browser-bridge/loopback.ts`](../src/browser-bridge/loopback.ts),
+[`extension/src/loopback.ts`](../extension/src/loopback.ts)):
+
+```text
+CROT Browser Extension ──HTTP/WebSocket 127.0.0.1:43115-43119──► LoopbackServer ──► BrowserBridge
+```
+
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /extension/status` | identifies CROT: product, version, instance id, Desktop account name and bridge state. No secrets, no tab data |
+| `POST /extension/pair` | a pairing request with a 6-digit code, valid for 5 minutes |
+| `POST /extension/pair/<id>` | polled with the request key: `pending`, `rejected`, or `approved` with the pairing id and secret (delivered once) |
+| `WS /extension/command` | mutual HMAC-SHA256 challenge with the pairing secret, then the bridge protocol as one JSON text message per WebSocket message |
+
+Flow:
+
+1. The extension probes the ports. If exactly one CROT Desktop answers and the
+   owner has not declined it, it requests a pairing (at most one automatic
+   request per minute); with several Desktops the popup lets the owner choose.
+2. CROT Desktop → Browser shows the request with the browser and the code; the
+   popup shows the same code and the Desktop account. The owner clicks
+   **Connect** only when the codes match (**Decline** stops automatic
+   requests until the owner asks again from the popup).
+3. The extension collects the pairing secret once and connects. On every
+   connection CROT proves knowledge of the secret first, then the extension;
+   both proofs bind the nonces of both sides and the extension origin. A
+   program squatting on the port therefore learns nothing it could replay.
+4. Later connections reuse the pairing without a prompt. **Trusted browsers**
+   on the Browser screen lists the pairings; **Forget** revokes one and closes
+   its connection (WebSocket close code `4401`); the extension then pairs again.
+
+Security:
+
+- The server listens on `127.0.0.1` only and answers only requests from the
+  loopback interface with a `Host` of `127.0.0.1:<port>` or `localhost:<port>`
+  (no DNS rebinding). Every request except the status read must carry the
+  exact origin of a release CROT extension
+  (`chrome-extension://bllcepanlhojbddfbbpegmnokpaakool`); there is no wildcard
+  CORS, and web pages cannot forge their `Origin`.
+- The pairing secret is derived from the bridge token
+  (HMAC of the instance and pairing id); it is never stored by CROT, and
+  rotating the bridge token revokes every pairing. `<state>/browser-pairings.json`
+  holds metadata only and is a protected path like the token file. The
+  extension keeps its pairing in `chrome.storage.local`.
+- Pairing requests, handshakes and failed proofs are rate limited.
+- Residual risk on a computer shared by several OS accounts: another account
+  could hold the first port before CROT starts. The extension shows the code
+  and the Desktop account name, CROT reports a port held by a program that is
+  not CROT, and native messaging has no such exposure.
+
+`CROT_BROWSER_LOOPBACK_PORTS` sets the ports (comma-separated, default
+`43115,43116,43117,43118,43119`; `off` disables the endpoint; `0` picks a free
+port, used by tests). Only the CROT instance that owns the bridge listens.
 
 ## MCP tools
 
@@ -585,6 +672,7 @@ Manifest V3, `minimum_chrome_version` 120:
 | Permission | Why |
 | --- | --- |
 | `nativeMessaging` | connect to `com.crot.host` |
+| `storage` | the loopback pairing (pairing id and secret) in `chrome.storage.local` |
 | `tabs` | list, open, navigate, activate and close tabs; tab URLs and titles |
 | `scripting` | run the built-in page functions (read, click, type) |
 | `alarms` | wake the service worker to reconnect |
@@ -592,8 +680,8 @@ Manifest V3, `minimum_chrome_version` 120:
 | `tabGroups` | visible CROT tab groups and grouping of their popups |
 | host permissions `<all_urls>` | read and control pages and capture screenshots on any site the agent is asked to use |
 
-The extension has no UI, no content scripts, no `externally_connectable` and no
-web-accessible resources. Web pages cannot talk to it. It is not allowed in
+Its only UI is the popup and the welcome page. It has no content scripts, no
+`externally_connectable` and no web-accessible resources. Web pages cannot talk to it. It is not allowed in
 incognito windows (`"incognito": "not_allowed"`).
 
 ## Audit
@@ -624,6 +712,16 @@ full URLs.
   agent. CROT does not filter page content.
 - The bridge token protects the endpoint from other programs; on POSIX the
   socket and state directory are owner-only as well.
+- The loopback discovery endpoint gives out nothing without the owner's
+  approval in CROT Desktop (see [Automatic connection](#automatic-connection)).
+- Owner tab policy (CROT Desktop → Browser): which tabs the agent may use
+  (active tab, background tabs, target domains), a domain blacklist, and two
+  switches. **Access to cookies and sessions** off applies the sensitive preset:
+  sign-in and payment sites are closed to the agent (the extension works in the
+  owner's profile, so it cannot hide cookies from a page it opens).
+  **Auto-clicks and form filling** off refuses clicks, typing, form, upload and
+  dialog input in Core and in the extension; reading and navigation stay
+  available.
 
 ## Uninstall
 
@@ -637,7 +735,8 @@ full URLs.
    ```
 
 3. Delete `<state>/native-messaging`.
-4. Set `browser.enabled` to `false` (or remove it).
+4. Set `browser.enabled` to `false`, or set `CROT_BROWSER_AUTO_REGISTER=off`
+   before CROT starts, so the next start does not register the host again.
 
 To rotate the bridge token, stop CROT, delete `<state>/browser-token` and start
 CROT again.

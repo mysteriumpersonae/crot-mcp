@@ -348,17 +348,41 @@ export async function runServiceScenarios({ real, evaluate, until, size, screens
     await screenshot(name.toLowerCase() + "-real-service");
   }
   await section("Browser");
-  await until("document.querySelector('select[aria-label=\"Tab mode\"]')");
-  await evaluate(
-    "(()=>{const s=document.querySelector('select[aria-label=\"Tab mode\"]');s.value='targeted';s.dispatchEvent(new Event('change'));})()",
-  );
-  await fill("Target domains", "127.0.0.1");
+  // Autosave: switches save at once, the domain fields after a short pause (no Save button).
+  await until("document.querySelector('[data-switch=targeted]')?.disabled===false");
+  if (!(await evaluate("document.querySelector('[data-switch=targeted]').checked")))
+    await evaluate("document.querySelector('[data-switch=targeted]').click()");
+  await fill("Target domains", "https://127.0.0.1/path");
   await fill("Blocked domains", "localhost");
-  await click("Save browser policy");
-  await confirm();
-  const tabPolicy = await evaluate("window.crot.product('browser.policy.get')");
-  if (tabPolicy.policy.mode !== "targeted" || tabPolicy.policy.domains[0] !== "127.0.0.1")
-    throw Error("Browser policy form did not persist");
+  await until(
+    "window.crot.product('browser.policy.get').then(r=>r.policy.mode==='targeted'&&r.policy.domains.join()==='127.0.0.1'&&r.policy.blockedDomains.join()==='localhost')",
+  );
+  await until("document.getElementById('browser-saved')?.hidden===false");
+  // Zero-config connection: a browser without the native host finds this service on its loopback port,
+  // the owner confirms the matching code once, and the extension connects (docs/BROWSER_EXTENSION.md).
+  await until("document.getElementById('browser-status')?.dataset.state==='waiting'");
+  const { link } = await evaluate("window.crot.product('browser.link.status')");
+  if (!Number.isInteger(link?.loopback?.port))
+    throw Error("Loopback discovery port is not open: " + JSON.stringify(link));
+  const extension = await real.startExtension(link.loopback.port);
+  for (const end = Date.now() + 15000; extension.view.state !== "pairing"; await delay(100))
+    if (Date.now() > end) throw Error("Extension did not request pairing: " + JSON.stringify(extension.view));
+  await until(
+    `document.getElementById('browser-status').dataset.state==='pairing'&&document.querySelector('#browser-status .browser-code')?.textContent.replace(/\\s/g,'')===${JSON.stringify(extension.view.code)}`,
+  );
+  await screenshot("browser-pairing-real-service");
+  await click("Connect", "#browser-status button");
+  await until("document.getElementById('browser-status').dataset.state==='connected'");
+  await until(
+    "document.querySelectorAll('#browser-tabs .browser-tab').length===1&&document.getElementById('browser-tabs').textContent.includes('Example Domain')",
+  );
+  if (extension.state !== "connected") throw Error("Extension is not connected: " + extension.state);
+  await evaluate("window.CrotI18n.setLanguage('ru')");
+  await until("document.getElementById('browser-status').innerText.includes('CROT Extension — Подключено и активно')");
+  await screenshot("browser-connected-real-service-ru");
+  await evaluate("window.CrotI18n.setLanguage('en')");
+  extension.stop();
+  await until("document.getElementById('browser-status').dataset.state==='waiting'");
   await section("Settings");
   await click("Updates & Diagnostics");
   await click("Check system");
@@ -377,7 +401,8 @@ export async function runServiceScenarios({ real, evaluate, until, size, screens
         ...chatEvidence,
         ownerSecretConfirmationAndRevocation: true,
         customSkillFormPersistence: true,
-        browserPolicyFormPersistence: true,
+        browserPolicyAutosave: true,
+        browserLoopbackAutoDiscovery: true,
         realSystemCheckAndWizardEntry: true,
         nativeTerminalCancellationExecuted: state.confinement.available,
         terminalMissingNativeRefusal: !state.confinement.available,

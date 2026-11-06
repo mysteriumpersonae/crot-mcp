@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { chmod, mkdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { CrotError } from "../core/errors.js";
 import { RELEASE_EXTENSION_IDS, RELEASE_EXTENSION_ORIGINS } from "./release-extension-ids.js";
@@ -7,7 +7,7 @@ import type { OsFamily, PrivateFileProtection } from "../core/platform/types.js"
 
 /**
  * `crot-mcp browser install`: registers the CROT Host with Chromium browsers
- * (Chrome, Edge, Brave) as the native-messaging host of the CROT Browser
+ * (Chrome, Chromium, Edge, Brave) as the native-messaging host of the CROT Browser
  * Extension (ARCHITECTURE.md §7-8, §16).
  *
  * It writes, for the current user only:
@@ -20,7 +20,7 @@ import type { OsFamily, PrivateFileProtection } from "../core/platform/types.js"
  *
  * Installing grants nothing. The relay is a transport only: every browser
  * operation is still authorized by Core's PermissionEngine, and the bridge
- * runs only when `browser.enabled` is set in the CROT configuration.
+ * runs unless `browser.enabled` is false in the CROT configuration.
  */
 
 /** Native-messaging host name; must equal NATIVE_HOST_NAME in extension/src/host-connection.ts. */
@@ -33,7 +33,7 @@ export const CROT_EXTENSION_ORIGIN = `chrome-extension://${CROT_EXTENSION_ID}/`;
 export const NATIVE_MESSAGING_DIR_NAME = "native-messaging";
 export const MANIFEST_FILE_NAME = `${CROT_NATIVE_HOST_NAME}.json`;
 
-export type BrowserName = "Google Chrome" | "Microsoft Edge" | "Brave";
+export type BrowserName = "Google Chrome" | "Chromium" | "Microsoft Edge" | "Brave";
 
 /** Where one host manifest is installed and which browsers read it. */
 export interface HostRegistration {
@@ -70,8 +70,8 @@ export function launcherFileName(os: OsFamily): string {
  * - Linux (and other POSIX): $XDG_CONFIG_HOME (default ~/.config)/<browser>/NativeMessagingHosts.
  * - macOS: ~/Library/Application Support/<browser>/NativeMessagingHosts.
  * - Windows: one manifest in <state>/native-messaging, registered under
- *   HKCU\Software\Google\Chrome\NativeMessagingHosts (read by Chrome and Brave)
- *   and HKCU\Software\Microsoft\Edge\NativeMessagingHosts.
+ *   HKCU\Software\Google\Chrome\NativeMessagingHosts (read by Chrome and Brave),
+ *   HKCU\Software\Chromium\NativeMessagingHosts and HKCU\Software\Microsoft\Edge\NativeMessagingHosts.
  */
 export function hostRegistrations(
   os: OsFamily,
@@ -86,6 +86,11 @@ export function hostRegistrations(
         browsers: ["Google Chrome", "Brave"],
         manifestFile,
         registryKey: `HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\${CROT_NATIVE_HOST_NAME}`,
+      },
+      {
+        browsers: ["Chromium"],
+        manifestFile,
+        registryKey: `HKCU\\Software\\Chromium\\NativeMessagingHosts\\${CROT_NATIVE_HOST_NAME}`,
       },
       {
         browsers: ["Microsoft Edge"],
@@ -106,11 +111,13 @@ export function hostRegistrations(
     os === "macos"
       ? [
           ["Google Chrome", "Google/Chrome"],
+          ["Chromium", "Chromium"],
           ["Microsoft Edge", "Microsoft Edge"],
           ["Brave", "BraveSoftware/Brave-Browser"],
         ]
       : [
           ["Google Chrome", "google-chrome"],
+          ["Chromium", "chromium"],
           ["Microsoft Edge", "microsoft-edge"],
           ["Brave", "BraveSoftware/Brave-Browser"],
         ];
@@ -121,11 +128,17 @@ export function hostRegistrations(
 }
 
 export interface LauncherTarget {
-  /** Node.js executable (process.execPath). */
+  /** Node.js executable (process.execPath), or the CROT Desktop (Electron) executable with runAsNode. */
   readonly nodePath: string;
   /** dist/bin/crot-browser-relay.js */
   readonly relayScript: string;
   readonly stateDir: string;
+  /**
+   * nodePath is the Electron executable of CROT Desktop: the launcher sets
+   * ELECTRON_RUN_AS_NODE=1, the way CROT Desktop starts its own service, so
+   * no separate Node.js installation is needed.
+   */
+  readonly runAsNode?: boolean | undefined;
 }
 
 const CONTROL = /[\u0000-\u001f\u007f]/;
@@ -139,6 +152,7 @@ export function posixLauncher(target: LauncherTarget): string {
   return [
     "#!/bin/sh",
     "# CROT browser host launcher, written by `crot-mcp browser install`.",
+    ...(target.runAsNode ? ["ELECTRON_RUN_AS_NODE=1", "export ELECTRON_RUN_AS_NODE"] : []),
     `exec ${quote(target.nodePath)} ${quote(target.relayScript)} --state-dir ${quote(target.stateDir)} "$@"`,
     "",
   ].join("\n");
@@ -164,6 +178,7 @@ export function windowsLauncher(target: LauncherTarget): string {
   return [
     "@echo off",
     "rem CROT browser host launcher, written by `crot-mcp browser install`.",
+    ...(target.runAsNode ? ['set "ELECTRON_RUN_AS_NODE=1"'] : []),
     `${quote(target.nodePath, false)} ${quote(target.relayScript, true)} --state-dir ${quote(target.stateDir, true)} %*`,
     "",
   ].join("\r\n");
@@ -221,11 +236,21 @@ export interface BrowserInstallOptions extends LauncherTarget {
   readonly privateFiles: PrivateFileProtection;
   /** Required on Windows. */
   readonly registry?: RegistryWriter | undefined;
+  /**
+   * Startup registration by CROT Desktop: POSIX registers only browsers whose
+   * profile directory exists, and nothing is written when the launcher and
+   * every manifest are already current.
+   */
+  readonly existingBrowsersOnly?: boolean;
+  /** nodePath is the CROT Desktop (Electron) executable; see LauncherTarget.runAsNode. */
+  readonly runAsNode?: boolean | undefined;
 }
 
 export interface BrowserInstallResult {
   readonly launcher: string;
   readonly registrations: readonly HostRegistration[];
+  /** False when existingBrowsersOnly found every file current (nothing written). */
+  readonly changed?: boolean;
 }
 
 export async function installBrowserHost(options: BrowserInstallOptions): Promise<BrowserInstallResult> {
@@ -252,16 +277,35 @@ export async function installBrowserHost(options: BrowserInstallOptions): Promis
     nodePath: options.nodePath,
     relayScript: options.relayScript,
     stateDir: options.stateDir,
+    runAsNode: options.runAsNode === true,
   };
   const script = windows ? windowsLauncher(target) : posixLauncher(target);
   const hostDir = paths.join(options.stateDir, NATIVE_MESSAGING_DIR_NAME);
+  const launcher = paths.join(hostDir, launcherFileName(options.os));
+  let registrations = hostRegistrations(options.os, options.home, options.stateDir, options.env ?? {});
+  const manifest = `${JSON.stringify(hostManifest(launcher), null, 2)}\n`;
+  if (options.existingBrowsersOnly) {
+    if (!windows) {
+      const present = await Promise.all(
+        registrations.map(async (r) =>
+          (await stat(paths.dirname(paths.dirname(r.manifestFile))).catch(() => undefined))?.isDirectory(),
+        ),
+      );
+      registrations = registrations.filter((_, i) => present[i] === true);
+      if (!registrations.length) return { launcher, registrations, changed: false };
+    }
+    const current = async (file: string, content: string) =>
+      (await readFile(file, "utf8").catch(() => undefined)) === content;
+    if (
+      (await current(launcher, script)) &&
+      (await Promise.all(registrations.map((r) => current(r.manifestFile, manifest)))).every(Boolean)
+    )
+      return { launcher, registrations, changed: false };
+  }
   await options.privateFiles.ensureDirectory(options.stateDir);
   await options.privateFiles.ensureDirectory(hostDir);
-  const launcher = paths.join(hostDir, launcherFileName(options.os));
   await writeAtomically(launcher, script, windows ? undefined : 0o700);
 
-  const registrations = hostRegistrations(options.os, options.home, options.stateDir, options.env ?? {});
-  const manifest = `${JSON.stringify(hostManifest(launcher), null, 2)}\n`;
   const written = new Set<string>();
   for (const registration of registrations) {
     if (!written.has(registration.manifestFile)) {
@@ -272,7 +316,7 @@ export async function installBrowserHost(options: BrowserInstallOptions): Promis
     if (registration.registryKey !== undefined)
       await options.registry?.(registration.registryKey, registration.manifestFile);
   }
-  return { launcher, registrations };
+  return { launcher, registrations, changed: true };
 }
 
 export async function uninstallBrowserHost(options: {
@@ -322,7 +366,7 @@ export function formatInstallResult(result: BrowserInstallResult): string {
     `Allowed extensions (release whitelist): ${RELEASE_EXTENSION_ORIGINS.join(", ")}`,
     "",
     "Next steps:",
-    '  1. Set "browser": { "enabled": true } in the CROT configuration and restart crot-mcp.',
+    '  1. Start CROT (the bridge is on unless "browser": { "enabled": false } is configured).',
     "  2. Load the CROT Browser Extension (see docs/BROWSER_EXTENSION.md).",
     "Browser tools still require browser.read / browser.control permissions.",
     "Run this command again after moving CROT or changing the Node.js installation.",

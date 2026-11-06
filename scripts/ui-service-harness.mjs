@@ -29,6 +29,9 @@ export async function serviceHarness() {
     XDG_CONFIG_HOME: path.join(base, "config"),
     // The UI turns the remote tunnel on (Copy URL, tokens): keep the self-registered tunnel off the public relay.
     CROT_SELF_RELAY_HOST: "relay.invalid",
+    // Browser auto-discovery on a free port (never the owner's 43115-43119); no browser manifests or registry keys.
+    CROT_BROWSER_LOOPBACK_PORTS: "0",
+    CROT_BROWSER_AUTO_REGISTER: "off",
   };
   const stateDir =
     process.platform === "win32"
@@ -42,7 +45,7 @@ export async function serviceHarness() {
   });
   const bin = path.resolve("dist/bin/crot-mcp.js"),
     config = path.join(base, "config.json");
-  let tool, control, controller, view, endpoint, inspectionGate, releaseInspection;
+  let tool, control, controller, view, endpoint, inspectionGate, releaseInspection, extension;
   let inspectionCalls = 0;
   return {
     base,
@@ -281,7 +284,14 @@ export async function serviceHarness() {
       const status = JSON.parse(result.content[0].text);
       return { projects: r.projects.length, active: r.active, endpoint, confinement: status.confinement };
     },
+    /** The shipped extension's loopback client (built modules) against the real service's discovery port. */
+    async startExtension(port) {
+      extension?.stop();
+      extension = await loopbackExtension(port);
+      return extension;
+    },
     async close() {
+      extension?.stop();
       releaseInspection?.();
       controller?.stop();
       control?.close();
@@ -289,5 +299,108 @@ export async function serviceHarness() {
       await promisify(execFile)(process.execPath, [bin, "service", "stop"], { env, timeout: 15000 }).catch(() => {});
       await rm(base, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     },
+  };
+}
+
+/**
+ * A browser without the native host: the release extension's origin, its real
+ * LoopbackLink + HostConnection (extension/dist), a WebSocket over node:http
+ * that sends the Origin header like the browser does, and one open tab.
+ */
+async function loopbackExtension(port) {
+  const { LoopbackLink } = await import("../extension/dist/extension/src/loopback.js");
+  const { HostConnection } = await import("../extension/dist/extension/src/host-connection.js");
+  const { connectWebSocket } = await import("../dist/tunnel/websocket.js");
+  const origin = "chrome-extension://bllcepanlhojbddfbbpegmnokpaakool";
+  const { version } = JSON.parse(await readFile(path.resolve("extension/manifest.json"), "utf8"));
+  const browser = { name: "Chromium", version: "140.0.0.0", extensionVersion: version };
+  const items = {};
+  const storage = {
+    async get(key) {
+      return key in items ? { [key]: JSON.parse(JSON.stringify(items[key])) } : {};
+    },
+    async set(values) {
+      Object.assign(items, JSON.parse(JSON.stringify(values)));
+    },
+  };
+  const socket = (url) => {
+    let connection,
+      closed = false;
+    const ws = {
+      onopen: null,
+      onmessage: null,
+      onclose: null,
+      onerror: null,
+      send(text) {
+        if (!connection?.sendText(text)) throw Error("The WebSocket is not open");
+      },
+      close(code = 1000, reason = "") {
+        if (connection) connection.close(code, reason);
+        else closed = true;
+      },
+    };
+    connectWebSocket(url, { headers: { Origin: origin }, maxMessageBytes: 1 << 24, timeoutMs: 5000 }).then(
+      (c) => {
+        if (closed) return c.close(1000, "");
+        connection = c;
+        c.attach({
+          onMessage: (data, binary) => ws.onmessage?.({ data: binary ? data : data.toString("utf8") }),
+          onClose: (code) => ws.onclose?.({ code }),
+        });
+        ws.onopen?.({});
+      },
+      () => {
+        ws.onerror?.({});
+        ws.onclose?.({ code: 1006 });
+      },
+    );
+    return ws;
+  };
+  const link = new LoopbackLink({
+    fetch: (url, init) => globalThis.fetch(url, { ...init, headers: { ...init.headers, Origin: origin } }),
+    socket,
+    storage,
+    origin,
+    browser,
+    ports: [port],
+  });
+  const tab = {
+    tabId: 1,
+    windowId: 1,
+    url: "https://example.com/",
+    title: "Example Domain",
+    active: true,
+    discarded: false,
+    groupedByCrot: false,
+  };
+  const connection = new HostConnection({
+    runtime: {
+      connectNative() {
+        throw Error("Specified native messaging host not found.");
+      },
+      lastError: undefined,
+    },
+    browser,
+    loopback: link,
+    handlers: new Proxy(
+      { "tabs.list": async () => ({ tabs: [tab] }) },
+      {
+        get: (target, command) =>
+          target[command] ??
+          (async () => {
+            throw Error("Not available in this test browser");
+          }),
+      },
+    ),
+  });
+  connection.ensureConnected();
+  return {
+    get view() {
+      return link.view;
+    },
+    get state() {
+      return connection.state;
+    },
+    stop: () => connection.stop(),
   };
 }

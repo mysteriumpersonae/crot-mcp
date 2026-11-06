@@ -1,5 +1,12 @@
 import { publicationBrowserControlTarget, publicationBrowserTarget } from "../../publications/browser-boundary.js";
-import { DEFAULT_TAB_POLICY, parseTabPolicy, type BrowserTabPolicy } from "./tab-policy.js";
+import {
+  DEFAULT_TAB_POLICY,
+  TAB_POLICY_V2_FEATURE,
+  legacyTabPolicy,
+  parseTabPolicy,
+  tabPolicyAllowsAutomation,
+  type BrowserTabPolicy,
+} from "./tab-policy.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { TabQueue } from "./tab-queue.js";
 import type { ExposureScope } from "../../auth/principal.js";
@@ -106,6 +113,24 @@ const MAX_BROWSER_ERROR_MESSAGE = 500;
 const MAX_AUDIT_SELECTOR = 200;
 
 /** Error codes a browser error may carry through to the agent. Anything else becomes OPERATION_FAILED. */
+/** Operations that synthesize owner input; refused before any approval while the owner turned automation off. */
+const AUTOMATION_OPERATIONS: ReadonlySet<string> = new Set([
+  "browser.click",
+  "browser.type",
+  "browser.hover",
+  "browser.drag",
+  "browser.press_key",
+  "browser.select_option",
+  "browser.set_checked",
+  "browser.file_upload",
+  "browser.dialog_handle",
+]);
+const automationOff = () =>
+  new CrotError(
+    "PERMISSION_DENIED",
+    "Clicks and form filling are turned off by the owner (CROT → Browser → Data & automation).",
+  );
+
 const PASS_THROUGH_CODES: ReadonlySet<CrotErrorCode> = new Set<CrotErrorCode>([
   "NOT_FOUND",
   "INVALID_INPUT",
@@ -122,7 +147,7 @@ const PASS_THROUGH_CODES: ReadonlySet<CrotErrorCode> = new Set<CrotErrorCode>([
 ]);
 
 const DISABLED_DETAIL =
-  "Browser support is disabled. Set browser.enabled to true in the CROT configuration and connect the CROT Browser Extension.";
+  "Browser support is disabled. Remove browser.enabled: false from the CROT configuration (or set it to true) and connect the CROT Browser Extension.";
 const WAITING_DETAIL = "Waiting for the CROT Browser Extension to connect.";
 const IN_USE_DETAIL =
   "Another CROT instance owns the browser bridge. Browser operations are unavailable in this instance; all other capabilities work normally.";
@@ -947,6 +972,7 @@ export class BrowserService {
     execute: (bound: ApprovalBrowserSubject | undefined) => Promise<T>,
     paths?: readonly ResolvedPath[],
   ): Promise<T> {
+    if (this.tabPolicy?.automation === false && AUTOMATION_OPERATIONS.has(operation)) throw automationOff();
     let bound: ApprovalBrowserSubject | undefined;
     const target = approval.target;
     if (context.principal.kind === "remote" && target && "tabId" in target && target.tabId === undefined)
@@ -1188,7 +1214,15 @@ export class BrowserService {
       params = { ...params, tabId: active.tabId };
       connectionId ??= active.connectionId;
     }
-    if (this.tabPolicy) params = { ...params, __crotTabPolicy: this.getTabPolicy() } as BrowserCommandParams[C];
+    if (!tabPolicyAllowsAutomation(this.tabPolicy, command)) throw automationOff();
+    if (this.tabPolicy) {
+      // An extension without tab-policy-v2 rejects unknown keys: it gets the narrower legacy policy
+      // (no active-tab extension of targeted mode); automation is enforced here either way.
+      const state = this.deps.connection?.state();
+      const v2 = state?.kind === "connected" && state.features?.includes(TAB_POLICY_V2_FEATURE) === true;
+      const policy = this.getTabPolicy();
+      params = { ...params, __crotTabPolicy: v2 ? policy : legacyTabPolicy(policy) } as BrowserCommandParams[C];
+    }
     const connection = bound ? this.boundConnection(bound) : this.requireConnection();
     const controller = new AbortController();
     this.pending.add(controller);

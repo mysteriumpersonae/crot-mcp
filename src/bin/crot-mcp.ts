@@ -174,6 +174,8 @@ async function runService(command: ServeCommand, launch: "on-demand" | "managed"
     privateFiles: createServicePrivateFiles(windows),
     log,
     requestStop: (reason) => stop(reason),
+    // Zero-config browser connection: register the native-messaging host for the installed browsers.
+    ...(process.env.CROT_BROWSER_AUTO_REGISTER !== "off" ? { registerBrowserHost: registerBrowserHostAtStartup } : {}),
   });
   if (started === "already_running") {
     // Two shims started a service at the same time: the other one serves them both.
@@ -297,12 +299,35 @@ async function installBrowser(): Promise<void> {
     env: process.env,
     stateDir: hostDirectories(process.env).state,
     nodePath: process.execPath,
+    // Under CROT Desktop, process.execPath is its Electron executable: the launcher runs it as Node.js.
+    runAsNode: process.versions.electron !== undefined,
     // dist/bin/crot-browser-relay.js next to this file.
     relayScript: fileURLToPath(new URL("./crot-browser-relay.js", import.meta.url)),
     privateFiles: createServicePrivateFiles(windows),
     ...(windows ? { registry: regExeWriter(process.env.SystemRoot ?? "C:\\Windows") } : {}),
   });
   process.stdout.write(formatInstallResult(result));
+}
+
+/** CROT Desktop start: (re)register the native host for the installed browsers; nothing is written when current. */
+async function registerBrowserHostAtStartup(): Promise<void> {
+  const result = await installBrowserHost({
+    os: osFamily(process.platform),
+    home: os.homedir(),
+    env: process.env,
+    stateDir: hostDirectories(process.env).state,
+    nodePath: process.execPath,
+    runAsNode: process.versions.electron !== undefined,
+    relayScript: fileURLToPath(new URL("./crot-browser-relay.js", import.meta.url)),
+    privateFiles: createServicePrivateFiles(windows),
+    ...(windows ? { registry: regExeWriter(process.env.SystemRoot ?? "C:\\Windows") } : {}),
+    existingBrowsersOnly: true,
+  });
+  if (result.changed)
+    log(
+      "browser: native messaging host registered for " +
+        (result.registrations.flatMap((r) => r.browsers).join(", ") || "no installed browser"),
+    );
 }
 
 async function uninstallBrowser(): Promise<void> {

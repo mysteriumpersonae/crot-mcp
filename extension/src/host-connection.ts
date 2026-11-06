@@ -1,4 +1,5 @@
 import {
+  BRIDGE_FEATURES,
   BRIDGE_PROTOCOL_VERSION,
   ChunkReassembler,
   MAX_BROWSER_TO_HOST_FRAME_BYTES,
@@ -13,6 +14,7 @@ import {
 import type { ChromeApi, ChromePort } from "./chrome-api.js";
 import type { CommandHandlers } from "./commands.js";
 import { cleanMessage, toWireError } from "./errors.js";
+import type { LoopbackLink } from "./loopback.js";
 
 /**
  * The extension's side of the browser bridge (protocol v1, see
@@ -31,6 +33,10 @@ import { cleanMessage, toWireError } from "./errors.js";
  *    with exponential backoff; background.ts also calls ensureConnected()
  *    from a periodic alarm, since timers do not survive the service worker
  *    being suspended. An open native port keeps the service worker alive.
+ * 4. When native messaging fails before `welcome` (typically: no host manifest
+ *    for this browser), the paired loopback channel to CROT Desktop is tried
+ *    (loopback.ts). It carries the same protocol; native messaging is tried
+ *    first again on every reconnect.
  */
 
 export const NATIVE_HOST_NAME = "com.crot.host";
@@ -40,8 +46,13 @@ export const RECONNECT_MAX_MS = 30_000;
 export const WELCOME_TIMEOUT_MS = 10_000;
 /** Requests the extension executes at the same time (the host sends at most 16). */
 export const MAX_IN_FLIGHT = 32;
+/** tabs_changed notices are coalesced: at most one per this interval (the host allows 120 notices a minute). */
+export const TABS_CHANGED_INTERVAL_MS = 2_000;
+/** ui_manage requests opening a browser tab: at most one per this interval. */
+const MANAGE_INTERVAL_MS = 2_000;
 
 export type HostConnectionState = "disconnected" | "connecting" | "connected";
+export type HostTransport = "native" | "loopback";
 
 export interface HostConnectionOptions {
   readonly runtime: ChromeApi["runtime"];
@@ -54,6 +65,10 @@ export interface HostConnectionOptions {
   readonly reconnectMinMs?: number;
   readonly reconnectMaxMs?: number;
   readonly welcomeTimeoutMs?: number;
+  /** Fallback when native messaging is unavailable; absent: native messaging only. */
+  readonly loopback?: LoopbackLink | undefined;
+  /** The owner asked CROT Desktop to show the extension's management page (ui_manage). */
+  readonly onManage?: () => void;
 }
 
 const utf8 = new TextEncoder();
@@ -91,14 +106,39 @@ export class HostConnection {
   private reconnectTimer: ReturnType<typeof setTimeout> | undefined;
   private welcomeTimer: ReturnType<typeof setTimeout> | undefined;
   private readonly log: (message: string) => void;
+  private portTransport: HostTransport = "native";
+  /** Features the host announced in welcome (BRIDGE_FEATURES); a feature is used only when announced. */
+  private hostFeatures: readonly string[] = [];
+  /** A loopback attempt (discovery, pairing poll, handshake) is running. */
+  private linking = false;
+  private tabsTimer: ReturnType<typeof setTimeout> | undefined;
+  private lastTabsNotice = 0;
+  private lastManage = 0;
 
   constructor(private readonly options: HostConnectionOptions) {
     this.log = options.log ?? (() => undefined);
   }
 
   get state(): HostConnectionState {
-    if (!this.port) return "disconnected";
+    if (!this.port) return this.linking ? "connecting" : "disconnected";
     return this.connected ? "connected" : "connecting";
+  }
+
+  /** The channel of the current connection; undefined while not connected. */
+  get transport(): HostTransport | undefined {
+    return this.port && this.connected ? this.portTransport : undefined;
+  }
+
+  /** Content-free hint that tabs changed, coalesced; sent only to a host that announced tabs-changed. */
+  tabsChanged(): void {
+    if (!this.connected || !this.hostFeatures.includes("tabs-changed") || this.tabsTimer) return;
+    const wait = Math.max(250, TABS_CHANGED_INTERVAL_MS - (Date.now() - this.lastTabsNotice));
+    this.tabsTimer = setTimeout(() => {
+      this.tabsTimer = undefined;
+      if (!this.connected) return;
+      this.lastTabsNotice = Date.now();
+      this.notify({ type: "browser_notice", event: "tabs_changed" });
+    }, wait);
   }
 
   /** Fixed passive telemetry, never a request to execute a Core operation. */
@@ -108,7 +148,7 @@ export class HostConnection {
 
   /** Connect now unless a connection exists or is being set up. */
   ensureConnected(): void {
-    if (this.port || this.stopped) return;
+    if (this.port || this.stopped || this.linking) return;
     clearTimeout(this.reconnectTimer);
     this.reconnectTimer = undefined;
     this.connect();
@@ -123,15 +163,40 @@ export class HostConnection {
   }
 
   private connect(): void {
+    // A pairing request waiting for the owner is polled without retrying native messaging each time.
+    if (this.options.loopback?.waiting) return this.connectLoopback();
     let port: ChromePort;
     try {
       port = this.options.runtime.connectNative(NATIVE_HOST_NAME);
     } catch (error) {
       this.log("cannot start the CROT native host: " + describe(error));
+      if (this.options.loopback) return this.connectLoopback();
       this.scheduleReconnect();
       return;
     }
+    this.attach(port, "native");
+  }
+
+  /** Ask the loopback link for an authenticated port to CROT Desktop. */
+  private connectLoopback(): void {
+    const loopback = this.options.loopback;
+    if (!loopback || this.stopped) return;
+    this.linking = true;
+    void loopback.open().then((port) => {
+      this.linking = false;
+      if (this.stopped || this.port) {
+        port?.disconnect();
+        return;
+      }
+      if (port) this.attach(port, "loopback");
+      else this.scheduleReconnect();
+    });
+  }
+
+  private attach(port: ChromePort, transport: HostTransport): void {
     this.port = port;
+    this.portTransport = transport;
+    this.hostFeatures = [];
     this.connected = false;
     this.connectionId = undefined;
     this.reassembler = new ChunkReassembler();
@@ -143,7 +208,12 @@ export class HostConnection {
       const reason = this.options.runtime.lastError?.message;
       if (this.port === port) this.closed(reason ?? "the CROT Host closed the connection");
     });
-    const hello: BrowserHello = { type: "hello", protocol: BRIDGE_PROTOCOL_VERSION, browser: this.options.browser };
+    const hello: BrowserHello = {
+      type: "hello",
+      protocol: BRIDGE_PROTOCOL_VERSION,
+      browser: this.options.browser,
+      features: [...BRIDGE_FEATURES],
+    };
     if (!this.post(port, hello)) return;
     this.welcomeTimer = setTimeout(
       () => this.drop(port, "no welcome from the CROT Host"),
@@ -180,12 +250,25 @@ export class HostConnection {
       this.welcomeTimer = undefined;
       this.connected = true;
       this.connectionId = message.connectionId;
+      this.hostFeatures = message.features ?? [];
       this.failures = 0;
-      this.log("connected to the CROT Host");
+      this.log("connected to the CROT Host" + (this.portTransport === "loopback" ? " (loopback)" : ""));
       return;
     }
     if (!this.connected) return this.drop(port, "protocol error: request before welcome");
     if (message.type === "ui_result") return this.drop(port, "protocol error: chunked UI result");
+    if (message.type === "ui_manage") {
+      const now = Date.now();
+      if (now - this.lastManage >= MANAGE_INTERVAL_MS) {
+        this.lastManage = now;
+        try {
+          this.options.onManage?.();
+        } catch (error) {
+          this.log("cannot open the extension page: " + describe(error));
+        }
+      }
+      return;
+    }
     if (this.inFlight.has(message.id)) return this.drop(port, "protocol error: duplicate request id");
     if (this.inFlight.size >= MAX_IN_FLIGHT) return this.drop(port, "protocol error: too many concurrent requests");
     this.inFlight.add(message.id);
@@ -230,11 +313,15 @@ export class HostConnection {
 
   private closed(reason: string): void {
     const wasConnected = this.connected;
+    const transport = this.portTransport;
     clearTimeout(this.welcomeTimer);
     this.welcomeTimer = undefined;
+    clearTimeout(this.tabsTimer);
+    this.tabsTimer = undefined;
     this.port = undefined;
     this.connected = false;
     this.connectionId = undefined;
+    this.hostFeatures = [];
     this.inFlight.clear();
     this.log(
       (wasConnected ? "disconnected from the CROT Host: " : "could not connect to the CROT Host: ") +
@@ -246,6 +333,9 @@ export class HostConnection {
     } catch (error) {
       this.log("cleanup after disconnect failed: " + describe(error));
     }
+    // Native messaging is unavailable (no host for this browser, CROT not reachable through it): try loopback.
+    if (!wasConnected && transport === "native" && this.options.loopback && !this.stopped)
+      return this.connectLoopback();
     this.scheduleReconnect();
   }
 
@@ -254,7 +344,8 @@ export class HostConnection {
     if (this.stopped) return;
     const min = this.options.reconnectMinMs ?? RECONNECT_MIN_MS;
     const max = this.options.reconnectMaxMs ?? RECONNECT_MAX_MS;
-    const delay = Math.min(max, min * 2 ** Math.min(this.failures, 30));
+    // A pairing request waiting for the owner is polled at a fixed short interval.
+    const delay = this.options.loopback?.retryMs ?? Math.min(max, min * 2 ** Math.min(this.failures, 30));
     this.failures++;
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = undefined;

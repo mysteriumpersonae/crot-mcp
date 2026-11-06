@@ -5,6 +5,8 @@ import {
 import {
   parseTabPolicy,
   tabPolicyAllows,
+  tabPolicyAllowsAutomation,
+  tabPolicyUsesFocusedTab,
   type BrowserTabPolicy,
 } from "../../src/core/capabilities/browser/tab-policy.js";
 import { DownloadCapture } from "./download-capture.js";
@@ -548,7 +550,7 @@ export function createCommandHandlers(api: ChromeApi, options: CommandOptions = 
         );
     }
     const active =
-      context?.tabPolicy?.mode === "active"
+      context?.tabPolicy && tabPolicyUsesFocusedTab(context.tabPolicy)
         ? (await api.tabs.query({ active: true, lastFocusedWindow: true }))[0]?.id === tab.id
         : tab.active === true;
     if (context?.tabPolicy && !tabPolicyAllows(context.tabPolicy, tab.url ?? "", active))
@@ -782,7 +784,7 @@ export function createCommandHandlers(api: ChromeApi, options: CommandOptions = 
       onlyKeys(params, []);
       const tabs = await api.tabs.query({});
       const activeId =
-        context?.tabPolicy?.mode === "active"
+        context?.tabPolicy && tabPolicyUsesFocusedTab(context.tabPolicy)
           ? (await api.tabs.query({ active: true, lastFocusedWindow: true }))[0]?.id
           : undefined;
       return {
@@ -796,7 +798,7 @@ export function createCommandHandlers(api: ChromeApi, options: CommandOptions = 
                 tabPolicyAllows(
                   context.tabPolicy,
                   tab.url ?? "",
-                  context.tabPolicy.mode === "active" ? tab.id === activeId : tab.active === true,
+                  tabPolicyUsesFocusedTab(context.tabPolicy) ? tab.id === activeId : tab.active === true,
                 ),
             )
             .slice(0, MAX_TABS)
@@ -1360,6 +1362,11 @@ export function createCommandHandlers(api: ChromeApi, options: CommandOptions = 
             "dialog.handle",
           ].includes(name),
         };
+        if (!tabPolicyAllowsAutomation(context.tabPolicy, name))
+          throw new ExtensionError(
+            "BROWSER_PAGE_RESTRICTED",
+            "Clicks and form input are turned off by the owner browser policy",
+          );
         if (typeof params.url === "string" && publicationBrowserTarget(params.url))
           throw new ExtensionError(
             "PUBLICATION_BYPASS_DENIED",

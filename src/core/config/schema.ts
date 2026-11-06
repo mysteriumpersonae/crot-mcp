@@ -126,7 +126,8 @@ export const HttpConfigSchema = z
 
 export const BrowserConfigSchema = z
   .object({
-    enabled: z.boolean().default(false),
+    /** On by default: the bridge grants nothing by itself (every browser tool is still authorized). */
+    enabled: z.boolean().default(true),
     downloadsDirectory: z
       .string()
       .min(1)
@@ -203,7 +204,7 @@ export const CrotConfigSchema = z
     audit: AuditConfigSchema.default({ sink: "stderr" }),
     environment: EnvironmentConfigSchema.default({ path: "auto", allow: [] }),
     http: HttpConfigSchema.default(HttpConfigSchema.parse({})),
-    browser: BrowserConfigSchema.default({ enabled: false }),
+    browser: BrowserConfigSchema.default({ enabled: true }),
     secrets: SecretsConfigSchema.default({ store: "auto" }),
     confinement: ConfinementConfigSchema.default({ network: "on" }),
   })

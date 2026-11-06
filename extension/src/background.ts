@@ -3,7 +3,8 @@
  * Chrome, Edge, Brave).
  *
  * The extension is the browser end of CROT's browser bridge. It connects to
- * the CROT Host through native messaging and executes the fixed set of
+ * the CROT Host through native messaging (or, when the browser has no native
+ * host, the paired loopback channel to CROT Desktop, loopback.ts) and executes the fixed set of
  * browser commands the host sends; the host only sends commands that Core's
  * PermissionEngine has authorized. The popup reports connection state; the bridge takes no tool action
  * on its own and runs no code in pages other than the fixed functions in
@@ -15,8 +16,9 @@
 import { detectBrowser } from "./browser-info.js";
 import { CdpSessions } from "./cdp.js";
 import { createCommandHandlers } from "./commands.js";
-import { ownerUiAction } from "./owner-ui.js";
+import { ownerUiAction, ownerUiPairInstance } from "./owner-ui.js";
 import { HostConnection } from "./host-connection.js";
+import { LoopbackLink, type LoopbackSocket } from "./loopback.js";
 
 /** Wakes the service worker to reconnect while CROT is not reachable. 30 s is the shortest period Chrome allows. */
 const RECONNECT_ALARM = "crot-reconnect";
@@ -29,10 +31,31 @@ const mac = /mac/i.test(platform);
 /** Debugger sessions (Browser v1, AD-16 point 3); detached when the CROT connection ends. */
 const cdp = new CdpSessions(chrome, { onNotice: (notice) => connection.notify(notice) });
 
+const browser = detectBrowser(navigator, chrome.runtime.getManifest().version);
+const log = (message: string) => console.info("CROT: " + message);
+const extensionId = chrome.runtime.id ?? "";
+/** Discovery and pairing with CROT Desktop on 127.0.0.1 when native messaging is unavailable. */
+const loopback = extensionId
+  ? new LoopbackLink({
+      fetch: (url, init) => fetch(url, init),
+      socket: (url) => new WebSocket(url) as unknown as LoopbackSocket,
+      storage: chrome.storage?.local,
+      origin: "chrome-extension://" + extensionId,
+      browser,
+      log,
+    })
+  : undefined;
+
 let resetQueues = (): void => undefined;
 const connection = new HostConnection({
   runtime: chrome.runtime,
-  browser: detectBrowser(navigator, chrome.runtime.getManifest().version),
+  browser,
+  loopback,
+  // Fixed owner action from CROT Desktop → Browser: this extension's own page, nothing else.
+  onManage: () => {
+    if (extensionId)
+      void chrome.tabs.create({ url: "chrome://extensions/?id=" + extensionId, active: true }).catch(() => undefined);
+  },
   handlers: createCommandHandlers(chrome, {
     cdp,
     mac,
@@ -40,7 +63,7 @@ const connection = new HostConnection({
       resetQueues = reset;
     },
   }),
-  log: (message) => console.info("CROT: " + message),
+  log,
   onDisconnected: () => {
     resetQueues();
     void cdp.detachAll();
@@ -63,7 +86,24 @@ uiRuntime.onMessage?.addListener((message, sender, reply) => {
     void connection.openControlCenter().then((ok) => reply({ ok }));
     return true;
   }
-  reply({ connection: connection.state });
+  if (action === "pair") {
+    loopback?.pair(ownerUiPairInstance(message));
+    connection.ensureConnected();
+    reply({ ok: loopback !== undefined });
+    return;
+  }
+  // An open popup or welcome page looks for CROT Desktop right away instead of waiting for the backoff.
+  connection.ensureConnected();
+  reply({ connection: connection.state, transport: connection.transport, link: loopback?.view });
+});
+
+// Content-free hints so CROT Desktop refreshes its tab list (no tab data is sent with them).
+const tabsChanged = () => connection.tabsChanged();
+chrome.tabs.onCreated.addListener(tabsChanged);
+chrome.tabs.onRemoved.addListener(tabsChanged);
+chrome.tabs.onActivated?.addListener(tabsChanged);
+chrome.tabs.onUpdated.addListener((_tabId, change) => {
+  if (change.url !== undefined || change.title !== undefined || change.status === "complete") tabsChanged();
 });
 
 chrome.runtime.onStartup.addListener(() => connection.ensureConnected());

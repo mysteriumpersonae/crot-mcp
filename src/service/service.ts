@@ -40,7 +40,7 @@ import { CrotHttpServer } from "../adapters/http/server.js";
 import { localContextResolver } from "../adapters/mcp/context.js";
 import { createCrotMcpServer } from "../adapters/mcp/server.js";
 import type { BrowserBridge } from "../browser-bridge/server.js";
-import { browserProtectedPaths, startBrowserBridge } from "../cli/browser.js";
+import { browserLinkHost, browserProtectedPaths, loopbackPorts, startBrowserBridge } from "../cli/browser.js";
 import type { ServeCommand } from "../cli/options.js";
 import type { UntrustedContentSetting } from "../core/approvals/exposure.js";
 import { REMOTE_EXPOSURE_FILE_NAME, RemoteExposureStore } from "../core/approvals/index.js";
@@ -144,6 +144,12 @@ export interface ServiceOptions {
   };
   /** Device tunnel seams (tests): relay URL, timings, backoff (WP-30). */
   readonly tunnel?: RemoteTunnelSeams;
+  /**
+   * Register the browser native-messaging host for the installed browsers once
+   * this service owns the browser bridge (`crot-mcp service run`). Absent
+   * (tests, embedding): nothing outside the state directory is written.
+   */
+  readonly registerBrowserHost?: () => Promise<void>;
 }
 
 interface ShimClient {
@@ -457,7 +463,16 @@ export class CrotService {
         privateFiles: servicePlatform.privateFiles,
         token: () => secrets.store.readOrCreate("browser-token"),
         log,
+        loopbackPorts: loopbackPorts(process.env),
       });
+      if (this.bridge?.owner && this.options.registerBrowserHost)
+        void this.options
+          .registerBrowserHost()
+          .catch((error) =>
+            log(
+              `warning: browser native host registration failed: ${error instanceof Error ? error.message : String(error)}; run 'crot-mcp browser install'`,
+            ),
+          );
       const remoteExposure = remoteExposureFile
         ? await RemoteExposureStore.open(remoteExposureFile, servicePlatform.privateFiles, {
             onError: (e) => log(`remote exposure state: ${e instanceof Error ? e.message : String(e)}`),
@@ -619,6 +634,7 @@ export class CrotService {
       this.product = await ProductRuntime.open({
         socialAccounts: this.socialAccounts,
         publications: () => this.publications,
+        browserLink: () => browserLinkHost(this.bridge),
         unlimitedProjects: async () => {
           await identity.refreshCommercialIfNeeded();
           const status = identity.commercialStatus();
