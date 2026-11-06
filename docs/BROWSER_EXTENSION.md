@@ -179,33 +179,26 @@ CROT:
 }
 ```
 
-### 3. Grant browser capabilities
+### 3. Browser permissions in Desktop
 
-Browser tools require `browser.read` and/or `browser.control`. Neither is part
-of the sandbox defaults; `full_control` grants both. An explicit
-`permissions.capabilities` list **replaces** the mode defaults, so list
-everything the agent needs, for example sandbox defaults plus read-only browser
-access:
+With the browser bridge enabled, ProductRuntime enables browser reading and
+navigation for local chat and local agents by default. The **Browser** and
+**Permissions** screens control the same settings; no manual capability grant
+is needed. Tab mode, domain blacklist, and the automation switch restrict what
+can actually run. Explicit security denies, agent token scopes, project rules,
+and approvals remain in force. Remote agents retain their configured capability
+permissions; the standalone CrotCore still defaults to deny.
 
-```json
-{
-  "permissions": {
-    "mode": "sandbox",
-    "capabilities": [
-      "filesystem.read", "filesystem.write", "shell.execute", "process.manage",
-      "git.read", "git.write", "browser.read"
-    ]
-  }
-}
-```
-
-Add `browser.control` to let the agent open, navigate, activate and close tabs,
-click and type.
+The product grant only covers reading and the navigation/click/type operations
+controlled by the UI, not all `browser.control` operations. Turning off access
+to cookies and sessions pauses access to page content and page actions, because
+the extension cannot isolate a page from the browser's signed-in profile; tab
+titles and URLs remain available. It does not delete cookies or sign users out.
 
 ### 4. Build and load the extension
 
 ```sh
-npm run build:extension
+npm run build
 ```
 
 This compiles the extension into `extension/dist/` (not committed). Then open
@@ -722,8 +715,8 @@ full URLs.
 - Owner tab policy (CROT Desktop → Browser): which tabs the agent may use
   (active tab, background tabs, target domains), a domain blacklist, and two
   switches. **Access to cookies and sessions** off applies the sensitive preset:
-  sign-in and payment sites are closed to the agent (the extension works in the
-  owner's profile, so it cannot hide cookies from a page it opens).
+  access to all page content and actions is paused; only tab titles and URLs
+  remain available. The extension cannot hide cookies from a page it opens.
   **Auto-clicks and form filling** off refuses clicks, typing, form, upload and
   dialog input in Core and in the extension; reading and navigation stay
   available.

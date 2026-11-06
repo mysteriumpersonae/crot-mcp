@@ -6407,3 +6407,16 @@ Secret Service are used with no `.env`, plaintext or kernel-keyring fallback. A 
 vault fails closed for provider setup; existing verified password login is independent.
 No provider secret or OTP is logged or returned to renderer status calls. Exact setup,
 trust limits and owner live-provider acceptance are in [Screen 01 auth](docs/SCREEN-01-AUTH.md).
+
+
+### AD-68 — Product-owned browser permission synchronization
+
+ProductRuntime persists and audits owner-controlled browser access, navigation,
+automation and session policy. When the bridge is enabled it grants only local
+principals browser reads and the specific navigation/click/type operations
+enabled in the UI; the standalone Core default remains deny and remote clients
+retain their configured capability policy. Explicit denies, token scope, domain
+restrictions and approvals remain authoritative. A disabled session switch
+fails closed for page access and actions (the shared browser profile cannot
+isolate page cookies); tab listing and status remain available. Access changes
+are persisted transactionally before publication, with rollback on failure.
