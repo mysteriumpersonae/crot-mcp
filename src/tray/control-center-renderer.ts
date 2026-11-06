@@ -350,7 +350,11 @@ export const CONTROL_CENTER_RENDERER =
     modelChip.onclick=()=>{const activePill=agents.querySelector('.chat-agent-pill[aria-pressed=true]');if(activePill)activePill.click();};
     function sendState(){clear(send);send.append(icon(running?'square':'send'));const label=t(running?'Stop generation':'Send message');send.setAttribute('aria-label',label);send.title=label;send.dataset.running=String(running);fresh.disabled=running||starting;// Show "Generating..." indicator in last assistant block when running
       const thinkEl=$('chat-thinking-indicator');if(running){if(!thinkEl){const ind=node('div',undefined,'chat-thinking-indicator chat-message chat-assistant');ind.id='chat-thinking-indicator';const dot=node('span','Generating…','chat-thinking-text');ind.append(dot);transcript.append(ind);transcript.scrollTop=transcript.scrollHeight;}}else{if(thinkEl)thinkEl.remove();}const hasContent=running||message.value.trim().length>0||chatAttachments.length>0;send.classList.toggle('chat-send-ready',hasContent);}
-    message.oninput=()=>sendState();
+    // Auto-resize textarea per TZ spec (min 24px, max 200px)
+    function resizeTextarea(){message.style.height='auto';message.style.height=Math.min(message.scrollHeight,200)+'px';}
+    message.oninput=()=>{chatDraft=message.value;sendState();resizeTextarea();}
+    // "Review for me" quick action shortcut
+    const reviewBtn=button('Review for me',()=>{message.value=message.value?(message.value+'\n\nReview for me'):'Review for me';chatDraft=message.value;resizeTextarea();sendState();message.focus();},'chat-review-btn');
     let browserConnected=false,browserAllowed=false;
     const browserAccess=node('button',undefined,'chat-browser-toggle');browserAccess.type='button';browserAccess.append(icon('globe'));
     function showChatBrowser(){const workspaceProvider=['OpenCode','Notion Agents'].includes(chatProvider),enabled=browserConnected&&browserAllowed&&chatBrowserTools&&!workspaceProvider;browserAccess.classList.toggle('active',enabled);browserAccess.setAttribute('aria-pressed',String(chatBrowserTools&&!workspaceProvider));const label=workspaceProvider?'Workspace agents manage their own browser access.':!browserConnected?'Browser not connected':!browserAllowed?'Browser access is disabled in Permissions':chatBrowserTools?'Browser connected and available to the agent (click to disable in chat)':'Browser access disabled in chat (click to enable)';browserAccess.title=t(label);browserAccess.setAttribute('aria-label',t(label));browserAccess.disabled=workspaceProvider;}
@@ -358,7 +362,7 @@ export const CONTROL_CENTER_RENDERER =
     async function refreshChatBrowser(){try{const [l,p]=await Promise.all([rpc('browser.link.status'),rpc('browser.policy.get')]);if(!root.isConnected)return;browserConnected=l.link?.state==='connected';browserAllowed=p.access?.read===true;}catch{browserConnected=false;browserAllowed=false;}if(root.isConnected)showChatBrowser();}
     // Keep browserAccess hidden in DOM so E2E tests can find .chat-browser-toggle
     browserAccess.hidden=true;browserAccess.style.display='none';
-    const composeActions=node('div',undefined,'chat-compose-actions'),left=node('div',undefined,'chat-compose-left'),right=node('div',undefined,'chat-send-actions');left.append(plusBtn,plusPop,browserAccess);right.append(shortcut,modelChip,send);composeActions.append(left,right);compose.append(message,picker,attachmentList,composeActions);
+    const composeActions=node('div',undefined,'chat-compose-actions'),left=node('div',undefined,'chat-compose-left'),right=node('div',undefined,'chat-send-actions');left.append(plusBtn,plusPop,browserAccess,reviewBtn);right.append(shortcut,modelChip,send);composeActions.append(left,right);compose.append(message,picker,attachmentList,composeActions);
     // Extract a human-readable display name from a provider config (Custom API → domain label or displayName)
     const customFamily=p=>/^(Custom API|OpenAI-compatible)(:|$)/.test(p.provider);
     function providerDisplayName(p){if(p.displayName)return p.displayName;if(customFamily(p)&&p.endpoint){try{const h=new URL(p.endpoint).hostname.replace(/^api\./,'').replace(/^www\./,'').split('.')[0];return h.charAt(0).toUpperCase()+h.slice(1);}catch{}}if(p.provider==='Anthropic')return 'Claude';if(p.provider==='Google Gemini')return 'Gemini';if(p.provider==='OpenCode (Free & Zen)')return 'OpenCode';return p.provider;}
@@ -370,10 +374,11 @@ export const CONTROL_CENTER_RENDERER =
       const byProvider=new Map();for(const m of models){if(!byProvider.has(m.provider))byProvider.set(m.provider,[]);byProvider.get(m.provider).push(m);}
       for(const [provider,provModels]of byProvider){const isActive=provider===chatProvider;const pCfg=provModels[0]?._pCfg||{provider};const displayName=providerDisplayName(pCfg);const brand=providerBrand(pCfg);const activeModel=isActive?chatModel:provModels[0]?.id||'';
         const pill=node('button',undefined,'chat-agent-pill');pill.type='button';pill.setAttribute('aria-pressed',String(isActive));pill.title=displayName+(activeModel?' · '+activeModel:'');
-        const pillIcon=groupIcon(brand,'agents');if(pillIcon){pillIcon.setAttribute('width','16');pillIcon.setAttribute('height','16');}
-        pill.append(pillIcon||node('span',displayName.charAt(0),'chat-pill-letter'));
+        const pillIcon=groupIcon(brand,'agents');
+        if(pillIcon){pillIcon.setAttribute('width','16');pillIcon.setAttribute('height','16');pill.append(pillIcon);}
+        else{const letter=node('span',displayName.charAt(0).toUpperCase(),'chat-pill-letter');pill.append(letter);}
         const pillName=node('span',displayName,'chat-pill-name');pillName.dataset.noI18n='';pill.append(pillName);
-        const dot=node('span','','chat-online');pill.append(dot);
+        const dot=node('span',undefined,'chat-online');pill.append(dot);
         // Model popover (opens upward)
         const pop=node('dialog',undefined,'chat-popover chat-model-pop');pop.setAttribute('role','listbox');pop.setAttribute('aria-label',t('Choose model'));
         const showPop=()=>{if(pop.open){pop.close();return;}// Drop-up inside the chat footer: CSS anchors bottom:calc(100% + 8px) to .chat-agents.
@@ -382,8 +387,8 @@ export const CONTROL_CENTER_RENDERER =
         // Disconnect item at bottom of popover
         const disconnectBtn=node('button','⊘ '+t('Disconnect provider'),'chat-model-pop-disconnect');disconnectBtn.onclick=e=>{e.stopPropagation();pop.close();void disconnectProvider(provider);};pop.append(disconnectBtn);
         pill.onclick=()=>{if(!isActive){chatProvider=provider;if(!provModels.some(m=>m.id===chatModel))chatModel=provModels[0]?.id||'';modelMenus();}else showPop();};
-        // Separator between providers
-        if(pills.children.length>0){const sep=node('span','|','chat-pill-sep');pills.append(sep);}
+        // Vertical line divider between providers
+        if(pills.children.length>0){const sep=node('span',undefined,'chat-pill-sep');pills.append(sep);}
         pills.append(pill);}
       if(!models.length)pills.append(node('p','Configure a provider in Agents & Tokens to start.','chat-menu-note'));
       updateModelChip();}

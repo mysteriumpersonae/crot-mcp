@@ -38,75 +38,185 @@ export const CHAT_CSS = String.raw`
 @media(max-height:800px){.chat-welcome{padding:16px}.chat-glow{width:84px;height:84px;min-height:84px;margin-bottom:12px}.chat-glow svg{width:40px;height:40px}.chat-welcome h1{font-size:26px}.chat-intro{font-size:16px;margin-bottom:22px}.chat-starter{min-height:52px}.chat-workspace{gap:10px}.chat-stage{margin-bottom:-10px}}
 @media(max-width:760px){.chat-active main.content{padding:12px;overflow:auto}.chat-active #page{height:auto;min-height:100%}.chat-workspace{height:auto;min-height:100%}.chat-stage{flex:1 0 auto;min-height:350px}.chat-welcome{flex:1 0 auto;min-height:350px}.chat-transcript{max-height:60dvh}.chat-intro{font-size:14px;margin-bottom:16px}.chat-welcome{padding:12px}.chat-glow{width:72px;height:72px;min-height:72px}.chat-starters{gap:8px}.chat-starter{font-size:12px;padding:10px;gap:8px}.chat-starter svg{width:18px}.chat-selectors{padding:8px;gap:8px;flex-wrap:wrap}.chat-thread{order:3;width:100%;justify-content:space-between}.chat-dropdown{max-width:100%}.chat-selectors>.chat-dropdown{width:calc(50% - 4px)}.chat-selector{min-width:0;width:100%;padding:8px;font-size:12px;gap:6px}.chat-compose{padding:12px}.chat-shortcut{display:none}.chat-agents{gap:6px;padding:2px;min-height:38px}.chat-agent-label{font-size:11px}.chat-agent-pills{gap:5px;flex-wrap:nowrap;justify-content:flex-start;overflow-x:auto}.chat-agent-pill{flex-shrink:0;height:28px;font-size:12px}.chat-message{max-width:96%}}
 /* ═══════════════════════════════════════════════════════════════
-   NOTION-STYLE CHAT REDESIGN
+   CHAT INPUT — PIXEL-PERFECT PER SPEC (светлая тема, Notion/Gemini стиль)
    ═══════════════════════════════════════════════════════════════ */
 
-/* ── Compose textarea: placeholder "Ask" ── */
-.chat-compose textarea{min-height:52px;height:52px;max-height:160px;font-size:15px;line-height:1.5;color:#1a1a1a;padding:0}
-.chat-compose textarea::placeholder{color:#a0a9bc;font-size:15px}
+/* ── Main card ── */
+.chat-compose{
+  background:#FFFFFF;
+  border:1px solid #E5E7EB;
+  border-radius:16px;
+  padding:16px 20px 12px 20px;
+  box-shadow:0 1px 3px rgba(0,0,0,.06),0 1px 2px rgba(0,0,0,.04);
+  transition:border-color .2s ease,box-shadow .2s ease}
+.chat-compose:focus-within{border-color:#D1D5DB;box-shadow:0 2px 8px rgba(0,0,0,.08)}
 
-/* ── Compose actions bar ── */
-.chat-compose-actions{display:flex;align-items:center;justify-content:space-between;gap:8px;padding-top:4px}
-.chat-compose-left{display:flex;align-items:center;gap:0}
-.chat-send-actions{display:flex;align-items:center;gap:10px}
+/* ── Textarea ── */
+.chat-compose textarea{
+  display:block;width:100%;
+  border:0;outline:0;resize:none;background:transparent;
+  font-family:inherit;font-size:16px;font-weight:400;
+  color:#111827;line-height:1.5;
+  min-height:24px;height:24px;max-height:200px;overflow-y:auto;
+  padding:0;margin-bottom:12px}
+.chat-compose textarea::placeholder{color:#9CA3AF;font-weight:400}
+.chat-compose textarea:hover,.chat-compose textarea:focus,.chat-compose textarea:focus-visible{outline:none;box-shadow:none;border:0}
 
-/* ── Plus button ── */
-.chat-plus-btn{display:grid;place-items:center;width:26px;min-width:26px;height:26px;min-height:26px;border:0;border-radius:6px;background:transparent;color:#a0a9bc;cursor:pointer;padding:0;flex-shrink:0;transition:background .12s,color .12s}.chat-plus-btn svg{width:18px;height:18px;stroke-width:2}.chat-plus-btn:hover{background:#f0f2f5;color:#374151}.chat-plus-btn:focus-visible{outline:2px solid #1a6bff;outline-offset:2px}
+/* ── Toolbar ── */
+.chat-compose-actions{display:flex;align-items:center;justify-content:space-between;gap:4px}
+.chat-compose-left{display:flex;align-items:center;gap:4px}
+.chat-send-actions{display:flex;align-items:center;gap:8px}
 
-/* ── Plus popover — позиционируется JS ── */
-.chat-plus-pop{width:230px;padding:5px;border:1px solid #e5e7eb;border-radius:14px;box-shadow:0 8px 28px #0d1a3214,0 2px 6px #0d1a320a;background:#fff;color:#111827}
-.chat-plus-row{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;cursor:pointer;border:0;background:transparent;width:100%;font-size:13.5px;color:#374151;text-align:left}.chat-plus-row:hover{background:#f5f7fa}.chat-plus-row svg{width:16px;height:16px;color:#6b7280;flex-shrink:0}.chat-plus-row:hover svg{color:#1a6bff}.chat-plus-beta{margin-left:auto;font-size:10px;padding:1px 5px;border-radius:4px;background:#dcfce7;color:#15803d;font-weight:600;flex-shrink:0}.chat-plus-count{margin-left:auto;font-size:12px;color:#9ca3af;flex-shrink:0}
-.chat-plus-browser-row{cursor:default}.chat-plus-browser-row:hover{background:#f5f7fa}.chat-plus-browser-row:hover svg{color:#6b7280}
+/* ── Plus button [+] 32×32 ── */
+.chat-plus-btn{
+  display:grid;place-items:center;
+  width:32px;min-width:32px;height:32px;min-height:32px;
+  border:0;border-radius:8px;background:transparent;
+  color:#6B7280;cursor:pointer;padding:0;flex-shrink:0;
+  transition:background .15s,color .15s}
+.chat-plus-btn svg{width:20px;height:20px;stroke-width:1.75}
+.chat-plus-btn:hover{background:#F3F4F6;color:#374151}
+.chat-plus-btn:focus-visible{outline:2px solid #374151;outline-offset:2px}
 
-/* ── Browser toggle pill 32×18 ── */
-.chat-browser-toggle-pill{width:32px;height:18px;min-width:32px;border-radius:9px;background:#d1d5db;border:0;padding:0;cursor:pointer;position:relative;transition:background .15s;margin-left:auto;flex-shrink:0}.chat-browser-toggle-pill .chat-toggle-thumb{position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:#fff;box-shadow:0 1px 2px #0004;transition:left .12s}.chat-browser-toggle-pill.on{background:#1a6bff}.chat-browser-toggle-pill.on .chat-toggle-thumb{left:16px}
+/* ── "Review for me" text button ── */
+.chat-review-btn{
+  border:0;border-radius:8px;background:transparent;cursor:pointer;
+  font-family:inherit;font-size:14px;font-weight:500;color:#6B7280;
+  padding:6px 12px;transition:background .15s,color .15s;white-space:nowrap}
+.chat-review-btn:hover{background:#F3F4F6;color:#374151}
 
-/* ── Shortcut hint — hidden (keep for E2E) ── */
+/* ── "Auto ↓" model chip (inline, right of spacer) ── */
+.chat-model-chip{
+  display:inline-flex;align-items:center;gap:4px;
+  border:0;border-radius:8px;background:transparent;cursor:pointer;
+  font-family:inherit;font-size:14px;font-weight:500;color:#374151;
+  padding:6px 12px;transition:background .15s;white-space:nowrap}
+.chat-model-chip:hover{background:#F3F4F6}
+.chat-model-chip svg{flex-shrink:0;color:#9CA3AF;width:12px;height:12px}
+.chat-model-chip span{max-width:120px;overflow:hidden;text-overflow:ellipsis}
+
+/* ── Send button: серый → тёмный (#111827) когда есть текст ── */
+.chat-send{
+  width:32px;height:32px;min-width:32px;min-height:32px;max-width:32px;
+  flex:0 0 32px;aspect-ratio:1;padding:0;border:0;border-radius:50%;
+  background:#E5E7EB;color:#9CA3AF;
+  display:grid;place-items:center;
+  transition:background .2s ease,color .2s ease;
+  cursor:default}
+.chat-send svg{width:16px;height:16px;stroke-width:2.5}
+.chat-send.chat-send-ready{background:#111827;color:#FFFFFF;cursor:pointer}
+.chat-send.chat-send-ready:hover{background:#000000}
+.chat-send[data-running=true]{background:#111827;color:#FFFFFF;cursor:pointer}
+.chat-send[data-running=true]:hover{background:#000000}
+
+/* ── Shortcut hint — hidden (E2E stays) ── */
 .chat-shortcut{display:none}
 
-/* ── Inline model chip (Auto ↓) inside compose bar ── */
-.chat-model-chip{display:inline-flex;align-items:center;gap:4px;border:0;background:transparent;padding:4px 6px;border-radius:7px;font-size:13px;color:#6b7280;cursor:pointer;white-space:nowrap;transition:background .12s,color .12s}.chat-model-chip:hover{background:#f0f2f5;color:#111827}.chat-model-chip svg{flex-shrink:0;color:#9ca3af}.chat-model-chip span{max-width:120px;overflow:hidden;text-overflow:ellipsis}
+/* ── Plus popover — позиционируется JS ── */
+.chat-plus-pop{
+  width:230px;padding:5px;
+  border:1px solid #E5E7EB;border-radius:14px;
+  box-shadow:0 8px 28px rgba(13,26,50,.08),0 2px 6px rgba(13,26,50,.06);
+  background:#FFFFFF;color:#111827}
+.chat-plus-row{
+  display:flex;align-items:center;gap:10px;
+  padding:8px 10px;border-radius:8px;cursor:pointer;
+  border:0;background:transparent;width:100%;
+  font-family:inherit;font-size:13.5px;color:#374151;text-align:left;
+  transition:background .12s}
+.chat-plus-row:hover{background:#F9FAFB}
+.chat-plus-row svg{width:16px;height:16px;color:#6B7280;flex-shrink:0}
+.chat-plus-row:hover svg{color:#374151}
+.chat-plus-beta{margin-left:auto;font-size:10px;padding:1px 5px;border-radius:4px;background:#DCFCE7;color:#15803D;font-weight:600;flex-shrink:0}
+.chat-plus-count{margin-left:auto;font-size:12px;color:#9CA3AF;flex-shrink:0}
+.chat-plus-browser-row{cursor:default}
 
-/* ── Send button: серый → синий при наличии текста ── */
-.chat-send{width:32px;height:32px;min-width:32px;min-height:32px;max-width:32px;flex:0 0 32px;aspect-ratio:1;padding:0;border:0;border-radius:50%;background:#e9ecef;color:#9ca3af;display:grid;place-items:center;transition:background .15s,color .15s,box-shadow .15s;cursor:not-allowed}.chat-send svg{width:16px;height:16px;stroke-width:2.2}.chat-send.chat-send-ready,.chat-send[data-running=true]{background:#1a6bff;color:#fff;cursor:pointer}.chat-send.chat-send-ready:hover{background:#155ce0;box-shadow:0 0 0 3px #1a6bff22}.chat-send[data-running=true]{background:#1a6bff;cursor:pointer}.chat-send[data-running=true]:hover{background:#155ce0}
+/* ── Browser toggle pill 32×18 ── */
+.chat-browser-toggle-pill{
+  width:32px;height:18px;min-width:32px;border-radius:9px;
+  background:#D1D5DB;border:0;padding:0;cursor:pointer;
+  position:relative;transition:background .15s;margin-left:auto;flex-shrink:0}
+.chat-browser-toggle-pill .chat-toggle-thumb{
+  position:absolute;top:2px;left:2px;
+  width:14px;height:14px;border-radius:50%;
+  background:#FFFFFF;box-shadow:0 1px 2px rgba(0,0,0,.2);
+  transition:left .12s}
+.chat-browser-toggle-pill.on{background:#1A6BFF}
+.chat-browser-toggle-pill.on .chat-toggle-thumb{left:16px}
 
-/* ── Compose box — чуть компактнее ── */
-.chat-compose{border:1px solid #e5e7eb;border-radius:16px;background:#fff;padding:14px 16px 10px;box-shadow:0 1px 3px #0001}.chat-compose:hover{border-color:#d1d5db}.chat-compose:focus-within{border-color:#c5cad4;box-shadow:0 0 0 3px #1a6bff0d}
+/* ══════════════════════════════════════════════
+   STATUS BAR — плоские провайдеры ниже compose
+   ══════════════════════════════════════════════ */
+.chat-agents{
+  position:relative;display:flex;align-items:center;
+  justify-content:flex-start;padding:8px 16px 2px;
+  flex-wrap:wrap;min-height:36px;gap:0}
+.chat-agent-label{display:none}
+.chat-agent-pills{display:flex;align-items:center;gap:0;flex-wrap:wrap;padding:0}
 
-/* ── Flat provider pills (below compose box) ── */
-.chat-agents{position:relative;display:flex;align-items:center;justify-content:flex-start;gap:0;padding:8px 2px 2px;flex-wrap:wrap;min-height:36px}
-.chat-agent-label{display:none}/* скрываем "Agents:" */
-.chat-agent-pills{display:flex;gap:0;align-items:center;flex-wrap:wrap;padding:0}
-/* Flat pill: без рамки, без фона */
-.chat-agent-pill{display:inline-flex;align-items:center;gap:5px;border:0;border-radius:0;height:28px;min-height:0;padding:0 10px 0 2px;background:transparent;min-width:0;font-size:13px;font-weight:400;color:#6b7280;cursor:pointer;white-space:nowrap;transition:color .12s}
+/* Flat pill item */
+.chat-agent-pill{
+  display:inline-flex;align-items:center;gap:6px;
+  border:0;background:transparent;
+  height:28px;min-height:0;padding:0 8px;
+  min-width:0;font-family:inherit;font-size:14px;font-weight:500;
+  color:#374151;cursor:pointer;white-space:nowrap;
+  border-radius:0;transition:color .12s}
 .chat-agent-pill:hover{color:#111827}
-.chat-agent-pill[aria-pressed=true]{color:#111827;font-weight:500}
+.chat-agent-pill[aria-pressed=true]{color:#111827}
 .chat-agent-pill svg{width:16px;height:16px;flex-shrink:0;stroke-width:1.5}
-.chat-agent-pill img{width:16px;height:16px;object-fit:contain;flex-shrink:0;border-radius:3px}
-.chat-pill-letter{display:grid;place-items:center;width:18px;height:18px;min-width:18px;border:1.5px solid #d1d5db;border-radius:5px;font-size:11px;font-weight:600;color:#374151;flex-shrink:0;background:#fff}
-.chat-pill-name{color:inherit}
-.chat-online{width:7px;height:7px;min-width:7px;border-radius:50%;background:#22c55e;flex-shrink:0}
-.chat-pill-model{display:none}/* модель теперь в chip внутри compose */
-.chat-pill-sep{color:#d1d5db;font-size:14px;padding:0 4px;user-select:none;cursor:default}
+.chat-agent-pill img{width:16px;height:16px;object-fit:contain;flex-shrink:0;border-radius:4px}
 
-/* ── Model popover ── */
-.chat-model-pop{position:absolute;top:auto;bottom:calc(100% + 8px);left:0;right:auto;z-index:30;max-height:260px;overflow-y:auto;min-width:200px;padding:5px;border-radius:12px;border:1px solid #e5e7eb;box-shadow:0 8px 24px #0d1a3214;background:#fff}
-.chat-model-pop .chat-menu-item{padding:7px 10px;font-size:13px;border-radius:7px}
-.chat-model-pop-disconnect{width:100%;text-align:left;border:0;border-top:1px solid #f0f0f0;border-radius:0 0 7px 7px;margin-top:4px;padding:7px 10px;background:transparent;font-size:13px;color:#ef4444;cursor:pointer}
-.chat-model-pop-disconnect:hover{background:#fff5f5}
+/* Letter avatar for custom providers (like [R]) */
+.chat-pill-letter{
+  display:grid;place-items:center;
+  width:20px;height:20px;min-width:20px;
+  border:1.5px solid #D1D5DB;border-radius:5px;
+  font-size:11px;font-weight:700;color:#374151;
+  flex-shrink:0;background:#FFFFFF;line-height:1}
 
-/* ── Copy button: иконка clipboard, 22×22, hover ── */
+.chat-pill-name{font-size:14px;font-weight:500;color:#374151}
+.chat-pill-model{display:none}
+
+/* Green online dot 8×8 */
+.chat-online{width:8px;height:8px;min-width:8px;border-radius:50%;background:#22C55E;flex-shrink:0}
+
+/* Vertical divider between providers — 1px line, 16px tall */
+.chat-pill-sep{
+  display:inline-block;width:1px;height:16px;
+  background:#E5E7EB;margin:0 8px;flex-shrink:0}
+
+/* Model popover (drop-up) */
+.chat-model-pop{
+  position:absolute;top:auto;bottom:calc(100% + 8px);left:0;z-index:30;
+  max-height:260px;overflow-y:auto;min-width:200px;padding:5px;
+  border:1px solid #E5E7EB;border-radius:12px;
+  box-shadow:0 8px 24px rgba(13,26,50,.1);background:#FFFFFF}
+.chat-model-pop .chat-menu-item{padding:7px 10px;font-size:13px;border-radius:7px;color:#374151}
+.chat-model-pop-disconnect{
+  width:100%;text-align:left;border:0;border-top:1px solid #F3F4F6;
+  border-radius:0 0 7px 7px;margin-top:4px;padding:7px 10px;
+  background:transparent;font-family:inherit;font-size:13px;color:#EF4444;cursor:pointer}
+.chat-model-pop-disconnect:hover{background:#FFF5F5}
+
+/* ── Copy button: clipboard icon, 22×22 ── */
 .chat-message-head{display:flex;align-items:center;gap:6px;margin-bottom:4px}
-.chat-copy-btn{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;min-width:22px;border:0;background:transparent;border-radius:5px;color:#c8d0de;cursor:pointer;opacity:0;transition:opacity .12s,background .12s,color .12s;padding:0;margin-left:auto}
+.chat-copy-btn{
+  display:inline-flex;align-items:center;justify-content:center;
+  width:22px;height:22px;min-width:22px;
+  border:0;background:transparent;border-radius:5px;
+  color:#C8D0DE;cursor:pointer;
+  opacity:0;transition:opacity .12s,background .12s,color .12s;
+  padding:0;margin-left:auto}
 .chat-message:hover .chat-copy-btn{opacity:1}
-.chat-copy-btn:hover{background:#eff3ff;color:#1a6bff}
-.chat-copy-btn.copied{color:#22c55e;opacity:1}
-.chat-user .chat-copy-btn{color:#a8bbd8}
-.chat-user .chat-copy-btn:hover{background:#dce8ff;color:#1a4ab8}
+.chat-copy-btn:hover{background:#EFF3FF;color:#1A6BFF}
+.chat-copy-btn.copied{color:#22C55E;opacity:1}
+.chat-user .chat-copy-btn{color:#A8BBD8}
+.chat-user .chat-copy-btn:hover{background:#DCE8FF;color:#1A4AB8}
 .chat-copy-btn svg{pointer-events:none}
 
-/* ── Thinking / Generating ── */
+/* ── Thinking indicator ── */
 .chat-thinking-indicator{display:flex;align-items:center;padding:4px 0}
-.chat-thinking-text{font-size:13.5px;color:#94a3b8;animation:chat-pulse 1.3s ease-in-out infinite}
+.chat-thinking-text{font-size:13.5px;color:#9CA3AF;animation:chat-pulse 1.3s ease-in-out infinite}
 @keyframes chat-pulse{0%,100%{opacity:.3}50%{opacity:1}}
 `;
