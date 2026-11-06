@@ -1410,7 +1410,7 @@ export class ChatRuntime {
    * travel in the message itself, followed by the new message and its text attachments. `limit`: the newest
    * characters of the earlier turns (Cloud LLM through local OpenCode: the whole remembered thread).
    */
-  private transcript(c: Conversation, p: ChatStart, limit = 24000): string {
+  private transcript(c: Conversation, p: ChatStart, limit = MAX_HISTORY_CHARS): string {
     const transcript = this.earlierTurns(c, limit);
     return (transcript ? `Conversation so far:\n${transcript}\n\nNew message:\n` : "") + this.newMessage(p);
   }
