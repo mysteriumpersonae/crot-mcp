@@ -55,6 +55,7 @@ export const BRIDGE_FEATURES = [
   "ui-manage",
   "tab-policy-envelope",
   "browser-focus",
+  "loopback-auto",
 ] as const;
 export type BridgeFeature = (typeof BRIDGE_FEATURES)[number];
 const FEATURE = /^[a-z][a-z0-9-]{0,31}$/;
@@ -146,6 +147,14 @@ export interface HostUiManage {
   readonly id: string;
 }
 
+/** Private bootstrap sent only on an authenticated native connection. */
+export interface HostLoopbackBootstrap {
+  readonly type: "loopback_bootstrap";
+  readonly instance: string;
+  readonly pairing: string;
+  readonly secret: string;
+}
+
 /** Host -> extension: one authorized command. */
 export interface HostRequest {
   readonly type: "request";
@@ -166,7 +175,8 @@ export interface HostChunk {
   readonly data: string;
 }
 
-export type HostToBrowserMessage = HostWelcome | HostRequest | HostChunk | HostUiResult | HostUiManage;
+export type HostToBrowserMessage =
+  HostWelcome | HostRequest | HostChunk | HostUiResult | HostUiManage | HostLoopbackBootstrap;
 
 /** Relay -> host: first frame on the IPC connection, proving the relay runs as the user. Never forwarded to the browser. */
 export interface RelayAuth {
@@ -383,7 +393,9 @@ export class ChunkReassembler {
   }
 
   /** Returns the complete message, or undefined while a chunked request is incomplete. */
-  accept(message: HostToBrowserMessage): HostWelcome | HostRequest | HostUiResult | HostUiManage | undefined {
+  accept(
+    message: HostToBrowserMessage,
+  ): HostWelcome | HostRequest | HostUiResult | HostUiManage | HostLoopbackBootstrap | undefined {
     if (message.type !== "chunk") {
       if (this.stream) throw this.fail("Message interleaved with a chunked request.");
       return message;
@@ -536,6 +548,18 @@ export function parseBrowserMessage(value: unknown): BrowserToHostMessage {
 export function parseHostMessage(value: unknown): HostToBrowserMessage {
   if (!isObject(value)) invalid("message");
   switch (value.type) {
+    case "loopback_bootstrap":
+      if (
+        Object.keys(value).length !== 4 ||
+        typeof value.instance !== "string" ||
+        !/^[0-9a-f]{32}$/.test(value.instance) ||
+        typeof value.pairing !== "string" ||
+        !/^[0-9a-f]{32}$/.test(value.pairing) ||
+        typeof value.secret !== "string" ||
+        !/^[0-9a-f]{64}$/.test(value.secret)
+      )
+        invalid("loopback bootstrap");
+      return { type: "loopback_bootstrap", instance: value.instance, pairing: value.pairing, secret: value.secret };
     case "ui_result":
       if (!isRequestId(value.id) || typeof value.ok !== "boolean" || Object.keys(value).length !== 3)
         invalid("owner UI result");

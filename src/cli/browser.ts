@@ -5,6 +5,9 @@ import { CORE_VERSION } from "../core/crot-core.js";
 import type { PrivateFileProtection } from "../core/platform/types.js";
 import type { BrowserLinkHost } from "../service/product-runtime.js";
 import { RELEASE_EXTENSION_ORIGINS } from "./release-extension-ids.js";
+import { createHash, randomBytes } from "node:crypto";
+import { lstat, open, readFile, rename, rm } from "node:fs/promises";
+import path from "node:path";
 
 /**
  * Host-side wiring of the browser bridge (ARCHITECTURE.md §16).
@@ -28,6 +31,66 @@ export interface BrowserWiringOptions {
   readonly start?: (options: BrowserBridgeOptions) => Promise<BrowserBridge>;
   /** Ports of the loopback discovery endpoint (loopbackPorts()); undefined: no loopback endpoint. */
   readonly loopbackPorts?: readonly number[] | undefined;
+  /** Unpacked extension directory, if explicitly configured by the service host. */
+  readonly extensionDir?: string | undefined;
+}
+
+export function browserBootstrapPath(extensionDir: string): string {
+  return path.join(extensionDir, ".bridge-secret.json");
+}
+
+/** Atomic, owner-only provisioning. Never writes the secret before ACL protection. */
+export async function provisionBrowserBootstrap(
+  directory: string,
+  credential: { instance: string; pairing: string; secret: string },
+  privateFiles: PrivateFileProtection,
+): Promise<void> {
+  if (!privateFiles.enforced || (!privateFiles.protectFile && privateFiles.fileMode === undefined))
+    throw new Error("owner-only file protection is unavailable");
+  const dir = await lstat(directory);
+  if (!dir.isDirectory() || dir.isSymbolicLink()) throw new Error("extension directory is not a regular directory");
+  if (process.getuid && (dir.uid !== process.getuid() || (dir.mode & 0o022) !== 0))
+    throw new Error("extension directory must be owned by the current user and not group/world writable");
+  const manifestPath = path.join(directory, "manifest.json");
+  const manifestStat = await lstat(manifestPath);
+  if (!manifestStat.isFile() || manifestStat.isSymbolicLink()) throw new Error("extension manifest is unavailable");
+  const manifest: unknown = JSON.parse(await readFile(manifestPath, "utf8"));
+  if (!manifest || typeof manifest !== "object" || Array.isArray(manifest))
+    throw new Error("invalid extension manifest");
+  const { key, web_accessible_resources: exposed } = manifest as { key?: unknown; web_accessible_resources?: unknown };
+  if (
+    typeof key !== "string" ||
+    !/^[A-Za-z0-9+/]+={0,2}$/.test(key) ||
+    (exposed !== undefined && (!Array.isArray(exposed) || exposed.length > 0))
+  )
+    throw new Error("extension identity or resource policy is invalid");
+  const digest = createHash("sha256").update(Buffer.from(key, "base64")).digest().subarray(0, 16);
+  const extensionId = [...digest].map((byte) => String.fromCharCode(97 + (byte >> 4), 97 + (byte & 15))).join("");
+  if (!RELEASE_EXTENSION_ORIGINS.includes(`chrome-extension://${extensionId}/`))
+    throw new Error("extension identity is not a trusted release");
+  const target = browserBootstrapPath(directory);
+  const existing = await lstat(target).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return undefined;
+    throw error;
+  });
+  if (existing && (!existing.isFile() || existing.isSymbolicLink() || existing.nlink !== 1))
+    throw new Error("unsafe extension credential file");
+  if (existing && process.getuid && existing.uid !== process.getuid())
+    throw new Error("credential file owner mismatch");
+  const tmp = target + "." + randomBytes(12).toString("hex") + ".tmp";
+  let file;
+  try {
+    file = await open(tmp, "wx", privateFiles.fileMode ?? 0o600);
+    await privateFiles.protectFile?.(tmp);
+    if (privateFiles.mechanism === "posix-mode") await file.chmod(0o600);
+    await file.writeFile(JSON.stringify({ version: 1, ...credential }) + "\n", "utf8");
+    await file.close();
+    file = undefined;
+    await rename(tmp, target);
+  } finally {
+    await file?.close().catch(() => undefined);
+    await rm(tmp, { force: true }).catch(() => undefined);
+  }
 }
 
 /**
@@ -86,17 +149,25 @@ export async function startBrowserBridge(options: BrowserWiringOptions): Promise
   // Discovery for browsers without the native host (only in the instance that owns the bridge).
   if (options.loopbackPorts && bridge.owner) {
     try {
-      bridge.attachLoopback(
-        await LoopbackServer.start({
-          bridge,
-          stateDir: options.stateDir,
-          privateFiles: options.privateFiles,
-          version: CORE_VERSION,
-          extensionOrigins: RELEASE_EXTENSION_ORIGINS.map((o) => o.replace(/\/$/, "")),
-          log: options.log,
-          ports: options.loopbackPorts,
-        }),
-      );
+      const loopback = await LoopbackServer.start({
+        bridge,
+        stateDir: options.stateDir,
+        privateFiles: options.privateFiles,
+        version: CORE_VERSION,
+        extensionOrigins: RELEASE_EXTENSION_ORIGINS.map((o) => o.replace(/\/$/, "")),
+        log: options.log,
+        ports: options.loopbackPorts,
+      });
+      bridge.attachLoopback(loopback);
+      if (options.extensionDir && loopback.port !== undefined) {
+        const credential = loopback.nativeBootstrap();
+        if (credential)
+          try {
+            await provisionBrowserBootstrap(options.extensionDir, credential, options.privateFiles);
+          } catch {
+            options.log("warning: browser bootstrap file unavailable; native messaging still works");
+          }
+      }
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       options.log(`warning: browser loopback discovery unavailable: ${detail}; native messaging still works`);
@@ -108,7 +179,7 @@ export async function startBrowserBridge(options: BrowserWiringOptions): Promise
 /**
  * The owner's view of the browser link on the Control Center Browser screen:
  * the connection state (never the token or the endpoint path) and the loopback
- * pairing requests and pairings the owner approves, rejects or forgets.
+ * legacy pairings the owner can forget. No new manual pairings are created.
  * Undefined while the bridge is turned off.
  */
 export function browserLinkHost(bridge: BrowserBridge | undefined): BrowserLinkHost | undefined {
@@ -135,7 +206,7 @@ export function browserLinkHost(bridge: BrowserBridge | undefined): BrowserLinkH
               loopback: {
                 ...(loopback.port !== undefined ? { port: loopback.port } : {}),
                 conflicts: loopback.conflicts,
-                pending: loopback.pending.map(({ id, code, browser, expiresAt }) => ({ id, code, browser, expiresAt })),
+                pending: [],
                 pairings: loopback.pairings.map(({ id, browser, created, connected }) => ({
                   id,
                   browser,

@@ -1,40 +1,11 @@
 /**
- * Loopback discovery and pairing for the CROT Browser Extension
- * (docs/BROWSER_EXTENSION.md, "Automatic connection").
- *
- *   CROT Browser Extension <-WebSocket 127.0.0.1:43115-43119-> LoopbackServer -> BrowserBridge -> BrowserService
- *
- * Native messaging stays the primary, zero-click channel (CROT Desktop
- * registers the native host for Chrome, Chromium, Brave and Edge when it
- * starts). This endpoint lets the extension find a running CROT and connect
- * when native messaging is unavailable (a browser without the host manifest,
- * a sandboxed browser), after one owner approval in CROT Desktop:
- *
- * - GET  /extension/status      product, version, instance and bridge state; no secrets.
- * - POST /extension/pair        a pairing request with a 6-digit code (5 minutes). CROT
- *                               Desktop shows it with the browser; the extension shows the same code.
- * - POST /extension/pair/<id>   polled with the request key: pending, rejected, expired, or approved
- *                               with the pairing id and secret (delivered once).
- * - WS   /extension/command     mutual HMAC-SHA256 challenge with the pairing secret, then the bridge
- *                               protocol (hello, welcome, requests) as one JSON text message per frame.
- *
- * There is deliberately no unauthenticated tab endpoint: tab data only flows
- * over the paired, authenticated channel (tabs.list requests and the
- * content-free tabs_changed notice).
- *
- * Every request must come from the loopback interface with a loopback Host
- * header (no DNS rebinding). Except the status read, it must carry the origin
- * of a release CROT extension; web pages cannot forge their Origin. The
- * pairing secret is HMAC(bridge-derived key, instance, pairing id): it is never
- * stored, and forgetting the pairing (or rotating the bridge token) revokes it.
- * <state>/browser-pairings.json holds metadata only and is a protected path.
- *
- * Residual risk, documented for owners: on a computer shared by several OS
- * accounts, another account could listen on the first port before CROT starts.
- * The extension shows the pairing code and the Desktop account name, and CROT
- * reports a foreign listener; native messaging has no such exposure.
+ * Local browser discovery and mutually authenticated WebSocket bridge.
+ * Credentials are delivered over authenticated Native Messaging or an
+ * owner-only unpacked-extension resource; HTTP never distributes a secret.
+ * Both proofs bind the extension origin and fresh nonces. Same-OS-user
+ * processes may read owner-only files and are outside this isolation boundary.
  */
-import { createHmac, randomBytes, randomInt, timingSafeEqual } from "node:crypto";
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { readFile, rename, writeFile } from "node:fs/promises";
 import {
@@ -60,7 +31,6 @@ import type { BridgeSocket } from "./server.js";
 
 export const LOOPBACK_PORTS: readonly number[] = Object.freeze([43115, 43116, 43117, 43118, 43119]);
 export const LOOPBACK_PROTOCOL_VERSION = 1;
-export const LOOPBACK_PAIRING_TTL_MS = 5 * 60_000;
 export const BROWSER_PAIRINGS_FILE_NAME = "browser-pairings.json";
 export const LOOPBACK_PING = '{"type":"loopback_ping"}';
 export const LOOPBACK_PONG = '{"type":"loopback_pong"}';
@@ -68,9 +38,6 @@ export const LOOPBACK_PONG = '{"type":"loopback_pong"}';
 export const LOOPBACK_UNKNOWN_PAIRING = 4401;
 export const LOOPBACK_BAD_PROOF = 4403;
 
-const MAX_PENDING = 3;
-const MAX_REQUESTS_PER_WINDOW = 10;
-const REQUEST_WINDOW_MS = 10 * 60_000;
 const MAX_PAIRINGS = 16;
 const MAX_BODY_BYTES = 4096;
 const MAX_HANDSHAKE_MESSAGE_BYTES = 512;
@@ -80,7 +47,6 @@ const MAX_AUTH_FAILURES_PER_MINUTE = 30;
 const PROBE_TIMEOUT_MS = 800;
 const HEX32 = /^[0-9a-f]{32}$/;
 const HEX64 = /^[0-9a-f]{64}$/;
-const KEY = /^[A-Za-z0-9_-]{43}$/;
 const PRINTABLE = /^[^\u0000-\u001f\u007f-\u009f\u2028\u2029]+$/;
 
 export function browserPairingsFile(stateDir: string): string {
@@ -91,15 +57,6 @@ export interface LoopbackBrowser {
   readonly name: string;
   readonly version: string;
   readonly extensionVersion: string;
-}
-
-/** A pending request as the owner sees it in CROT Desktop. */
-export interface LoopbackPairingRequestView {
-  readonly id: string;
-  readonly code: string;
-  readonly browser: LoopbackBrowser;
-  readonly extensionId: string;
-  readonly expiresAt: number;
 }
 
 export interface LoopbackPairingView {
@@ -116,20 +73,8 @@ export interface LoopbackStatus {
   /** Ports of the range held by something that is not CROT (owner warning). */
   readonly conflicts: readonly number[];
   readonly instance: string;
-  readonly pending: readonly LoopbackPairingRequestView[];
+  readonly pending: readonly never[];
   readonly pairings: readonly LoopbackPairingView[];
-}
-
-interface PendingPairing {
-  readonly id: string;
-  readonly key: string;
-  readonly code: string;
-  readonly origin: string;
-  readonly extensionId: string;
-  readonly browser: LoopbackBrowser;
-  readonly expires: number;
-  state: "pending" | "approved" | "rejected";
-  pairing?: string;
 }
 
 interface StoredPairing {
@@ -293,8 +238,6 @@ export class LoopbackServer {
   private server: Server | undefined;
   private boundPort: number | undefined;
   private readonly conflictPorts: number[] = [];
-  private readonly requests = new Map<string, PendingPairing>();
-  private requestTimes: number[] = [];
   private failures: number[] = [];
   private readonly live = new Map<string, Set<LoopbackChannel>>();
   private handshakes = 0;
@@ -341,21 +284,26 @@ export class LoopbackServer {
     return this.file.instance;
   }
 
+  /** Credentials scoped to this Desktop instance and release extension origin. */
+  bootstrap(origin: string): { instance: string; pairing: string; secret: string } | undefined {
+    if (!this.options.extensionOrigins.includes(origin)) return undefined;
+    const instance = this.file.instance;
+    const pairing = mac(this.key, "automatic-pairing", instance, origin).slice(0, 32);
+    return { instance, pairing, secret: loopbackPairingSecret(this.key, instance, pairing) };
+  }
+
+  /** Native host registration has a single pinned extension identity. */
+  nativeBootstrap(): { instance: string; pairing: string; secret: string } | undefined {
+    return this.options.extensionOrigins.length === 1 ? this.bootstrap(this.options.extensionOrigins[0]!) : undefined;
+  }
+
   status(): LoopbackStatus {
     this.expire();
     return {
       ...(this.boundPort !== undefined ? { port: this.boundPort } : {}),
       conflicts: [...this.conflictPorts],
       instance: this.file.instance,
-      pending: [...this.requests.values()]
-        .filter((r) => r.state === "pending")
-        .map((r) => ({
-          id: r.id,
-          code: r.code,
-          browser: r.browser,
-          extensionId: r.extensionId,
-          expiresAt: r.expires,
-        })),
+      pending: [],
       pairings: this.file.pairings.map((p) => ({
         id: p.id,
         browser: p.browser,
@@ -366,41 +314,12 @@ export class LoopbackServer {
     };
   }
 
-  /** Owner approval in CROT Desktop: the extension receives its pairing on its next poll. */
-  async approve(id: string): Promise<boolean> {
-    this.expire();
-    const request = this.requests.get(id);
-    if (!request || request.state !== "pending") return false;
-    const pairing: StoredPairing = {
-      id: randomBytes(16).toString("hex"),
-      extensionId: request.extensionId,
-      browser: request.browser,
-      created: this.now(),
-    };
-    const previous = this.file.pairings;
-    // One pairing per extension and browser: a new approval replaces the old one.
-    const replaced = previous.filter(
-      (p) => p.extensionId === pairing.extensionId && p.browser.name === pairing.browser.name,
-    );
-    this.file.pairings = [...previous.filter((p) => !replaced.includes(p)), pairing].slice(-MAX_PAIRINGS);
-    try {
-      await this.persist();
-    } catch (error) {
-      this.file.pairings = previous;
-      throw error;
-    }
-    for (const old of replaced) this.disconnect(old.id);
-    request.state = "approved";
-    request.pairing = pairing.id;
-    this.options.log("browser loopback: the owner approved a pairing for " + request.browser.name);
-    return true;
+  // Legacy owner commands cannot create or approve new pairing requests.
+  async approve(_id: string): Promise<boolean> {
+    return false;
   }
-
-  reject(id: string): boolean {
-    const request = this.requests.get(id);
-    if (!request || request.state !== "pending") return false;
-    request.state = "rejected";
-    return true;
+  reject(_id: string): boolean {
+    return false;
   }
 
   /** Revoke a pairing: its secret stops working and its open connection closes. */
@@ -447,13 +366,6 @@ export class LoopbackServer {
 
   private expire(): void {
     const now = this.now();
-    for (const [id, r] of this.requests) {
-      if (r.expires > now) continue;
-      this.requests.delete(id);
-      // Approved but never collected: the pairing nobody received is removed again.
-      if (r.state === "approved" && r.pairing) void this.forget(r.pairing).catch(() => undefined);
-    }
-    this.requestTimes = this.requestTimes.filter((t) => now - t < REQUEST_WINDOW_MS);
     this.failures = this.failures.filter((t) => now - t < 60_000);
   }
 
@@ -535,15 +447,6 @@ export class LoopbackServer {
     }
     if (url.pathname === "/extension/status" && req.method === "GET") return send(res, 200, this.publicStatus(), cors);
     if (!allowed) return send(res, 403, { error: "extension origin required" });
-    if (url.pathname === "/extension/pair" && req.method === "POST") {
-      void this.createRequest(req, res, allowed, cors);
-      return;
-    }
-    const poll = /^\/extension\/pair\/([0-9a-f]{32})$/.exec(url.pathname);
-    if (poll && req.method === "POST") {
-      void this.pollRequest(req, res, poll[1]!, allowed, cors);
-      return;
-    }
     send(res, 404, { error: "not found" }, cors);
   }
 
@@ -558,87 +461,6 @@ export class LoopbackServer {
       user: this.user,
       state: this.options.bridge.state().kind,
     };
-  }
-
-  private async createRequest(
-    req: IncomingMessage,
-    res: ServerResponse,
-    origin: string,
-    cors: Record<string, string>,
-  ): Promise<void> {
-    const body = await readJson(req);
-    const browser = isObject(body) ? parseBrowser(body.browser) : undefined;
-    if (!browser) return send(res, 400, { error: "invalid pairing request" }, cors);
-    this.expire();
-    const extensionId = origin.slice(origin.indexOf("://") + 3);
-    // A browser asking again replaces its own pending request (service worker restarts).
-    for (const [id, r] of this.requests)
-      if (r.state === "pending" && r.origin === origin && r.browser.name === browser.name) this.requests.delete(id);
-    const pending = [...this.requests.values()].filter((r) => r.state === "pending").length;
-    if (pending >= MAX_PENDING || this.requestTimes.length >= MAX_REQUESTS_PER_WINDOW)
-      return send(res, 429, { error: "too many pairing requests" }, cors);
-    this.requestTimes.push(this.now());
-    const request: PendingPairing = {
-      id: randomBytes(16).toString("hex"),
-      key: randomBytes(32).toString("base64url"),
-      code: String(randomInt(0, 1_000_000)).padStart(6, "0"),
-      origin,
-      extensionId,
-      browser,
-      expires: this.now() + LOOPBACK_PAIRING_TTL_MS,
-      state: "pending",
-    };
-    this.requests.set(request.id, request);
-    this.options.log("browser loopback: pairing request from " + browser.name + " waits for the owner");
-    send(
-      res,
-      201,
-      {
-        id: request.id,
-        key: request.key,
-        code: request.code,
-        expiresAt: request.expires,
-        instance: this.file.instance,
-        user: this.user,
-      },
-      cors,
-    );
-  }
-
-  private async pollRequest(
-    req: IncomingMessage,
-    res: ServerResponse,
-    id: string,
-    origin: string,
-    cors: Record<string, string>,
-  ): Promise<void> {
-    const body = await readJson(req);
-    const key = isObject(body) ? body.key : undefined;
-    this.expire();
-    const request = this.requests.get(id);
-    if (
-      !request ||
-      request.origin !== origin ||
-      typeof key !== "string" ||
-      !KEY.test(key) ||
-      !timingSafeEqual(Buffer.from(key), Buffer.from(request.key))
-    )
-      return send(res, 404, { state: "unknown" }, cors);
-    if (request.state === "pending") return send(res, 200, { state: "pending", expiresAt: request.expires }, cors);
-    this.requests.delete(id);
-    if (request.state === "rejected" || !request.pairing) return send(res, 200, { state: "rejected" }, cors);
-    send(
-      res,
-      200,
-      {
-        state: "approved",
-        pairing: request.pairing,
-        secret: loopbackPairingSecret(this.key, this.file.instance, request.pairing),
-        instance: this.file.instance,
-        user: this.user,
-      },
-      cors,
-    );
   }
 
   private upgrade(req: IncomingMessage, socket: Duplex, head: Buffer): void {
@@ -675,7 +497,8 @@ export class LoopbackServer {
     };
     const timer = setTimeout(() => fail(4408, "handshake timeout"), HANDSHAKE_TIMEOUT_MS);
     timer.unref?.();
-    let challenge: { pairing: StoredPairing; secret: string; clientNonce: string; serverNonce: string } | undefined;
+    let challenge:
+      { pairing: string; legacy?: StoredPairing; secret: string; clientNonce: string; serverNonce: string } | undefined;
     ws.attach({
       onMessage: (data, binary) => {
         if (finished) return;
@@ -698,14 +521,17 @@ export class LoopbackServer {
             !HEX64.test(nonce)
           )
             return fail(1002, "invalid handshake");
-          const stored = this.file.pairings.find((p) => p.id === pairing);
-          if (!stored || "chrome-extension://" + stored.extensionId !== origin) {
+          const auto = this.bootstrap(origin);
+          const stored = this.file.pairings.find(
+            (p) => p.id === pairing && "chrome-extension://" + p.extensionId === origin,
+          );
+          if (auto?.pairing !== pairing && !stored) {
             ws.sendText(JSON.stringify({ type: "loopback_error", code: "unknown_pairing" }));
             return fail(LOOPBACK_UNKNOWN_PAIRING, "unknown pairing");
           }
-          const secret = loopbackPairingSecret(this.key, this.file.instance, stored.id);
+          const secret = loopbackPairingSecret(this.key, this.file.instance, pairing);
           const serverNonce = randomBytes(32).toString("hex");
-          challenge = { pairing: stored, secret, clientNonce: nonce, serverNonce };
+          challenge = { pairing, ...(stored ? { legacy: stored } : {}), secret, clientNonce: nonce, serverNonce };
           ws.sendText(
             JSON.stringify({
               type: "loopback_challenge",
@@ -726,10 +552,11 @@ export class LoopbackServer {
           )
         )
           return fail(LOOPBACK_BAD_PROOF, "invalid proof");
-        if (!this.file.pairings.includes(challenge.pairing)) return fail(LOOPBACK_UNKNOWN_PAIRING, "unknown pairing");
+        if (challenge.legacy && !this.file.pairings.includes(challenge.legacy))
+          return fail(LOOPBACK_UNKNOWN_PAIRING, "unknown pairing");
         finish();
         ws.sendText(JSON.stringify({ type: "loopback_ready" }));
-        const channel = new LoopbackChannel(ws, challenge.pairing.id);
+        const channel = new LoopbackChannel(ws, challenge.pairing);
         const set = this.live.get(channel.pairing) ?? new Set<LoopbackChannel>();
         set.add(channel);
         this.live.set(channel.pairing, set);
@@ -757,38 +584,6 @@ function send(res: ServerResponse, status: number, body: unknown, headers: Recor
     "X-Content-Type-Options": "nosniff",
   });
   res.end(json);
-}
-
-/** A small JSON body (at most MAX_BODY_BYTES), or undefined. */
-function readJson(req: IncomingMessage): Promise<unknown> {
-  return new Promise((resolve) => {
-    const chunks: Buffer[] = [];
-    let size = 0;
-    let done = false;
-    const finish = (value: unknown) => {
-      if (done) return;
-      done = true;
-      resolve(value);
-    };
-    req.on("data", (chunk: Buffer) => {
-      size += chunk.length;
-      if (size > MAX_BODY_BYTES) {
-        finish(undefined);
-        req.destroy();
-        return;
-      }
-      chunks.push(chunk);
-    });
-    req.on("end", () => {
-      try {
-        finish(JSON.parse(Buffer.concat(chunks).toString("utf8")));
-      } catch {
-        finish(undefined);
-      }
-    });
-    req.on("error", () => finish(undefined));
-    req.on("close", () => finish(undefined));
-  });
 }
 
 /** Whether CROT answers on a port of the range (another instance or account), within PROBE_TIMEOUT_MS. */

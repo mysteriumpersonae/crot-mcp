@@ -57,10 +57,6 @@ const refreshButton = byId("refresh-status");
 const install = byId("install-desktop");
 const openButton = byId("open-app");
 const tag = byId("hero-tag-label");
-const linkBox = byId("link-box");
-const linkNote = byId("link-note");
-const pairCode = byId("pair-code");
-const linkActions = byId("link-actions");
 const POLL_MS = 3000;
 let pollTimer;
 const setStatus = (state, text) => {
@@ -78,52 +74,7 @@ const ERRORS = {
     "Слишком много запросов на подключение. Повторите через несколько минут.",
   "CROT Desktop did not accept the connection request": "CROT Desktop не принял запрос на подключение",
 };
-async function pair(instance) {
-  try {
-    await chrome.runtime.sendMessage(instance ? { type: "crot.ui.pair", instance } : { type: "crot.ui.pair" });
-  } catch {
-    feedback("Не удалось отправить запрос. Попробуйте ещё раз.", 3000);
-  }
-  setTimeout(() => void checkConnection(false), 300);
-}
-function actionButton(text, onClick) {
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = "btn btn-ghost";
-  button.textContent = text;
-  button.addEventListener("click", onClick);
-  return button;
-}
-/** Shows the loopback pairing state (CROT Desktop found, waiting for the owner's confirmation). */
 function showLink(link) {
-  linkActions.replaceChildren();
-  pairCode.hidden = true;
-  linkBox.hidden = true;
-  if (link?.state === "pairing") {
-    linkBox.hidden = false;
-    linkNote.textContent = "Подтвердите подключение в CROT Desktop → Браузер. Код должен совпадать:";
-    pairCode.textContent = String(link.code).replace(/^(\d{3})(\d{3})$/, "$1 $2");
-    pairCode.hidden = false;
-    return ["checking", "CROT Desktop найден — подтвердите подключение в приложении"];
-  }
-  if (link?.state === "rejected") {
-    linkBox.hidden = false;
-    linkNote.textContent = "Запрос на подключение отклонён в CROT Desktop.";
-    linkActions.append(actionButton("Запросить снова", () => void pair()));
-    return ["disconnected", "✗ Подключение отклонено в CROT Desktop"];
-  }
-  if (link?.state === "choose" && Array.isArray(link.desktops)) {
-    linkBox.hidden = false;
-    linkNote.textContent = "Запущено несколько аккаунтов CROT Desktop. Выберите свой:";
-    for (const desktop of link.desktops.slice(0, 4))
-      linkActions.append(
-        actionButton(
-          "Подключиться к " + (desktop.user || desktop.instance.slice(0, 8)),
-          () => void pair(desktop.instance),
-        ),
-      );
-    return ["checking", "Найдено несколько CROT Desktop"];
-  }
   if (link?.state === "error" && typeof link.message === "string")
     return ["disconnected", "✗ " + (ERRORS[link.message] || "Не удалось подключиться к CROT Desktop")];
   return [
@@ -147,7 +98,7 @@ async function checkConnection(manual) {
     connected = state?.connection === "connected";
     if (connected) {
       showLink(undefined);
-      setStatus("connected", "✓ CROT Ready — десктоп подключён");
+      setStatus("connected", "✓ Подключено к CROT");
     } else {
       const [kind, text] = showLink(state?.link);
       setStatus(kind, text);

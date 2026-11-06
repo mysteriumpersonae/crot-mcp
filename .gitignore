@@ -25,3 +25,6 @@ opencode.json
 /extension/icons/*.png
 
 /extension/i18n.js
+/extension/.bridge-secret.json
+
+/extension/.bridge-secret.json.*.tmp

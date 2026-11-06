@@ -445,6 +445,33 @@ describe("HostConnection loopback fallback", () => {
     expect(fake.opened).toBe(0);
   });
 
+  it("refuses bootstrap on loopback or without native feature negotiation", async () => {
+    const bootstrap = {
+      type: "loopback_bootstrap",
+      instance: "a".repeat(32),
+      pairing: "b".repeat(32),
+      secret: "c".repeat(64),
+    };
+    let accepted = 0;
+    const runtime = new FakeRuntime();
+    runtime.failConnect = true;
+    const loopbackPort = new FakePort(runtime);
+    const { link } = fakeLoopback(runtime, [loopbackPort]);
+    (link as unknown as { bootstrap: () => Promise<void> }).bootstrap = async () => {
+      accepted++;
+    };
+    const { connection } = setup({ runtime, loopback: link });
+    connection.ensureConnected();
+    await flush();
+    loopbackPort.deliver({ ...WELCOME, features: ["loopback-auto"] });
+    loopbackPort.deliver(bootstrap);
+    expect(loopbackPort.disconnected).toBe(true);
+    const native = connect({ loopback: link });
+    native.port.deliver(bootstrap);
+    expect(native.port.disconnected).toBe(true);
+    expect(accepted).toBe(0);
+  });
+
   it("drops a loopback port that arrives after stop()", async () => {
     const runtime = new FakeRuntime();
     runtime.failConnect = true;

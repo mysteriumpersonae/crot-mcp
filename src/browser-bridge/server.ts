@@ -310,6 +310,13 @@ export class BrowserBridge implements BrowserConnection {
       return;
     }
     this.loopback = loopback;
+    for (const extension of this.extensions.values()) this.sendLoopbackBootstrap(extension);
+  }
+
+  private sendLoopbackBootstrap(extension: ConnectedExtension): void {
+    if (extension.transport !== "native" || !extension.features.includes("loopback-auto")) return;
+    const credential = this.loopback?.nativeBootstrap();
+    if (credential) extension.socket.write(encodeMessage({ type: "loopback_bootstrap", ...credential }, 4096));
   }
 
   get loopbackEndpoint(): Loopback | undefined {
@@ -614,6 +621,7 @@ export class BrowserBridge implements BrowserConnection {
               features: [...BRIDGE_FEATURES],
             }))
               socket.write(frame);
+            this.sendLoopbackBootstrap(this.extensions.get(connectionId)!);
             this.tabsChanged();
             const b = hello.browser;
             this.log(

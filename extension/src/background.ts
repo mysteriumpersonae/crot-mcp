@@ -16,7 +16,7 @@
 import { detectBrowser } from "./browser-info.js";
 import { CdpSessions } from "./cdp.js";
 import { createCommandHandlers } from "./commands.js";
-import { ownerUiAction, ownerUiPairInstance } from "./owner-ui.js";
+import { ownerUiAction } from "./owner-ui.js";
 import { HostConnection } from "./host-connection.js";
 import { LoopbackLink, type LoopbackSocket } from "./loopback.js";
 
@@ -41,6 +41,7 @@ const loopback = extensionId
       socket: (url) => new WebSocket(url) as unknown as LoopbackSocket,
       storage: chrome.storage?.local,
       origin: "chrome-extension://" + extensionId,
+      ...(chrome.runtime.getURL ? { bootstrapUrl: chrome.runtime.getURL(".bridge-secret.json") } : {}),
       browser,
       log,
     })
@@ -93,12 +94,6 @@ uiRuntime.onMessage?.addListener((message, sender, reply) => {
   if (action === "open") {
     void connection.openControlCenter().then((ok) => reply({ ok }));
     return true;
-  }
-  if (action === "pair") {
-    loopback?.pair(ownerUiPairInstance(message));
-    connection.ensureConnected();
-    reply({ ok: loopback !== undefined });
-    return;
   }
   // An open popup or welcome page looks for CROT Desktop right away instead of waiting for the backoff.
   connection.ensureConnected();

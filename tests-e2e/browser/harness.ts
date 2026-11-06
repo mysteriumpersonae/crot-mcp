@@ -94,6 +94,8 @@ export async function createSandbox(): Promise<Sandbox> {
     // A fresh home is a new install (remote mode on): keep these services off the public relay.
     CROT_REMOTE_MODE_DEFAULT: "off",
     CROT_SELF_RELAY_HOST: "relay.invalid",
+    // Tests must never overwrite a developer's live unpacked-extension credential.
+    CROT_BROWSER_EXTENSION_DIR: "off",
   });
   return { base, home, configHome, stateHome, profileDir, workspace, env };
 }
@@ -258,14 +260,14 @@ export interface ChromeInstance {
 export function launchChrome(
   executable: string,
   sb: Sandbox,
-  options: { readonly remoteDebugging?: boolean; readonly startUrl?: string } = {},
+  options: { readonly remoteDebugging?: boolean; readonly startUrl?: string; readonly extensionDir?: string } = {},
 ): ChromeInstance {
   const extra = (process.env.CROT_E2E_CHROME_ARGS ?? "").split(/\s+/).filter((a) => a.length > 0);
   const headless = process.env.CROT_E2E_HEADLESS === "1" ? ["--headless=new"] : [];
   const args = [
     `--user-data-dir=${sb.profileDir}`,
-    `--load-extension=${EXTENSION_DIR}`,
-    `--disable-extensions-except=${EXTENSION_DIR}`,
+    `--load-extension=${options.extensionDir ?? EXTENSION_DIR}`,
+    `--disable-extensions-except=${options.extensionDir ?? EXTENSION_DIR}`,
     "--disable-features=DisableLoadExtensionCommandLineSwitch",
     "--no-first-run",
     "--no-default-browser-check",
@@ -446,6 +448,7 @@ export const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
  * the wrapper lives only in the test's DevTools session of the worker.
  */
 export interface CdpWitness {
+  hasLoopbackBootstrap(): Promise<boolean>;
   /** Test-only trusted-input evidence in isolated fixture documents, never shipped. */
   inputEvidence(tabId: number, reset?: boolean): Promise<unknown>;
   /** Methods the extension sent since install(), in order. */
@@ -535,6 +538,10 @@ export async function watchExtensionCdp(sb: Sandbox): Promise<CdpWitness> {
     return true;
   })()`);
   return {
+    hasLoopbackBootstrap: () =>
+      evaluate<boolean>(
+        `chrome.storage.local.get('crot.loopback').then(v => { const x=v['crot.loopback']?.link; return !!x && /^[0-9a-f]{32}$/.test(x.instance) && /^[0-9a-f]{32}$/.test(x.pairing) && /^[0-9a-f]{64}$/.test(x.secret); })`,
+      ),
     detachTab: (tabId) => evaluate<void>(`chrome.debugger.detach({tabId:${tabId}})`),
     blockDebugger: (blocked) =>
       evaluate<void>(

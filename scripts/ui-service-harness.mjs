@@ -32,6 +32,7 @@ export async function serviceHarness() {
     // Browser auto-discovery on a free port (never the owner's 43115-43119); no browser manifests or registry keys.
     CROT_BROWSER_LOOPBACK_PORTS: "0",
     CROT_BROWSER_AUTO_REGISTER: "off",
+    CROT_BROWSER_EXTENSION_DIR: "off",
   };
   const stateDir =
     process.platform === "win32"

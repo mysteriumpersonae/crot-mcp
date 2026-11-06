@@ -237,59 +237,40 @@ connected, or an **Install CROT Desktop** button
 
 ## Automatic connection
 
-Native messaging stays the primary channel: no click, no network listener. It
-needs the host manifest of step 1 for the browser in use. When `connectNative`
-fails (the host is not registered for this browser, or a sandboxed browser
-cannot start it), the extension falls back to the loopback discovery endpoint
-of CROT Desktop ([`src/browser-bridge/loopback.ts`](../src/browser-bridge/loopback.ts),
-[`extension/src/loopback.ts`](../extension/src/loopback.ts)):
+Native Messaging is the primary zero-click connection. At service startup CROT
+registers the release extension ID with Chrome, Chromium, Brave and Edge,
+including the standard Linux Snap Chromium host directory. Connected browser
+profiles remain separate sessions; the Browser screen can select one or use
+Auto. The popup and welcome page ask the extension's background worker for
+status; they do not open separate connections.
 
-```text
-CROT Browser Extension ──HTTP/WebSocket 127.0.0.1:43115-43119──► LoopbackServer ──► BrowserBridge
-```
+If Native Messaging is unavailable, an authenticated WebSocket on
+`127.0.0.1:43115-43119` is used when a credential is available. The host sends
+an origin-bound derived credential to the extension over the authenticated
+Native Messaging connection. The extension stores it in `chrome.storage.local`
+restricted to trusted contexts. For an unpacked extension from this repository,
+the service also atomically provisions `extension/.bridge-secret.json` with
+owner-only permissions (0600 on POSIX, owner-only ACL on Windows). It is ignored
+by Git, omitted from store packages, and not web-accessible. Set
+`CROT_BROWSER_EXTENSION_DIR` to the actual unpacked directory if it differs
+from the repository location, or to `off` to disable file provisioning. The
+service refuses unsafe directory/manifest configurations and logs a warning if
+provisioning fails. Browsers sandboxed away from that directory need Native
+Messaging or access to the file; this fallback cannot bypass OS isolation.
 
-| Endpoint | Purpose |
-| --- | --- |
-| `GET /extension/status` | identifies CROT: product, version, instance id, Desktop account name and bridge state. No secrets, no tab data |
-| `POST /extension/pair` | a pairing request with a 6-digit code, valid for 5 minutes |
-| `POST /extension/pair/<id>` | polled with the request key: `pending`, `rejected`, or `approved` with the pairing id and secret (delivered once) |
-| `WS /extension/command` | mutual HMAC-SHA256 challenge with the pairing secret, then the bridge protocol as one JSON text message per WebSocket message |
+`GET /extension/status` contains no credential or tab data. Before any browser
+commands, the WebSocket performs a mutual HMAC-SHA256 challenge bound to fresh
+nonces and the release extension origin: the service proves itself first. There
+is no HTTP endpoint distributing the secret and no confirmation code. Rotating
+the bridge token invalidates the derived credential. Old pending requests are
+not accepted; existing legacy trusted-browser records can be forgotten.
 
-Flow:
-
-1. The extension probes the ports. If exactly one CROT Desktop answers and the
-   owner has not declined it, it requests a pairing (at most one automatic
-   request per minute); with several Desktops the popup lets the owner choose.
-2. CROT Desktop → Browser shows the request with the browser and the code; the
-   popup shows the same code and the Desktop account. The owner clicks
-   **Connect** only when the codes match (**Decline** stops automatic
-   requests until the owner asks again from the popup).
-3. The extension collects the pairing secret once and connects. On every
-   connection CROT proves knowledge of the secret first, then the extension;
-   both proofs bind the nonces of both sides and the extension origin. A
-   program squatting on the port therefore learns nothing it could replay.
-4. Later connections reuse the pairing without a prompt. **Trusted browsers**
-   on the Browser screen lists the pairings; **Forget** revokes one and closes
-   its connection (WebSocket close code `4401`); the extension then pairs again.
-
-Security:
-
-- The server listens on `127.0.0.1` only and answers only requests from the
-  loopback interface with a `Host` of `127.0.0.1:<port>` or `localhost:<port>`
-  (no DNS rebinding). Every request except the status read must carry the
-  exact origin of a release CROT extension
-  (`chrome-extension://bllcepanlhojbddfbbpegmnokpaakool`); there is no wildcard
-  CORS, and web pages cannot forge their `Origin`.
-- The pairing secret is derived from the bridge token
-  (HMAC of the instance and pairing id); it is never stored by CROT, and
-  rotating the bridge token revokes every pairing. `<state>/browser-pairings.json`
-  holds metadata only and is a protected path like the token file. The
-  extension keeps its pairing in `chrome.storage.local`.
-- Pairing requests, handshakes and failed proofs are rate limited.
-- Residual risk on a computer shared by several OS accounts: another account
-  could hold the first port before CROT starts. The extension shows the code
-  and the Desktop account name, CROT reports a port held by a program that is
-  not CROT, and native messaging has no such exposure.
+**Security boundary:** owner-only file permissions protect against other OS
+users, not malicious processes running as the same OS user. Such processes can
+read the file or extension storage; do not share the OS account with untrusted
+software. CROT protects the bootstrap path from its own tools. CROT binds only
+loopback, checks the Host and release-extension Origin, and limits authentication
+attempts; the challenge prevents an unrelated listener from proving the secret.
 
 `CROT_BROWSER_LOOPBACK_PORTS` sets the ports (comma-separated, default
 `43115,43116,43117,43118,43119`; `off` disables the endpoint; `0` picks a free
@@ -672,7 +653,7 @@ Manifest V3, `minimum_chrome_version` 120:
 | Permission | Why |
 | --- | --- |
 | `nativeMessaging` | connect to `com.crot.host` |
-| `storage` | the loopback pairing (pairing id and secret) in `chrome.storage.local` |
+| `storage` | the loopback credential in `chrome.storage.local` |
 | `tabs` | list, open, navigate, activate and close tabs; tab URLs and titles |
 | `scripting` | run the built-in page functions (read, click, type) |
 | `alarms` | wake the service worker to reconnect |

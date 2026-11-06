@@ -301,6 +301,18 @@ describe("message validation", () => {
     expect(() => parseHostMessage(value)).toThrow(BrowserProtocolError);
   });
 
+  it("validates the native bootstrap message strictly", () => {
+    const bootstrap = {
+      type: "loopback_bootstrap",
+      instance: "a".repeat(32),
+      pairing: "b".repeat(32),
+      secret: "c".repeat(64),
+    };
+    expect(parseHostMessage(bootstrap)).toEqual(bootstrap);
+    expect(() => parseHostMessage({ ...bootstrap, secret: "invalid" })).toThrow(BrowserProtocolError);
+    expect(() => parseHostMessage({ ...bootstrap, extra: true })).toThrow(BrowserProtocolError);
+  });
+
   it("negotiates optional features in hello and welcome; unknown names pass, malformed lists fail", () => {
     expect(BRIDGE_FEATURES).toEqual([
       "tab-policy-v2",
@@ -308,6 +320,7 @@ describe("message validation", () => {
       "ui-manage",
       "tab-policy-envelope",
       "browser-focus",
+      "loopback-auto",
     ]);
     expect(
       parseBrowserMessage({

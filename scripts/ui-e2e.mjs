@@ -538,20 +538,14 @@ try {
     );
     await evaluate("document.getElementById('action-dialog').close()");
     await evaluate(
-      "window.browserLink={state:'waiting',tabsRevision:1,loopback:{port:43115,conflicts:[],pending:[{id:'0123456789abcdef0123456789abcdef',code:'123456',browser:{name:'Google Chrome',version:'140',extensionVersion:'1.0.0'},expiresAt:Date.now()+60000}],pairings:[]}}",
+      "window.browserLink={state:'connected',browser:{name:'Google Chrome',version:'140',extensionVersion:'1.0.0'},transport:'loopback',cdp:true,manage:true,tabsRevision:2,loopback:{port:43115,conflicts:[],pending:[],pairings:[]}}",
     );
     await until(
-      "document.getElementById('browser-status').dataset.state==='pairing'&&document.querySelector('#browser-status .browser-code')?.textContent==='123 456'",
+      "document.getElementById('browser-status').dataset.state==='connected'&&document.querySelectorAll('#browser-tabs .browser-tab').length===2",
     );
-    await screenshot("browser-pairing");
-    await evaluate(
-      "window.browserLink={state:'connected',browser:{name:'Google Chrome',version:'140',extensionVersion:'1.0.0'},transport:'loopback',cdp:true,manage:true,tabsRevision:2,loopback:{port:43115,conflicts:[],pending:[],pairings:[{id:'0123456789abcdef0123456789abcdef',browser:{name:'Google Chrome',version:'140',extensionVersion:'1.0.0'},created:Date.now(),connected:true}]}}",
-    );
-    await evaluate(
-      "[...document.querySelectorAll('#browser-status button')].find(b=>b.textContent==='Connect').click()",
-    );
-    await until(
-      "actions.some(a=>a[0]==='browser.link.approve'&&a[1].id==='0123456789abcdef0123456789abcdef')&&document.getElementById('browser-status').dataset.state==='connected'&&document.querySelectorAll('#browser-tabs .browser-tab').length===2",
+    assert(
+      await evaluate("!document.querySelector('#browser-status .browser-code')"),
+      "automatic connection must never show pairing codes",
     );
     await click("nav-home");
     assert(

@@ -25,65 +25,13 @@ async function run(action) {
     byId("error").textContent = "Action failed. Check the desktop service and try again.";
   }
 }
-const t = (text) => window.CrotI18n?.t(text) || text;
-function show(id, visible) {
-  byId(id).hidden = !visible;
-}
-/** The loopback pairing state (Desktop without native messaging for this browser). */
+/** Show errors without initiating an independent connection. */
 function renderLink(link) {
-  const note = byId("install-note");
-  const code = byId("pair-code");
-  const desktops = byId("desktops");
-  desktops.replaceChildren();
-  show("pair-code", false);
-  show("desktops", false);
-  show("pair", false);
-  show("download", true);
-  if (link?.state === "pairing") {
-    note.textContent = "Confirm this browser in CROT Desktop → Browser. The code must match:";
-    code.textContent = String(link.code).replace(/^(\d{3})(\d{3})$/, "$1 $2");
-    show("pair-code", true);
-    show("download", false);
-    if (link.user) {
-      const account = document.createElement("p");
-      account.className = "note";
-      account.dataset.noI18n = "";
-      account.textContent = t("Desktop account:") + " " + link.user;
-      desktops.append(account);
-      show("desktops", true);
-    }
-    return "Confirm in CROT Desktop";
-  }
-  if (link?.state === "rejected") {
-    note.textContent = "The connection request was declined in CROT Desktop.";
-    show("pair", true);
-    show("download", false);
-    return "Connection declined";
-  }
-  if (link?.state === "choose" && Array.isArray(link.desktops)) {
-    note.textContent = "Several CROT Desktop accounts are running. Choose yours:";
-    for (const desktop of link.desktops.slice(0, 4)) {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.dataset.noI18n = "";
-      button.textContent = t("Connect to") + " " + (desktop.user || desktop.instance.slice(0, 8));
-      button.addEventListener("click", () => void pair(desktop.instance));
-      desktops.append(button);
-    }
-    show("desktops", true);
-    show("download", false);
-    return "Choose CROT Desktop";
-  }
-  note.textContent =
+  byId("install-note").textContent =
     link?.state === "error" && typeof link.message === "string"
       ? link.message
       : "Install and start CROT Desktop. The extension connects automatically.";
   return link?.state === "searching" ? "Looking for CROT Desktop…" : "Desktop App Not Detected";
-}
-async function pair(instance) {
-  byId("error").textContent = "";
-  await chrome.runtime.sendMessage(instance ? { type: "crot.ui.pair", instance } : { type: "crot.ui.pair" });
-  setTimeout(() => void refreshStatus(), 300);
 }
 async function refreshStatus() {
   clearTimeout(pollTimer);
@@ -108,11 +56,10 @@ async function refreshStatus() {
         ? "Connecting…"
         : renderLink(state?.link);
     byId("connection").className = "badge " + (connected ? "ready" : "warning");
-    // Preserve the reserved space: native connection updates must not resize the popup.
-    byId("install").classList.toggle("connected", connected);
+    byId("install").hidden = connected;
   } catch {
     byId("connection").textContent = renderLink(undefined);
-    byId("install").classList.remove("connected");
+    byId("install").hidden = false;
   }
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -131,8 +78,7 @@ async function refreshStatus() {
     refresh.disabled = false;
     window.CrotI18n?.apply();
   }
-  // Scenario B: keep looking for CROT Desktop (and for the owner's approval) while the popup is open.
-  if (!connected) pollTimer = setTimeout(() => void refreshStatus(), POLL_MS);
+  pollTimer = setTimeout(() => void refreshStatus(), POLL_MS);
 }
 byId("refresh").addEventListener("click", () => void refreshStatus());
 byId("open-app").addEventListener(
@@ -141,13 +87,12 @@ byId("open-app").addEventListener(
     void run(async () => {
       const result = await chrome.runtime.sendMessage({ type: "crot.ui.openApp" });
       if (!result?.ok) {
-        byId("install").classList.remove("connected");
+        byId("install").hidden = false;
         byId("error").textContent = "Start CROT Desktop, then refresh the connection.";
       }
     }),
 );
 byId("account").addEventListener("click", () => void run(() => openTab(destination("/portal"))));
 byId("download").addEventListener("click", () => void run(() => openTab(DESKTOP_DOWNLOAD)));
-byId("pair").addEventListener("click", () => void run(() => pair()));
 byId("guide").addEventListener("click", () => void run(() => openTab(chrome.runtime.getURL("welcome.html"))));
 void refreshStatus();

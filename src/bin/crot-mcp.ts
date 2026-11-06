@@ -176,6 +176,13 @@ async function runService(command: ServeCommand, launch: "on-demand" | "managed"
     requestStop: (reason) => stop(reason),
     // Zero-config browser connection: register the native-messaging host for the installed browsers.
     ...(process.env.CROT_BROWSER_AUTO_REGISTER !== "off" ? { registerBrowserHost: registerBrowserHostAtStartup } : {}),
+    ...(process.env.CROT_BROWSER_EXTENSION_DIR === "off"
+      ? {}
+      : {
+          browserExtensionDir: path.resolve(
+            process.env.CROT_BROWSER_EXTENSION_DIR || fileURLToPath(new URL("../../extension", import.meta.url)),
+          ),
+        }),
   });
   if (started === "already_running") {
     // Two shims started a service at the same time: the other one serves them both.

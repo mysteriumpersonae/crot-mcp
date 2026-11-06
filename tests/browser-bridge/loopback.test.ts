@@ -1,15 +1,11 @@
 import { createHmac, randomBytes } from "node:crypto";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { request as httpRequest } from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { BRIDGE_FEATURES, BRIDGE_PROTOCOL_VERSION } from "../../src/browser-bridge/protocol.js";
-import {
-  BROWSER_PAIRINGS_FILE_NAME,
-  LOOPBACK_BAD_PROOF,
-  LOOPBACK_UNKNOWN_PAIRING,
-} from "../../src/browser-bridge/loopback.js";
+import { LOOPBACK_BAD_PROOF, LOOPBACK_UNKNOWN_PAIRING } from "../../src/browser-bridge/loopback.js";
 import type { BrowserBridge } from "../../src/browser-bridge/server.js";
 import { browserLinkHost, loopbackPorts, startBrowserBridge } from "../../src/cli/browser.js";
 import { RELEASE_EXTENSION_ORIGINS } from "../../src/cli/release-extension-ids.js";
@@ -96,21 +92,6 @@ function http(port: number, method: string, pathname: string, headers: Record<st
 }
 
 const fromExtension = { Origin: ORIGIN };
-
-async function pairingRequest(port: number) {
-  const created = await http(port, "POST", "/extension/pair", fromExtension, { browser: BROWSER });
-  expect(created.status).toBe(201);
-  return created.body as { id: string; key: string; code: string; expiresAt: number; instance: string; user: string };
-}
-
-/** A pairing approved by the owner and collected by the extension. */
-async function paired(port: number, link: Link) {
-  const request = await pairingRequest(port);
-  expect(await link.approve(request.id)).toBe(true);
-  const collected = await http(port, "POST", "/extension/pair/" + request.id, fromExtension, { key: request.key });
-  expect(collected.body).toMatchObject({ state: "approved", instance: request.instance });
-  return collected.body as { pairing: string; secret: string; instance: string };
-}
 
 const proof = (secret: string, role: "host" | "extension", client: string, server: string, origin = ORIGIN) =>
   createHmac("sha256", Buffer.from(secret, "hex"))
@@ -224,52 +205,18 @@ describe("browser loopback discovery (CROT_BROWSER_LOOPBACK_PORTS)", () => {
     });
   });
 
-  it("pairs once after the owner approves the code; the secret is delivered once and never stored", async () => {
-    const { port, link, stateDir } = await start();
-    const request = await pairingRequest(port);
-    expect(request.code).toMatch(/^[0-9]{6}$/);
-    expect(link.status().loopback?.pending).toEqual([
-      { id: request.id, code: request.code, browser: BROWSER, expiresAt: request.expiresAt },
-    ]);
-    const wrongKey = await http(port, "POST", "/extension/pair/" + request.id, fromExtension, {
-      key: randomBytes(32).toString("base64url"),
-    });
-    expect(wrongKey.status).toBe(404);
-    const pending = await http(port, "POST", "/extension/pair/" + request.id, fromExtension, { key: request.key });
-    expect(pending.body).toMatchObject({ state: "pending" });
-    expect(await link.approve(request.id)).toBe(true);
-    expect(await link.approve(request.id)).toBe(false);
-    const approved = await http(port, "POST", "/extension/pair/" + request.id, fromExtension, { key: request.key });
-    expect(approved.body).toMatchObject({
-      state: "approved",
-      pairing: expect.stringMatching(/^[0-9a-f]{32}$/),
-      secret: expect.stringMatching(/^[0-9a-f]{64}$/),
-    });
-    const again = await http(port, "POST", "/extension/pair/" + request.id, fromExtension, { key: request.key });
-    expect(again.status).toBe(404);
-    const status = link.status();
-    expect(status.loopback?.pending).toEqual([]);
-    expect(status.loopback?.pairings).toEqual([
-      { id: approved.body.pairing, browser: BROWSER, created: expect.any(Number), connected: false },
-    ]);
-    const file = await readFile(path.join(stateDir, BROWSER_PAIRINGS_FILE_NAME), "utf8");
-    expect(file).toContain(String(approved.body.pairing));
-    expect(file).not.toContain(String(approved.body.secret));
-  });
-
-  it("tells the extension when the owner declines", async () => {
-    const { port, link } = await start();
-    const request = await pairingRequest(port);
-    expect(link.reject(request.id)).toBe(true);
-    const declined = await http(port, "POST", "/extension/pair/" + request.id, fromExtension, { key: request.key });
-    expect(declined.body).toEqual({ state: "rejected" });
-    expect(link.status().loopback?.pairings).toEqual([]);
-    expect(await link.approve(request.id)).toBe(false);
+  it("refuses old HTTP pairing without exposing credentials or a confirmation code", async () => {
+    const { port, link, bridge } = await start();
+    const response = await http(port, "POST", "/extension/pair", fromExtension, { browser: BROWSER });
+    expect(response.status).toBe(404);
+    expect(JSON.stringify(response.body)).not.toContain(bridge.loopbackEndpoint!.nativeBootstrap()!.secret);
+    expect(link.status().loopback?.pending).toEqual([]);
+    expect(await link.approve("0".repeat(32))).toBe(false);
   });
 
   it("connects the extension after the mutual proof and runs the bridge protocol as text messages", async () => {
     const { port, link, bridge } = await start();
-    const { pairing, secret } = await paired(port, link);
+    const { pairing, secret } = bridge.loopbackEndpoint!.nativeBootstrap()!;
     const ws = await authenticate(port, pairing, secret);
     ws.send({ type: "hello", protocol: BRIDGE_PROTOCOL_VERSION, browser: BROWSER, features: [...BRIDGE_FEATURES] });
     const welcome = await ws.next(3);
@@ -285,22 +232,24 @@ describe("browser loopback discovery (CROT_BROWSER_LOOPBACK_PORTS)", () => {
       browser: BROWSER,
       transport: "loopback",
       manage: true,
-      loopback: { pairings: [{ id: pairing, connected: true }] },
+      loopback: { pending: [], pairings: [] },
     });
     expect(bridge.manageExtension()).toBe(true);
     expect(await ws.next(4)).toMatchObject({ type: "ui_manage" });
-    // Forgetting the pairing closes its connection and revokes the secret.
-    expect(await link.forget(pairing)).toBe(true);
-    await ws.close();
     const refused = await socket(port);
-    refused.send({ type: "loopback_auth", version: 1, pairing, nonce: randomBytes(32).toString("hex") });
+    refused.send({
+      type: "loopback_auth",
+      version: 1,
+      pairing: "0".repeat(32),
+      nonce: randomBytes(32).toString("hex"),
+    });
     expect(await refused.close()).toBe(LOOPBACK_UNKNOWN_PAIRING);
     expect(refused.messages).toEqual([{ type: "loopback_error", code: "unknown_pairing" }]);
   });
 
   it("refuses a wrong proof, a web origin and another path", async () => {
-    const { port, link } = await start();
-    const { pairing, secret } = await paired(port, link);
+    const { port, link, bridge } = await start();
+    const { pairing, secret } = bridge.loopbackEndpoint!.nativeBootstrap()!;
     const ws = await socket(port);
     const nonce = randomBytes(32).toString("hex");
     ws.send({ type: "loopback_auth", version: 1, pairing, nonce });

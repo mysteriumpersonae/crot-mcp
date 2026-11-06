@@ -43,6 +43,14 @@ it("rejects stale/dev modules, unsafe manifest/CSP, malformed icons and unsafe o
       "-e",
       `import {packageExtension} from ${JSON.stringify(script)}; await packageExtension({repo:${JSON.stringify(repo)},outDir:${JSON.stringify(outDir)}});`,
     ]);
+  const privateCredential = path.join(repo, "extension", ".bridge-secret.json");
+  await writeFile(privateCredential, "must-never-be-packaged");
+  const result = await exec(process.execPath, [
+    "--input-type=module",
+    "-e",
+    `import {packageExtension} from ${JSON.stringify(script)}; console.log(JSON.stringify(await packageExtension({repo:${JSON.stringify(repo)},outDir:${JSON.stringify(path.join(repo, "artifacts", "store"))}})))`,
+  ]);
+  expect(JSON.parse(result.stdout).files as string[]).not.toContain(".bridge-secret.json");
   await run();
   const extra = path.join(repo, "extension", "dist", "test-hook.js");
   await writeFile(extra, "globalThis.testHook = true;");

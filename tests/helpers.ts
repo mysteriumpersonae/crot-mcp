@@ -114,6 +114,7 @@ export async function makeServiceHost(base: string): Promise<ServiceHost> {
     env = { ...inherited, XDG_STATE_HOME: path.join(base, "state"), XDG_CONFIG_HOME: path.join(base, "config") };
     stateDir = path.join(base, "state", "crot");
   }
+  env.CROT_BROWSER_EXTENSION_DIR = "off";
   // Owner-only files (the secret store's file backend): tests read the credential files directly.
   // The OS secure storage backends and the automatic choice are tested in tests/service/secrets.
   await mkdir(stateDir, { recursive: true, mode: 0o700 });

@@ -279,6 +279,12 @@ export class HostConnection {
       return;
     }
     if (!this.connected) return this.drop(port, "protocol error: request before welcome");
+    if (message.type === "loopback_bootstrap") {
+      if (this.portTransport !== "native" || !this.hostFeatures.includes("loopback-auto"))
+        return this.drop(port, "protocol error: unexpected loopback bootstrap");
+      void this.options.loopback?.bootstrap(message);
+      return;
+    }
     if (message.type === "ui_result") return this.drop(port, "protocol error: chunked UI result");
     if (message.type === "ui_manage") {
       const now = Date.now();
@@ -371,8 +377,7 @@ export class HostConnection {
     if (this.stopped) return;
     const min = this.options.reconnectMinMs ?? RECONNECT_MIN_MS;
     const max = this.options.reconnectMaxMs ?? RECONNECT_MAX_MS;
-    // A pairing request waiting for the owner is polled at a fixed short interval.
-    const delay = this.options.loopback?.retryMs ?? Math.min(max, min * 2 ** Math.min(this.failures, 30));
+    const delay = Math.min(max, min * 2 ** Math.min(this.failures, 30));
     this.failures++;
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = undefined;
