@@ -133,6 +133,10 @@ describe("hostRegistrations", () => {
         browsers: ["Brave"],
         manifestFile: "/home/u/.config/BraveSoftware/Brave-Browser/NativeMessagingHosts/com.crot.host.json",
       },
+      {
+        browsers: ["Chromium"],
+        manifestFile: "/home/u/snap/chromium/common/chromium/NativeMessagingHosts/com.crot.host.json",
+      },
     ]);
     expect(hostRegistrations("linux", "/home/u", "/s", { XDG_CONFIG_HOME: "/xdg" })[0]?.manifestFile).toBe(
       "/xdg/google-chrome/NativeMessagingHosts/com.crot.host.json",
@@ -150,6 +154,14 @@ describe("hostRegistrations", () => {
       "/Users/u/Library/Application Support/Microsoft Edge/NativeMessagingHosts/com.crot.host.json",
       "/Users/u/Library/Application Support/BraveSoftware/Brave-Browser/NativeMessagingHosts/com.crot.host.json",
     ]);
+  });
+
+  it("Linux: the Snap Chromium path does not depend on XDG_CONFIG_HOME", () => {
+    const registrations = hostRegistrations("linux", "/home/u", "/s", { XDG_CONFIG_HOME: "/xdg" });
+    expect(registrations).toContainEqual({
+      browsers: ["Chromium"],
+      manifestFile: "/home/u/snap/chromium/common/chromium/NativeMessagingHosts/com.crot.host.json",
+    });
   });
 
   it("Windows: one manifest in the state directory, registered for Chrome (also read by Brave), Chromium and Edge in HKCU", () => {
@@ -230,6 +242,22 @@ describe("launchers", () => {
 });
 
 describe("installBrowserHost", () => {
+  it.runIf(process.platform === "linux")(
+    "registers the release extension for an existing Snap Chromium profile",
+    async () => {
+      const { home, options } = await setup();
+      const profile = path.join(home, "snap", "chromium", "common", "chromium");
+      await mkdir(profile, { recursive: true });
+      const installed = await installBrowserHost({ ...options, existingBrowsersOnly: true });
+      const manifestFile = path.join(profile, "NativeMessagingHosts", "com.crot.host.json");
+      expect(installed.registrations).toContainEqual({ browsers: ["Chromium"], manifestFile });
+      expect(JSON.parse(await readFile(manifestFile, "utf8"))).toMatchObject({
+        allowed_origins: [CROT_EXTENSION_ORIGIN],
+        type: "stdio",
+      });
+    },
+  );
+
   it("writes the launcher and the host manifests; the launcher starts the relay with --state-dir", async () => {
     const { stateDir, home, registry, options } = await setup();
     const result = await installBrowserHost(options);
