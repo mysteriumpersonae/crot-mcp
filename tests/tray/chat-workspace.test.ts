@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import { CONTROL_CENTER_RENDERER } from "../../src/tray/control-center-renderer.js";
 import { CHAT_CSS } from "../../src/tray/control-center-chat.js";
 import { TRAY_ASSETS } from "../../src/tray/assets.js";
+import { DESIGN_TYPOGRAPHY_CSS } from "../../src/tray/design-system-style.js";
+import { HOME_CSS } from "../../src/tray/home-style.js";
 
 describe("scoped Unified Chat workspace", () => {
   const chat = CONTROL_CENTER_RENDERER.split("function chat(root){")[1]!.split("const connectedAccount=")[0]!;
@@ -60,7 +62,9 @@ describe("scoped Unified Chat workspace", () => {
     );
   });
   it("loads isolated Chat styles after existing Home styles", () => {
-    expect(TRAY_ASSETS["/app.css"]!.body.endsWith(CHAT_CSS)).toBe(true);
+    const css = TRAY_ASSETS["/app.css"]!.body;
+    expect(css.indexOf(HOME_CSS)).toBeLessThan(css.indexOf(CHAT_CSS));
+    expect(css.endsWith(CHAT_CSS + DESIGN_TYPOGRAPHY_CSS)).toBe(true);
     expect(CHAT_CSS).toContain(".chat-active main.content{width:100%;height:100%");
     expect(CHAT_CSS).not.toContain(".home-active");
     expect(CHAT_CSS).not.toContain(".sidebar");

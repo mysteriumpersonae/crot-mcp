@@ -103,7 +103,7 @@ async function refreshStatus() {
       if (url.protocol === "https:" && !url.username && !url.password) portal = url.href;
     }
     byId("connection").textContent = connected
-      ? "CROT Ready"
+      ? "Connected to CROT"
       : state?.connection === "connecting"
         ? "Connecting…"
         : renderLink(state?.link);

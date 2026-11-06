@@ -309,7 +309,7 @@ async function installBrowser(): Promise<void> {
   process.stdout.write(formatInstallResult(result));
 }
 
-/** CROT Desktop start: (re)register the native host for the installed browsers; nothing is written when current. */
+/** Register for all supported browsers, including profiles created after the service starts. */
 async function registerBrowserHostAtStartup(): Promise<void> {
   const result = await installBrowserHost({
     os: osFamily(process.platform),
@@ -321,7 +321,6 @@ async function registerBrowserHostAtStartup(): Promise<void> {
     relayScript: fileURLToPath(new URL("./crot-browser-relay.js", import.meta.url)),
     privateFiles: createServicePrivateFiles(windows),
     ...(windows ? { registry: regExeWriter(process.env.SystemRoot ?? "C:\\Windows") } : {}),
-    existingBrowsersOnly: true,
   });
   if (result.changed)
     log(

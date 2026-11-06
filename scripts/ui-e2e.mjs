@@ -319,6 +319,11 @@ try {
           await until(
             "document.getElementById('browser-status').dataset.state==='connected'&&document.querySelectorAll('#browser-tabs .browser-tab').length===2&&!document.querySelector('#browser-page input[role=switch]:disabled')",
           );
+          if (lang === "ru") {
+            await size(1054, 820);
+            await screenshot("browser-compact-1054-ru");
+            await size(1280, 820);
+          }
           const expected =
             lang === "ru"
               ? [
@@ -416,6 +421,21 @@ try {
     await until(
       "document.getElementById('browser-status').dataset.state==='connected'&&!document.querySelector('#browser-page input[role=switch]:disabled')",
     );
+    await size(1054, 820);
+    await screenshot("browser-compact-1054");
+    await size(1584, 993);
+    await screenshot("browser-compact-1584");
+    await size(1280, 820);
+    await evaluate(
+      "window.originalProduct=window.crot.product;window.crot.product=(name,input)=>name==='browser.link.status'?Promise.reject(new Error('fixture unavailable')):window.originalProduct(name,input)",
+    );
+    await until("document.getElementById('browser-status').dataset.state==='unknown'");
+    assert(
+      await evaluate("!document.getElementById('browser-status').innerText.includes('Connected and active')"),
+      "failed status check must not show connected",
+    );
+    await evaluate("window.crot.product=window.originalProduct");
+    await until("document.getElementById('browser-status').dataset.state==='connected'");
     const browserSwitch = (key) => evaluate(`document.querySelector('#browser-page [data-switch=${key}]').click()`);
     const lastPolicy = "actions.filter(a=>a[0]==='browser.policy.set').at(-1)?.[1]";
     await browserSwitch("background");

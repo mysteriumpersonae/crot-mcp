@@ -82,6 +82,8 @@ export const ChatStartSchema = z
     thread: z.string().uuid().optional(),
     /** Read-only tools for the open project (list, read, stat, search); on by default. */
     projectTools: z.boolean().default(true),
+    /** Explicit owner-chat browser access; Core permissions and approvals still apply. */
+    browserTools: z.boolean().default(false),
     tools: z.array(z.string().min(1).max(128)).max(16).default([]),
     attachments: z
       .array(

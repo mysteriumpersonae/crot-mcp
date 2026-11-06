@@ -6,7 +6,7 @@ import { LOGIN_CSS } from "./login-screen.js";
 import { LOGIN_RENDERER } from "./login-renderer.js";
 import { DESIGN_TOKENS_CSS, LOCAL_FONTS_CSS } from "../ui/design-assets.js";
 import { THEME_BOOTSTRAP } from "../ui/theme-bootstrap.js";
-import { DESIGN_SYSTEM_CSS } from "./design-system-style.js";
+import { DESIGN_SYSTEM_CSS, DESIGN_TYPOGRAPHY_CSS } from "./design-system-style.js";
 import { WELCOME_HTML, WELCOME_CSS } from "./control-center-welcome.js";
 import { mascotData } from "../ui/mascot.js";
 import { I18N_SCRIPT } from "../ui/i18n.js";
@@ -40,7 +40,8 @@ const CSS =
   HOME_CSS +
   AGENTS_CENTER_CSS +
   BROWSER_CSS +
-  CHAT_CSS;
+  CHAT_CSS +
+  DESIGN_TYPOGRAPHY_CSS;
 const RENDERER = LOGIN_RENDERER + CONTROL_CENTER_RENDERER;
 export interface TrayAsset {
   readonly body: string;

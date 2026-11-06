@@ -726,11 +726,11 @@ describe("OpenCode through the local bridge", () => {
       expect(log.filter((l) => l.method === "DELETE").map((l) => l.path)).toEqual(["/session/ses_1", "/session/ses_2"]);
       expect(t.zen.seen).toHaveLength(0);
 
-      // Local OpenCode gets CROT's read-only project tools only; other CROT tools and images need a Zen key.
+      // Local OpenCode gets CROT's read-only project and browser tools only; other CROT tools and images need a Zen key.
       const tools = await chat(ZEN, "big-pickle", { tools: ["crot_status"] });
       expect(tools).toMatchObject({
         state: "failed",
-        error: expect.stringContaining("can only read the open project"),
+        error: expect.stringContaining("read-only project and browser tools"),
       });
       const png = Buffer.concat([Buffer.from("89504e470d0a1a0a", "hex"), Buffer.alloc(16)]).toString("base64");
       const image = await chat(ZEN, "big-pickle", { attachments: [{ name: "a.png", mime: "image/png", data: png }] });

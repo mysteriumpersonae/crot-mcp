@@ -272,9 +272,12 @@ prompt plus CROT's text tool protocol (`chat-tool-protocol.ts`): the model may a
 to 8 rounds), CROT runs each call through Core exactly like a native tool call (only the
 turn's tools; Core policy, approvals and audit apply) and sends the results back as
 ```` ```crot-tool-result ```` blocks in the next message of the same session. Through local
-OpenCode the turn's tools are the read-only project tools only (`fs_list_directory`,
-`fs_read_file`, `fs_stat`, `project_search_files`); other CROT tools (`local_read_only_tools`)
-and images (`local_text_only`) need a paid model with a Zen key. While a turn is pending
+OpenCode the turn's tools are the read-only project tools (`fs_list_directory`,
+`fs_read_file`, `fs_stat`, `project_search_files`) and, when Browser access is
+selected, `browser_status`, `browser_tabs_list`, and `browser_page_read`.
+These remain subject to Core policy and approval; page content returned to a
+model is untrusted. Other CROT tools (`local_read_only_tools`) and images
+(`local_text_only`) need a paid model with a Zen key. While a turn is pending
 CROT watches `/session/status`: OpenCode retries a refused free model instead of failing, so
 a retry with `free_tier_limit` (or minutes ahead) aborts the turn at once with
 `FREE_TIER_LIMIT`.

@@ -9,9 +9,14 @@ Supported browsers: **Chromium-based browsers only** — Google Chrome, Chromium
 Microsoft Edge and Brave (Chrome 120 or newer). Firefox is not supported.
 
 The connection is zero-config: CROT Desktop registers the native-messaging
-host for the installed browsers when it starts, and an extension that cannot
-use native messaging finds CROT Desktop on a loopback port and connects after
-one owner approval (see [Automatic connection](#automatic-connection)).
+host in supported browsers' standard per-user locations when it starts, even if
+the browser profile is created later. An extension that cannot use native
+messaging can find CROT Desktop on a loopback port after one owner approval (see
+[Automatic connection](#automatic-connection)). Custom browser profiles and
+sandboxed browser packages may need the approved loopback path. The Desktop
+connection indicator describes the bridge only, not the selected model's tool
+support; see [chat access](SCREEN-04-CHAT.md). A status-check error is shown as
+unavailable, never as a verified connection.
 
 ## Terminology
 

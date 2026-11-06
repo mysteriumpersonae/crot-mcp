@@ -33,6 +33,10 @@ export async function runChatGroupScenarios({ evaluate, until, size, screenshot,
     document.getElementById('nav-chat').click();
   })()`);
   await until("document.querySelector('.chat-agent-pill[aria-pressed=true]')");
+  assert(
+    await evaluate("document.querySelector('.chat-browser-access input').checked"),
+    "Browser access must be visible and enabled for direct chat",
+  );
   const open = async (group) => {
     await evaluate(`document.querySelector('.chat-dropdown.${group} .chat-selector').click()`);
     await until(`document.querySelector('.chat-dropdown.${group} .chat-popover:popover-open')`);
@@ -120,15 +124,19 @@ export async function runChatGroupScenarios({ evaluate, until, size, screenshot,
   await until("chatGroupCalls.some(c=>c[0]==='chat.start')");
   assert(
     await evaluate(
-      "(()=>{const r=chatGroupCalls.find(c=>c[0]==='chat.start')[1];return r.message.includes('mcp:notion-mcp')&&r.message.includes('connector:ElevenLabs')&&r.tools.length===0;})()",
+      "(()=>{const r=chatGroupCalls.find(c=>c[0]==='chat.start')[1];return r.message.includes('mcp:notion-mcp')&&r.message.includes('connector:ElevenLabs')&&r.tools.length===0&&r.browserTools===true;})()",
     ),
     "Selected platform/skill context was lost or tools silently enabled",
   );
   // Technical failures are CROT messages inside the thread, never orange text under the composer.
   await evaluate(
-    "window.groupFailure=true;(()=>{const m=document.querySelector('.chat-compose textarea');m.value='Failure fixture';m.dispatchEvent(new Event('input'));document.querySelector('.chat-send').click();})()",
+    "window.groupFailure=true;document.querySelector('.chat-browser-access input').click();(()=>{const m=document.querySelector('.chat-compose textarea');m.value='Failure fixture';m.dispatchEvent(new Event('input'));document.querySelector('.chat-send').click();})()",
   );
   await until("document.querySelector('.chat-transcript .chat-system[data-chat-notice=error]')");
+  assert(
+    await evaluate("chatGroupCalls.filter(c=>c[0]==='chat.start').at(-1)[1].browserTools===false"),
+    "Browser access toggle must reach the service",
+  );
   assert(
     await evaluate(
       "(()=>{const t=document.querySelector('.chat-transcript'),n=t.querySelector('.chat-system[data-chat-notice=error]');return !document.querySelector('.chat-status')&&!document.querySelector('.chat-compose .chat-system')&&n===t.lastElementChild&&n.textContent.includes('Provider refused the request.')&&n.querySelector('.chat-system-detail')?.textContent==='HTTP 402: fixture detail';})()",
