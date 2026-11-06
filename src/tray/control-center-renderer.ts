@@ -282,7 +282,8 @@ export const CONTROL_CENTER_RENDERER =
     const transcript=node('div',undefined,'chat-transcript');transcript.setAttribute('role','log');transcript.setAttribute('aria-label',t('Conversation'));transcript.hidden=true;
     const inline=node('div',undefined,'chat-approvals');inline.dataset.chatApprovals='';stage.append(welcome,transcript,inline);
     const selectors=node('div',undefined,'chat-selectors'),compose=node('div',undefined,'chat-compose'),message=node('textarea'),attachmentList=node('div',undefined,'chat-attachments');
-    message.placeholder=t('Write a message...');message.setAttribute('aria-label',t('Message'));message.value=chatDraft;message.oninput=()=>{chatDraft=message.value;};
+    selectors.hidden=true;selectors.style.display='none';// Hidden: replaced by inline model chip + flat provider pills
+    message.placeholder=t('Ask');message.setAttribute('aria-label',t('Message'));message.value=chatDraft;message.oninput=()=>{chatDraft=message.value;};
     let running=false,starting=false;
     // Technical notices (errors, stops, validation) are thread messages from CROT, never text under the composer.
     let notice;function paintNotice(){for(const stale of transcript.querySelectorAll('.chat-system'))stale.remove();if(!notice){if(!transcript.children.length&&!chatPast.length&&!chatCurrent.length){transcript.hidden=true;welcome.hidden=false;}return;}const part=node('article',undefined,'chat-message chat-system chat-system-'+notice.kind);part.dataset.chatNotice=notice.kind;part.setAttribute('role',notice.kind==='error'?'alert':'status');const head=node('span',undefined,'chat-message-author');head.append(icon(notice.kind==='error'?'alert':'info'),node('span','CROT system message'));part.append(head,node('div',notice.value,'chat-message-text'));if(notice.detail){const detail=node('div',undefined,'chat-system-detail');detail.dataset.noI18n='';detail.textContent=notice.detail;part.append(detail);}transcript.append(part);welcome.hidden=true;transcript.hidden=false;transcript.scrollTop=transcript.scrollHeight;}
@@ -341,6 +342,12 @@ export const CONTROL_CENTER_RENDERER =
     const fresh=button('New chat',async()=>{if(running||starting)return;const old=chatThread;chatPast=[];chatCurrent=[];chatId=undefined;chatThread=undefined;last='';notice=undefined;clear(transcript);transcript.hidden=true;welcome.hidden=false;sendState();if(old)try{await rpc('chat.reset',{thread:old});}catch{}message.focus();},'chat-new');fresh.id='chat-new';fresh.prepend(icon('plus'));
     if(project){const chip=node('span',undefined,'chat-project');chip.title=t('The assistant can read files of this project');const name=node('span',project.name);name.dataset.noI18n='';chip.append(icon('Files'),name);thread.append(chip);}thread.append(fresh);
     const shortcut=node('span','Enter — send','chat-shortcut');message.onkeydown=e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();if(!send.disabled)send.click();}};
+    // Inline model chip (Auto / model name) — lives inside compose bar, right of center
+    const modelChip=button('Auto',()=>{},'chat-model-chip');
+    function updateModelChip(){const label=chatModel&&chatModel.length<=20?chatModel:(chatModel?chatModel.slice(0,16)+'…':'Auto');const chevSvg=document.createElementNS('http://www.w3.org/2000/svg','svg');for(const[k,v]of Object.entries({viewBox:'0 0 24 24',width:'11',height:'11',fill:'none',stroke:'currentColor','stroke-width':'2.2','stroke-linecap':'round','stroke-linejoin':'round','aria-hidden':'true'}))chevSvg.setAttribute(k,v);const chevPath=document.createElementNS(chevSvg.namespaceURI,'polyline');chevPath.setAttribute('points','6 9 12 15 18 9');chevSvg.append(chevPath);clear(modelChip);modelChip.append(node('span',label),chevSvg);modelChip.dataset.noI18n='';}
+    updateModelChip();
+    // Click: open active provider's model popover (reuse existing pop if available)
+    modelChip.onclick=()=>{const activePill=agents.querySelector('.chat-agent-pill[aria-pressed=true]');if(activePill)activePill.click();};
     function sendState(){clear(send);send.append(icon(running?'square':'send'));const label=t(running?'Stop generation':'Send message');send.setAttribute('aria-label',label);send.title=label;send.dataset.running=String(running);fresh.disabled=running||starting;// Show "Generating..." indicator in last assistant block when running
       const thinkEl=$('chat-thinking-indicator');if(running){if(!thinkEl){const ind=node('div',undefined,'chat-thinking-indicator chat-message chat-assistant');ind.id='chat-thinking-indicator';const dot=node('span','Generating…','chat-thinking-text');ind.append(dot);transcript.append(ind);transcript.scrollTop=transcript.scrollHeight;}}else{if(thinkEl)thinkEl.remove();}const hasContent=running||message.value.trim().length>0||chatAttachments.length>0;send.classList.toggle('chat-send-ready',hasContent);}
     message.oninput=()=>sendState();
@@ -351,21 +358,22 @@ export const CONTROL_CENTER_RENDERER =
     async function refreshChatBrowser(){try{const [l,p]=await Promise.all([rpc('browser.link.status'),rpc('browser.policy.get')]);if(!root.isConnected)return;browserConnected=l.link?.state==='connected';browserAllowed=p.access?.read===true;}catch{browserConnected=false;browserAllowed=false;}if(root.isConnected)showChatBrowser();}
     // Keep browserAccess hidden in DOM so E2E tests can find .chat-browser-toggle
     browserAccess.hidden=true;browserAccess.style.display='none';
-    const composeActions=node('div',undefined,'chat-compose-actions'),left=node('div',undefined,'chat-compose-left'),right=node('div',undefined,'chat-send-actions');left.append(plusBtn,plusPop,browserAccess);right.append(shortcut,send);composeActions.append(left,right);compose.append(message,picker,attachmentList,composeActions);
+    const composeActions=node('div',undefined,'chat-compose-actions'),left=node('div',undefined,'chat-compose-left'),right=node('div',undefined,'chat-send-actions');left.append(plusBtn,plusPop,browserAccess);right.append(shortcut,modelChip,send);composeActions.append(left,right);compose.append(message,picker,attachmentList,composeActions);
     // Extract a human-readable display name from a provider config (Custom API → domain label or displayName)
     const customFamily=p=>/^(Custom API|OpenAI-compatible)(:|$)/.test(p.provider);
     function providerDisplayName(p){if(p.displayName)return p.displayName;if(customFamily(p)&&p.endpoint){try{const h=new URL(p.endpoint).hostname.replace(/^api\./,'').replace(/^www\./,'').split('.')[0];return h.charAt(0).toUpperCase()+h.slice(1);}catch{}}if(p.provider==='Anthropic')return 'Claude';if(p.provider==='Google Gemini')return 'Gemini';if(p.provider==='OpenCode (Free & Zen)')return 'OpenCode';return p.provider;}
     function providerBrand(p){if(p.provider==='Anthropic')return 'Claude';if(p.provider==='Google Gemini')return 'Gemini';if(customFamily(p)&&p.displayName)return p.displayName;if(customFamily(p)&&p.endpoint){try{const h=new URL(p.endpoint).hostname.replace(/^api\./,'').replace(/^www\./,'').split('.')[0];return h.charAt(0).toUpperCase()+h.slice(1);}catch{}}return p.provider;}
-    const agents=node('div',undefined,'chat-agents'),pills=node('div',undefined,'chat-agent-pills');agents.append(node('span','Agents:','chat-agent-label'),pills);
+    const agents=node('div',undefined,'chat-agents'),pills=node('div',undefined,'chat-agent-pills');agents.append(pills);// No "Agents:" label — flat provider list
     // Disconnect a provider: remove from models list and refresh
     async function disconnectProvider(provider){try{await rpc('chat.remove',{provider});}catch{}models=models.filter(m=>m.provider!==provider);if(chatProvider===provider){chatProvider=models[0]?.provider||'';chatModel=models[0]?.id||'';}modelMenus();}
     function modelMenus(){showChatBrowser();clear(pills);for(const stale of agents.querySelectorAll('.chat-model-pop'))stale.remove();// One compact pill per connected provider.
       const byProvider=new Map();for(const m of models){if(!byProvider.has(m.provider))byProvider.set(m.provider,[]);byProvider.get(m.provider).push(m);}
       for(const [provider,provModels]of byProvider){const isActive=provider===chatProvider;const pCfg=provModels[0]?._pCfg||{provider};const displayName=providerDisplayName(pCfg);const brand=providerBrand(pCfg);const activeModel=isActive?chatModel:provModels[0]?.id||'';
         const pill=node('button',undefined,'chat-agent-pill');pill.type='button';pill.setAttribute('aria-pressed',String(isActive));pill.title=displayName+(activeModel?' · '+activeModel:'');
-        pill.append(groupIcon(brand,'agents'));pill.append(node('span',displayName));
-        if(activeModel){const ms=node('span',activeModel,'chat-pill-model');ms.dataset.noI18n='';pill.append(ms);}
-        if(isActive)pill.append(node('span','','chat-online'));
+        const pillIcon=groupIcon(brand,'agents');if(pillIcon){pillIcon.setAttribute('width','16');pillIcon.setAttribute('height','16');}
+        pill.append(pillIcon||node('span',displayName.charAt(0),'chat-pill-letter'));
+        const pillName=node('span',displayName,'chat-pill-name');pillName.dataset.noI18n='';pill.append(pillName);
+        const dot=node('span','','chat-online');pill.append(dot);
         // Model popover (opens upward)
         const pop=node('dialog',undefined,'chat-popover chat-model-pop');pop.setAttribute('role','listbox');pop.setAttribute('aria-label',t('Choose model'));
         const showPop=()=>{if(pop.open){pop.close();return;}// Drop-up inside the chat footer: CSS anchors bottom:calc(100% + 8px) to .chat-agents.
@@ -374,8 +382,11 @@ export const CONTROL_CENTER_RENDERER =
         // Disconnect item at bottom of popover
         const disconnectBtn=node('button','⊘ '+t('Disconnect provider'),'chat-model-pop-disconnect');disconnectBtn.onclick=e=>{e.stopPropagation();pop.close();void disconnectProvider(provider);};pop.append(disconnectBtn);
         pill.onclick=()=>{if(!isActive){chatProvider=provider;if(!provModels.some(m=>m.id===chatModel))chatModel=provModels[0]?.id||'';modelMenus();}else showPop();};
+        // Separator between providers
+        if(pills.children.length>0){const sep=node('span','|','chat-pill-sep');pills.append(sep);}
         pills.append(pill);}
-      if(!models.length)pills.append(node('p','Configure a provider in Agents & Tokens to start.','chat-menu-note'));}
+      if(!models.length)pills.append(node('p','Configure a provider in Agents & Tokens to start.','chat-menu-note'));
+      updateModelChip();}
     let polling=false,last='';async function poll(){if(!root.isConnected||polling)return;approvals(inline);inline.hidden=!view.cards.length;if(!chatId)return;polling=true;try{const r=await rpc('chat.poll',{id:chatId});if(!root.isConnected)return;const signature=JSON.stringify(r);if(signature!==last){last=signature;const nearEnd=transcript.scrollHeight-transcript.scrollTop-transcript.clientHeight<90;chatCurrent=r.blocks;clear(transcript);for(const b of [...chatPast,...chatCurrent]){const part=node(b.type==='tool'?'details':'article',undefined,'chat-message chat-'+b.type);if(b.type==='tool'){const summary=node('summary');summary.append(icon('Connectors'),node('span',b.name||'Tool call'),badge(b.status,b.status==='completed'));part.append(summary,pre(b.text));}else{const msgAuthor=node('span',b.type==='user'?'You':'Assistant','chat-message-author');const copyBtn=node('button',undefined,'chat-copy-btn');copyBtn.type='button';copyBtn.setAttribute('aria-label',t('Copy message'));
           // Clipboard SVG icon (standard copy icon)
           const copySvg=document.createElementNS('http://www.w3.org/2000/svg','svg');for(const[k,v]of Object.entries({viewBox:'0 0 24 24',width:'14',height:'14',fill:'none',stroke:'currentColor','stroke-width':'1.75','stroke-linecap':'round','stroke-linejoin':'round','aria-hidden':'true'}))copySvg.setAttribute(k,v);const copyRect=document.createElementNS(copySvg.namespaceURI,'rect');copyRect.setAttribute('x','9');copyRect.setAttribute('y','9');copyRect.setAttribute('width','13');copyRect.setAttribute('height','13');copyRect.setAttribute('rx','2');const copyPath=document.createElementNS(copySvg.namespaceURI,'path');copyPath.setAttribute('d','M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1');copySvg.append(copyRect,copyPath);copyBtn.append(copySvg);
