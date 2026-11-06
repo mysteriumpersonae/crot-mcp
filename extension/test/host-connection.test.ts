@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { BROWSER_COMMANDS, type BrowserCommand } from "../../src/core/capabilities/browser/connection.js";
 import {
+  BRIDGE_FEATURES,
   BRIDGE_PROTOCOL_VERSION,
   CHUNK_DATA_UNITS,
   MAX_BROWSER_TO_HOST_FRAME_BYTES,
@@ -11,7 +12,8 @@ import {
 import type { CommandHandler, CommandHandlers } from "../src/commands.js";
 import { ExtensionError } from "../src/errors.js";
 import { HostConnection, NATIVE_HOST_NAME, fitResponse, type HostConnectionOptions } from "../src/host-connection.js";
-import { FakeRuntime, flush, type FakePort } from "./fake-chrome.js";
+import type { LoopbackLink } from "../src/loopback.js";
+import { FakePort, FakeRuntime, flush } from "./fake-chrome.js";
 
 const BROWSER = { name: "Google Chrome", version: "130.0.6723.92", extensionVersion: "0.1.0" };
 const WELCOME = { type: "welcome", protocol: BRIDGE_PROTOCOL_VERSION };
@@ -95,7 +97,7 @@ describe("HostConnection", () => {
     expect(runtime.hosts).toEqual([NATIVE_HOST_NAME]);
     expect(connection.state).toBe("connecting");
     expect(received(runtime.lastPort)).toEqual([
-      { type: "hello", protocol: BRIDGE_PROTOCOL_VERSION, browser: BROWSER },
+      { type: "hello", protocol: BRIDGE_PROTOCOL_VERSION, browser: BROWSER, features: [...BRIDGE_FEATURES] },
     ]);
     runtime.lastPort.deliver(WELCOME);
     expect(connection.state).toBe("connected");
@@ -310,5 +312,134 @@ describe("HostConnection connectionId (AD-9)", () => {
     connection.ensureConnected();
     runtime.lastPort.deliver({ ...WELCOME, connectionId: "not hex!" });
     expect(connection.state).not.toBe("connected");
+  });
+});
+
+describe("HostConnection features (welcome)", () => {
+  const TABS_CHANGED = { type: "browser_notice", event: "tabs_changed" };
+
+  it("sends coalesced tabs_changed notices only to a host that announced tabs-changed", async () => {
+    const { runtime, connection } = setup();
+    connection.ensureConnected();
+    const port = runtime.lastPort;
+    connection.tabsChanged();
+    port.deliver({ ...WELCOME, features: ["tabs-changed"] });
+    connection.tabsChanged();
+    connection.tabsChanged();
+    connection.tabsChanged();
+    await sleep(320);
+    expect(received(port).filter((m) => m.type === "browser_notice")).toEqual([TABS_CHANGED]);
+  });
+
+  it("sends no tabs_changed notice to a host without the feature", async () => {
+    const { connection, port } = connect();
+    connection.tabsChanged();
+    await sleep(320);
+    expect(received(port).some((m) => m.type === "browser_notice")).toBe(false);
+  });
+
+  it("opens the extension page for ui_manage at most once per interval", () => {
+    let opened = 0;
+    const { port, connection } = connect({ onManage: () => opened++ });
+    port.deliver({ type: "ui_manage", id: "m1" });
+    port.deliver({ type: "ui_manage", id: "m2" });
+    expect(opened).toBe(1);
+    expect(connection.state).toBe("connected");
+  });
+
+  it("refuses ui_manage before welcome", () => {
+    let opened = 0;
+    const { runtime, connection } = setup({ onManage: () => opened++ });
+    connection.ensureConnected();
+    runtime.lastPort.deliver({ type: "ui_manage", id: "m1" });
+    expect(opened).toBe(0);
+    expect(runtime.lastPort.disconnected).toBe(true);
+  });
+});
+
+/** A LoopbackLink stand-in: each open() resolves with the next queued port (undefined: no CROT Desktop). */
+function fakeLoopback(runtime: FakeRuntime, ports: (FakePort | undefined)[], options: { waiting?: boolean } = {}) {
+  const fake = {
+    opened: 0,
+    waiting: options.waiting ?? false,
+    retryMs: 5 as number | undefined,
+    open: async () => {
+      fake.opened++;
+      return ports.shift();
+    },
+  };
+  return { fake, link: fake as unknown as LoopbackLink, port: () => new FakePort(runtime) };
+}
+
+describe("HostConnection loopback fallback", () => {
+  it("connects over loopback when the native host is not installed", async () => {
+    const runtime = new FakeRuntime();
+    runtime.failConnect = true;
+    const loopbackPort = new FakePort(runtime);
+    const { fake, link } = fakeLoopback(runtime, [loopbackPort]);
+    const { connection } = setup({ runtime, loopback: link });
+    connection.ensureConnected();
+    expect(connection.state).toBe("connecting");
+    await flush();
+    expect(fake.opened).toBe(1);
+    expect(received(loopbackPort)[0]).toMatchObject({ type: "hello", features: [...BRIDGE_FEATURES] });
+    loopbackPort.deliver(WELCOME);
+    expect(connection.state).toBe("connected");
+    expect(connection.transport).toBe("loopback");
+    connection.ensureConnected();
+    expect(fake.opened).toBe(1);
+  });
+
+  it("falls back to loopback when the native host exits before welcome", async () => {
+    const runtime = new FakeRuntime();
+    const loopbackPort = new FakePort(runtime);
+    const { fake, link } = fakeLoopback(runtime, [loopbackPort]);
+    const { connection } = setup({ runtime, loopback: link });
+    connection.ensureConnected();
+    expect(runtime.hosts).toEqual([NATIVE_HOST_NAME]);
+    runtime.lastPort.hostDisconnect("Specified native messaging host not found.");
+    await flush();
+    expect(fake.opened).toBe(1);
+    loopbackPort.deliver(WELCOME);
+    expect(connection.transport).toBe("loopback");
+  });
+
+  it("keeps native messaging first and retries both channels while CROT Desktop is absent", async () => {
+    const runtime = new FakeRuntime();
+    runtime.failConnect = true;
+    const { fake, link } = fakeLoopback(runtime, []);
+    const { connection } = setup({ runtime, loopback: link });
+    connection.ensureConnected();
+    await sleep(40);
+    expect(fake.opened).toBeGreaterThanOrEqual(2);
+    expect(runtime.hosts.length).toBeGreaterThanOrEqual(2);
+    expect(connection.state).not.toBe("connected");
+  });
+
+  it("polls a pairing request without restarting the native host", async () => {
+    const runtime = new FakeRuntime();
+    const { fake, link } = fakeLoopback(runtime, [], { waiting: true });
+    const { connection } = setup({ runtime, loopback: link });
+    connection.ensureConnected();
+    await sleep(30);
+    expect(runtime.hosts).toEqual([]);
+    expect(fake.opened).toBeGreaterThanOrEqual(2);
+    connection.stop();
+    const opened = fake.opened;
+    await sleep(20);
+    expect(fake.opened).toBe(opened);
+  });
+
+  it("drops a loopback port that arrives after stop()", async () => {
+    const runtime = new FakeRuntime();
+    runtime.failConnect = true;
+    const loopbackPort = new FakePort(runtime);
+    const { link } = fakeLoopback(runtime, [loopbackPort]);
+    const { connection } = setup({ runtime, loopback: link });
+    connection.ensureConnected();
+    connection.stop();
+    await flush();
+    expect(loopbackPort.disconnected).toBe(true);
+    expect(loopbackPort.sent).toEqual([]);
   });
 });

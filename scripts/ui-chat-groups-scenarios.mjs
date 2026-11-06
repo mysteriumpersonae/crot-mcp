@@ -27,7 +27,7 @@ export async function runChatGroupScenarios({ evaluate, until, size, screenshot,
       if(name==='chat.providers')return {ok:true,providers:[{provider:'Local HTTP',configured:true,connectionStatus:'connected'}]};
       if(name==='chat.models')return {ok:true,models:['fixture-model']};
       if(name==='chat.start'){window.groupMessage=input.message;return {ok:true,id:'group-message'};}
-      if(name==='chat.poll')return {ok:true,blocks:[{type:'user',text:window.groupMessage},{type:'assistant',text:'Fixture response'}],state:'completed'};
+      if(name==='chat.poll')return window.groupFailure?{ok:true,blocks:[{type:'user',text:window.groupMessage}],state:'failed',error:'Provider refused the request.',errorDetail:'HTTP 402: fixture detail'}:{ok:true,blocks:[{type:'user',text:window.groupMessage},{type:'assistant',text:'Fixture response'}],state:'completed'};
       return original(name,input);
     };
     document.getElementById('nav-chat').click();
@@ -124,6 +124,19 @@ export async function runChatGroupScenarios({ evaluate, until, size, screenshot,
     ),
     "Selected platform/skill context was lost or tools silently enabled",
   );
+  // Technical failures are CROT messages inside the thread, never orange text under the composer.
+  await evaluate(
+    "window.groupFailure=true;(()=>{const m=document.querySelector('.chat-compose textarea');m.value='Failure fixture';m.dispatchEvent(new Event('input'));document.querySelector('.chat-send').click();})()",
+  );
+  await until("document.querySelector('.chat-transcript .chat-system[data-chat-notice=error]')");
+  assert(
+    await evaluate(
+      "(()=>{const t=document.querySelector('.chat-transcript'),n=t.querySelector('.chat-system[data-chat-notice=error]');return !document.querySelector('.chat-status')&&!document.querySelector('.chat-compose .chat-system')&&n===t.lastElementChild&&n.textContent.includes('Provider refused the request.')&&n.querySelector('.chat-system-detail')?.textContent==='HTTP 402: fixture detail';})()",
+    ),
+    "Chat failure is not shown as a CROT message in the thread",
+  );
+  await screenshot("chat-system-notice");
+  await evaluate("window.groupFailure=false");
   await open("skills");
   await evaluate("document.querySelector('#chat-menu-skills .chat-add').click()");
   await until("document.querySelector('#action-dialog[open]')?.textContent.includes('Skill name')");

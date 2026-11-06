@@ -57,7 +57,7 @@ const fixture = {
     { title: "Cloud tunnel", value: "Local mode", ready: false },
   ],
 };
-const shim = `window.fixture=${JSON.stringify(fixture)};window.actions=[];window.crot={${authentication.shim}product:async(name,input={})=>{window.actions.push([name,input]);const p={id:'fixture-project',name:'project',path:'/workspace/project',favorite:false,tools:[],agents:[],connectors:[]};return {ok:true,...(name==='accounts.list'?{accounts:['youtube','tiktok','x','github','notion'].map(provider=>({provider,state:'disconnected'})),pending:[]}:name==='projects.list'?{projects:[p],active:p.id}:name==='connectors.list'?{connectors:[]}:name==='mcpServers.list'?{servers:[]}:name==='agents.list'?{agents:[],calls:[]}:name==='tasks.list'?{tasks:[]}:name==='monitoring.queryAudit'?{events:[]}:name==='monitoring.metrics'?{tasks:{running:0,total:0},workspace:p.id,connectedServers:0}:{})}},tool:async(name,input)=>{window.actions.push([name,input]);return {content:[{type:"text",text:JSON.stringify(name==="fs_list_directory"?{entries:[{path:"README.md",type:"file"}]}:name==="fs_stat"?{exists:true,type:"directory"}:name==="fs_read_file"?{content:"# Test project"}:name==="browser_tabs_list"?{tabs:[{id:42,title:"Test tab",url:"https://example.test"}]}:{ok:true})}]}},repairL1:async()=>{window.actions.push(["repair-l1"]);return {ok:true,available:false}},onView(fn){window.render=fn},ready(){window.render(window.fixture)},decide:async(...args)=>{window.actions.push(args);return true},action:async(...args)=>{window.actions.push(args);return true}};window.chrome={runtime:{getURL:p=>'/extension/'+p,sendMessage:async(m)=>{window.actions.push(['extension',m.type]);return m.type==='crot.ui.openApp'?{ok:true}:{connection:'disconnected'}}},tabs:{create:async(o)=>{window.actions.push(['tab',o.url]);return o},query:async()=>[{status:'complete',windowId:1,groupId:-1}]},tabGroups:{query:async()=>[]}};`;
+const shim = `window.fixture=${JSON.stringify(fixture)};window.actions=[];window.browserPolicy={mode:'targeted',domains:['reddit.com'],blockedDomains:['bank.com','binance.com'],sensitivePreset:false,activeTab:true};window.browserLink={state:'connected',browser:{name:'Google Chrome',version:'140',extensionVersion:'1.0.0'},transport:'native',cdp:true,manage:true,tabsRevision:1,loopback:{port:43115,conflicts:[],pending:[],pairings:[]}};window.crot={${authentication.shim}product:async(name,input={})=>{window.actions.push([name,input]);const p={id:'fixture-project',name:'project',path:'/workspace/project',favorite:false,tools:[],agents:[],connectors:[]};return {ok:true,...(name==='accounts.list'?{accounts:['youtube','tiktok','x','github','notion'].map(provider=>({provider,state:'disconnected'})),pending:[]}:name==='projects.list'?{projects:[p],active:p.id}:name==='connectors.list'?{connectors:[]}:name==='mcpServers.list'?{servers:[]}:name==='agents.list'?{agents:[],calls:[]}:name==='tasks.list'?{tasks:[]}:name==='monitoring.queryAudit'?{events:[]}:name==='monitoring.metrics'?{tasks:{running:0,total:0},workspace:p.id,connectedServers:0}:name==='browser.policy.get'?{policy:window.browserPolicy}:name==='browser.policy.set'?(window.browserPolicy=input,{policy:input}):name==='browser.link.status'||name==='browser.link.approve'||name==='browser.link.reject'?{link:window.browserLink}:{})}},tool:async(name,input)=>{window.actions.push([name,input]);return {content:[{type:"text",text:JSON.stringify(name==="fs_list_directory"?{entries:[{path:"README.md",type:"file"}]}:name==="fs_stat"?{exists:true,type:"directory"}:name==="fs_read_file"?{content:"# Test project"}:name==="browser_tabs_list"?{tabs:[{tabId:42,windowId:1,title:"Test tab",url:"https://example.test/",active:true,groupedByCrot:false},{tabId:43,windowId:1,title:"CROT research",url:"https://reddit.com/r/programming",active:false,groupedByCrot:true}]}:{ok:true})}]}},repairL1:async()=>{window.actions.push(["repair-l1"]);return {ok:true,available:false}},onView(fn){window.render=fn},ready(){window.render(window.fixture)},decide:async(...args)=>{window.actions.push(args);return true},action:async(...args)=>{window.actions.push(args);return true}};window.chrome={runtime:{getURL:p=>'/extension/'+p,sendMessage:async(m)=>{window.actions.push(['extension',m.type]);return m.type==='crot.ui.openApp'?{ok:true}:{connection:'disconnected'}}},tabs:{create:async(o)=>{window.actions.push(['tab',o.url]);return o},query:async()=>[{status:'complete',windowId:1,groupId:-1}]},tabGroups:{query:async()=>[]}};`;
 const inject = (html) => html.replace("<head>", '<head><script src="/ui-fixture.js"></script>');
 let origin;
 const downloads = new ReleaseDownloads({ origin: "https://relay-staging.crot.network" });
@@ -308,11 +308,50 @@ try {
           }
           await evaluate("document.querySelector('[data-project-tab=Overview]').click()");
         }
-        if (section === "Browser")
+        if (section === "Browser") {
+          // The mockup: no context tools row and no legacy policy form; status card, three policy cards and tabs.
           assert(
-            await evaluate("document.querySelectorAll('#browser-workspace>.panel').length===3"),
-            "browser must have three columns",
+            await evaluate(
+              "!document.querySelector('#page .context-tools')&&!document.querySelector('select[aria-label=\"Tab mode\"]')&&document.querySelectorAll('#browser-page>.browser-card').length===4",
+            ),
+            "browser screen must follow the mockup without tool row or legacy form",
           );
+          await until(
+            "document.getElementById('browser-status').dataset.state==='connected'&&document.querySelectorAll('#browser-tabs .browser-tab').length===2&&!document.querySelector('#browser-page input[role=switch]:disabled')",
+          );
+          const expected =
+            lang === "ru"
+              ? [
+                  "Браузер",
+                  "CROT Extension — Подключено и активно",
+                  "Управление расширением ↗",
+                  "Область действия (Tabs Control)",
+                ]
+              : [
+                  "Browser",
+                  "CROT Extension — Connected and active",
+                  "Manage extension ↗",
+                  "Scope of action (Tabs Control)",
+                ];
+          assert(
+            await evaluate(
+              `(()=>{const t=document.getElementById('browser-page').innerText;return ${JSON.stringify(expected)}.every(x=>t.includes(x))})()`,
+            ),
+            "browser screen text missing in " + lang,
+          );
+          assert(
+            await evaluate(
+              "JSON.stringify([...document.querySelectorAll('#browser-page input[role=switch]')].map(i=>[i.dataset.switch,i.checked]))===JSON.stringify([['active',true],['background',false],['targeted',true],['sessions',true],['automation',true]])",
+            ),
+            "browser switches must reflect the saved policy",
+          );
+          assert(
+            await evaluate(
+              "document.querySelector('#browser-page input[aria-label]:not([role])').value==='reddit.com'&&document.querySelector('#browser-page textarea').value==='bank.com\\nbinance.com'",
+            ),
+            "browser domains must reflect the saved policy",
+          );
+        }
         if (section === "Settings") {
           assert(
             await evaluate("document.querySelectorAll('[data-setting]').length===12"),
@@ -371,6 +410,87 @@ try {
           await screenshot(slug + "-" + lang);
       }
     }
+    // Browser screen: interlocked tab modes with autosave, then Scenario A (waiting, pairing, connected).
+    await evaluate("window.CrotI18n.setLanguage('en')");
+    await route("Browser");
+    await until(
+      "document.getElementById('browser-status').dataset.state==='connected'&&!document.querySelector('#browser-page input[role=switch]:disabled')",
+    );
+    const browserSwitch = (key) => evaluate(`document.querySelector('#browser-page [data-switch=${key}]').click()`);
+    const lastPolicy = "actions.filter(a=>a[0]==='browser.policy.set').at(-1)?.[1]";
+    await browserSwitch("background");
+    await until(`${lastPolicy}?.mode==='background'`);
+    assert(
+      await evaluate("['active','targeted'].every(k=>!document.querySelector('[data-switch='+k+']').checked)"),
+      "background search must turn the active-tab and target modes off",
+    );
+    await browserSwitch("background");
+    assert(
+      await evaluate("document.querySelector('[data-switch=background]').checked"),
+      "the last tab mode must stay on",
+    );
+    await browserSwitch("active");
+    await until(`${lastPolicy}?.mode==='active'&&!document.querySelector('[data-switch=background]').checked`);
+    await browserSwitch("targeted");
+    await until(`${lastPolicy}?.mode==='targeted'&&${lastPolicy}?.activeTab===true`);
+    await evaluate(
+      "(()=>{const i=document.querySelector('#browser-page input[aria-label]:not([role])');i.value='https://www.Example.com/path, news.ycombinator.com';i.dispatchEvent(new Event('input',{bubbles:true}));})()",
+    );
+    await until(`JSON.stringify(${lastPolicy}?.domains)==='["example.com","news.ycombinator.com"]'`);
+    await browserSwitch("automation");
+    await until(`${lastPolicy}?.automation===false`);
+    await browserSwitch("sessions");
+    await until(`${lastPolicy}?.sensitivePreset===true&&${lastPolicy}?.automation===false`);
+    assert(
+      await evaluate("document.getElementById('browser-saved').textContent.includes('Saved')"),
+      "autosave must be confirmed by a compact notice",
+    );
+    await screenshot("browser-autosave");
+    await evaluate(
+      "window.browserPolicy={mode:'targeted',domains:['reddit.com'],blockedDomains:['bank.com','binance.com'],sensitivePreset:false,activeTab:true};window.browserLink={state:'waiting',tabsRevision:1,loopback:{port:43115,conflicts:[],pending:[],pairings:[]}}",
+    );
+    await until(
+      "document.getElementById('browser-status').dataset.state==='waiting'&&document.querySelector('#browser-tabs .empty')",
+    );
+    assert(
+      await evaluate(
+        "(()=>{const t=document.getElementById('browser-status').innerText;return t.includes('CROT Extension — Waiting for connection')&&t.includes('Install extension ↗')&&t.includes('Check connection')})()",
+      ),
+      "waiting status card must offer installation and a connection check",
+    );
+    await screenshot("browser-waiting-en");
+    await evaluate("window.CrotI18n.setLanguage('ru')");
+    await until(
+      "document.getElementById('browser-status').innerText.includes('CROT Extension — Ожидается подключение')&&document.getElementById('browser-status').innerText.includes('Установить расширение ↗')",
+    );
+    await screenshot("browser-waiting-ru");
+    await size(1280, 1800);
+    await screenshot("browser-waiting-ru-full");
+    await size(1280, 820);
+    await evaluate("window.CrotI18n.setLanguage('en')");
+    await evaluate(
+      "[...document.querySelectorAll('#browser-status button')].find(b=>b.textContent==='Install extension ↗').click()",
+    );
+    await until(
+      "document.getElementById('action-dialog').open&&document.querySelector('#action-dialog a[href=\"https://crot.network/#download\"][target=_blank]')",
+    );
+    await evaluate("document.getElementById('action-dialog').close()");
+    await evaluate(
+      "window.browserLink={state:'waiting',tabsRevision:1,loopback:{port:43115,conflicts:[],pending:[{id:'0123456789abcdef0123456789abcdef',code:'123456',browser:{name:'Google Chrome',version:'140',extensionVersion:'1.0.0'},expiresAt:Date.now()+60000}],pairings:[]}}",
+    );
+    await until(
+      "document.getElementById('browser-status').dataset.state==='pairing'&&document.querySelector('#browser-status .browser-code')?.textContent==='123 456'",
+    );
+    await screenshot("browser-pairing");
+    await evaluate(
+      "window.browserLink={state:'connected',browser:{name:'Google Chrome',version:'140',extensionVersion:'1.0.0'},transport:'loopback',cdp:true,manage:true,tabsRevision:2,loopback:{port:43115,conflicts:[],pending:[],pairings:[{id:'0123456789abcdef0123456789abcdef',browser:{name:'Google Chrome',version:'140',extensionVersion:'1.0.0'},created:Date.now(),connected:true}]}}",
+    );
+    await evaluate(
+      "[...document.querySelectorAll('#browser-status button')].find(b=>b.textContent==='Connect').click()",
+    );
+    await until(
+      "actions.some(a=>a[0]==='browser.link.approve'&&a[1].id==='0123456789abcdef0123456789abcdef')&&document.getElementById('browser-status').dataset.state==='connected'&&document.querySelectorAll('#browser-tabs .browser-tab').length===2",
+    );
     await click("nav-home");
     assert(
       await evaluate(
@@ -615,8 +735,8 @@ try {
       "popup account target missing",
     );
     assert(
-      await evaluate("actions.some(a=>a[0]==='tab'&&a[1]==='https://relay-staging.crot.network/download/linux')"),
-      "installer button must target the real absolute OS download route",
+      await evaluate("actions.some(a=>a[0]==='tab'&&a[1]==='https://crot.network/#download')"),
+      "Install CROT Desktop must open the product download page",
     );
     await screenshot("popup");
     await evaluate("window.CrotI18n.setLanguage('ru')");

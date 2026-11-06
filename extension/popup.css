@@ -51,6 +51,21 @@
 .popup #install.connected {
   visibility: hidden;
 }
+.popup .pair-code {
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.popup .desktops {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.popup #install button {
+  width: 100%;
+}
 .popup #error {
   font-size: 12px;
   margin: 8px 0 0;

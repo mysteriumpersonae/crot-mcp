@@ -23,7 +23,7 @@
       <section class="hero">
         <div class="hero-tag">
           <span class="dot"></span>
-          Расширение установлено · подключите десктоп
+          <span id="hero-tag-label">Расширение установлено · подключите десктоп</span>
         </div>
 
         <div class="mascot-wrap">
@@ -37,6 +37,15 @@
         </p>
 
         <div class="hero-actions">
+          <a
+            class="btn btn-primary btn-lg"
+            id="install-desktop"
+            href="https://crot.network/#download"
+            target="_blank"
+            rel="noopener"
+            hidden
+            >⬇ Установить CROT Desktop</a
+          >
           <button class="btn btn-primary btn-lg" id="open-app">🚀 Открыть CROT App</button>
           <button class="btn btn-ghost btn-lg" id="refresh-status">↻ Проверить подключение</button>
         </div>
@@ -44,6 +53,11 @@
         <div class="status-bar">
           <span class="status-dot checking" id="status-dot"></span>
           <span id="status-label">Проверка подключения к десктопу…</span>
+        </div>
+        <div class="link-box" id="link-box" hidden>
+          <p id="link-note"></p>
+          <p class="pair-code" id="pair-code" hidden></p>
+          <div class="link-actions" id="link-actions"></div>
         </div>
       </section>
 
@@ -59,7 +73,10 @@
           <div class="step-card">
             <div class="step-num">02</div>
             <h3>Запустите CROT</h3>
-            <p>Откройте приложение. «Локальный мост подключён» в статусе подтвердит готовность.</p>
+            <p>
+              Откройте приложение — расширение найдёт его само, без копирования токенов. Статус «CROT Ready» подтвердит
+              готовность.
+            </p>
           </div>
           <div class="step-card">
             <div class="step-num">03</div>

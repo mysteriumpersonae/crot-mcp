@@ -1,6 +1,10 @@
 import { bridgeTokenFile } from "../browser-bridge/endpoint.js";
+import { LOOPBACK_PORTS, LoopbackServer, browserPairingsFile } from "../browser-bridge/loopback.js";
 import { BrowserBridge, type BrowserBridgeOptions } from "../browser-bridge/server.js";
+import { CORE_VERSION } from "../core/crot-core.js";
 import type { PrivateFileProtection } from "../core/platform/types.js";
+import type { BrowserLinkHost } from "../service/product-runtime.js";
+import { RELEASE_EXTENSION_ORIGINS } from "./release-extension-ids.js";
 
 /**
  * Host-side wiring of the browser bridge (ARCHITECTURE.md §16).
@@ -22,15 +26,29 @@ export interface BrowserWiringOptions {
   readonly log: (message: string) => void;
   /** Replace BrowserBridge.start (tests). */
   readonly start?: (options: BrowserBridgeOptions) => Promise<BrowserBridge>;
+  /** Ports of the loopback discovery endpoint (loopbackPorts()); undefined: no loopback endpoint. */
+  readonly loopbackPorts?: readonly number[] | undefined;
+}
+
+/**
+ * Ports of the loopback discovery endpoint from CROT_BROWSER_LOOPBACK_PORTS:
+ * unset: 43115-43119; "off": none; "0": a free port (tests); otherwise a comma-separated list.
+ */
+export function loopbackPorts(env: Readonly<Record<string, string | undefined>>): readonly number[] | undefined {
+  const raw = env.CROT_BROWSER_LOOPBACK_PORTS?.trim();
+  if (!raw) return LOOPBACK_PORTS;
+  if (raw === "off") return undefined;
+  const ports = raw.split(",").map((p) => Number(p.trim()));
+  return ports.length <= 8 && ports.every((p) => Number.isInteger(p) && p >= 0 && p <= 65535) ? ports : LOOPBACK_PORTS;
 }
 
 /**
  * Files that CROT tools may never touch when the browser bridge is enabled:
- * the bridge token file. The path is deterministic, so it is protected even
- * when the bridge fails to start (the file may still exist).
+ * the bridge token file and the loopback pairing metadata. The paths are
+ * deterministic, so they are protected even when the bridge fails to start.
  */
 export function browserProtectedPaths(enabled: boolean, stateDir: string): string[] {
-  return enabled ? [bridgeTokenFile(stateDir)] : [];
+  return enabled ? [bridgeTokenFile(stateDir), browserPairingsFile(stateDir)] : [];
 }
 
 /**
@@ -65,5 +83,71 @@ export async function startBrowserBridge(options: BrowserWiringOptions): Promise
   } else {
     options.log(`browser bridge: ${status.state} for the CROT Browser Extension on ${status.endpoint.path}`);
   }
+  // Discovery for browsers without the native host (only in the instance that owns the bridge).
+  if (options.loopbackPorts && bridge.owner) {
+    try {
+      bridge.attachLoopback(
+        await LoopbackServer.start({
+          bridge,
+          stateDir: options.stateDir,
+          privateFiles: options.privateFiles,
+          version: CORE_VERSION,
+          extensionOrigins: RELEASE_EXTENSION_ORIGINS.map((o) => o.replace(/\/$/, "")),
+          log: options.log,
+          ports: options.loopbackPorts,
+        }),
+      );
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      options.log(`warning: browser loopback discovery unavailable: ${detail}; native messaging still works`);
+    }
+  }
   return bridge;
+}
+
+/**
+ * The owner's view of the browser link on the Control Center Browser screen:
+ * the connection state (never the token or the endpoint path) and the loopback
+ * pairing requests and pairings the owner approves, rejects or forgets.
+ * Undefined while the bridge is turned off.
+ */
+export function browserLinkHost(bridge: BrowserBridge | undefined): BrowserLinkHost | undefined {
+  if (!bridge) return undefined;
+  return {
+    status() {
+      const state = bridge.state();
+      const loopback = bridge.loopbackEndpoint?.status();
+      return {
+        state: state.kind,
+        ...(state.kind === "connected"
+          ? {
+              browser: state.browser,
+              transport: state.transport ?? "native",
+              cdp: state.cdp?.available === true,
+              manage: (state.features ?? []).includes("ui-manage"),
+            }
+          : {}),
+        tabsRevision: bridge.tabsRevision,
+        ...(loopback
+          ? {
+              loopback: {
+                ...(loopback.port !== undefined ? { port: loopback.port } : {}),
+                conflicts: loopback.conflicts,
+                pending: loopback.pending.map(({ id, code, browser, expiresAt }) => ({ id, code, browser, expiresAt })),
+                pairings: loopback.pairings.map(({ id, browser, created, connected }) => ({
+                  id,
+                  browser,
+                  created,
+                  connected,
+                })),
+              },
+            }
+          : {}),
+      };
+    },
+    approve: async (id) => (await bridge.loopbackEndpoint?.approve(id)) === true,
+    reject: (id) => bridge.loopbackEndpoint?.reject(id) === true,
+    forget: async (id) => (await bridge.loopbackEndpoint?.forget(id)) === true,
+    manage: () => bridge.manageExtension(),
+  };
 }

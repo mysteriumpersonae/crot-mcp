@@ -146,8 +146,19 @@ interface Vault {
     }
   >;
 }
+/** The owner's browser link on the Browser screen: extension connection and loopback pairings (cli/browser.ts). */
+export interface BrowserLinkHost {
+  status(): Record<string, unknown>;
+  approve(id: string): Promise<boolean>;
+  reject(id: string): boolean;
+  forget(id: string): Promise<boolean>;
+  /** Ask the connected extension to open its management page; false when it cannot. */
+  manage(): boolean;
+}
 export interface ProductHost {
   stateDir: string;
+  /** Absent or undefined: the browser bridge is turned off (browser.enabled: false) or not started. */
+  browserLink?(): BrowserLinkHost | undefined;
   socialAccounts?: SocialAccountRuntime;
   /** Trusted composition lookup; unavailable until service initialization has completed. */
   publications?(): import("./publications/runtime.js").PublicationRuntime | undefined;
@@ -688,6 +699,8 @@ export class ProductRuntime {
       method === "projects.syncWorkspaceArtifacts" ||
       method === "projects.inspect" ||
       method === "security.status" ||
+      method === "browser.link.status" ||
+      method === "browser.link.manage" ||
       (method.startsWith("chat.") && method !== "chat.configure") ||
       method.startsWith("opencode.") ||
       method.startsWith("tokens.") ||
@@ -811,6 +824,27 @@ export class ProductRuntime {
     switch (method) {
       case "browser.policy.get":
         return { ok: true, policy: this.appliedTabPolicy ?? this.host.core().browser.getTabPolicy() };
+      case "browser.link.status":
+        return { ok: true, link: this.host.browserLink?.()?.status() ?? { state: "disabled" } };
+      case "browser.link.manage":
+        return { ok: this.host.browserLink?.()?.manage() === true };
+      case "browser.link.approve":
+      case "browser.link.reject":
+      case "browser.link.forget": {
+        const link = this.host.browserLink?.();
+        if (!link) return fail("The browser connection is turned off");
+        const pairing = String(p.id);
+        // Owner decisions about which browser may connect are audited before they take effect.
+        await this.event(method);
+        const done =
+          method === "browser.link.approve"
+            ? await link.approve(pairing)
+            : method === "browser.link.reject"
+              ? link.reject(pairing)
+              : await link.forget(pairing);
+        if (!done) return fail("This connection request is no longer available");
+        return { ok: true, link: link.status() };
+      }
       case "browser.policy.set": {
         const next = parseTabPolicy(p),
           previous = this.appliedTabPolicy ?? this.host.core().browser.getTabPolicy();
@@ -1654,6 +1688,7 @@ export class ProductRuntime {
       this.appliedTabPolicy &&
       operation.startsWith("browser.") &&
       !operation.startsWith("browser.policy.") &&
+      !operation.startsWith("browser.link.") &&
       JSON.stringify(this.host.core().browser.getTabPolicy()) !== JSON.stringify(this.appliedTabPolicy)
     )
       this.host.core().browser.setTabPolicy(this.appliedTabPolicy);

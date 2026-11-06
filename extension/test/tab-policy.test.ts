@@ -1,7 +1,12 @@
 import { it, expect } from "vitest";
 import { createCommandHandlers } from "../src/commands.js";
 import { FakeChrome } from "./fake-chrome.js";
-import { parseTabPolicy, tabPolicyAllows } from "../../src/core/capabilities/browser/tab-policy.js";
+import {
+  AUTOMATION_COMMANDS,
+  parseTabPolicy,
+  tabPolicyAllows,
+  tabPolicyAllowsAutomation,
+} from "../../src/core/capabilities/browser/tab-policy.js";
 const policy = { mode: "active", domains: [], blockedDomains: [], sensitivePreset: false };
 it("checks actual extension tabs, excludes background and blocks open/navigation destinations", async () => {
   const fake = new FakeChrome();
@@ -107,4 +112,56 @@ it("blocks screenshot, legacy page reads and input when the real frame inventory
   expect(fake.debugger.sent).toHaveLength(0);
   fake.frameUrls.set(1, []);
   await expect(handlers["tabs.resolve"]({ tabId: 1 })).rejects.toMatchObject({ code: "PUBLICATION_BYPASS_DENIED" });
+});
+
+it("targeted + active tab (tab-policy-v2): the owner's focused tab joins the target domains", async () => {
+  const fake = new FakeChrome();
+  fake.addTab({ id: 1, windowId: 1, active: true, url: "https://example.com" });
+  fake.addTab({ id: 2, windowId: 1, active: false, url: "https://target.test/a" });
+  fake.addTab({ id: 3, windowId: 1, active: false, url: "https://other.test" });
+  // Active in a background window, not the window the owner looks at.
+  fake.addTab({ id: 4, windowId: 2, active: true, url: "https://elsewhere.test" });
+  const h = createCommandHandlers(fake.api);
+  const both = { ...policy, mode: "targeted", domains: ["target.test"], activeTab: true };
+  expect(parseTabPolicy(both)).toEqual(both);
+  // activeTab only means something next to target domains; it is dropped elsewhere.
+  expect(parseTabPolicy({ ...policy, activeTab: true })).toEqual(policy);
+  const list = (await h["tabs.list"]({ __crotTabPolicy: both })) as { tabs: { tabId: number }[] };
+  expect(list.tabs.map((t) => t.tabId)).toEqual([1, 2]);
+  await expect(h["tabs.resolve"]({ tabId: 1, __crotTabPolicy: both })).resolves.toMatchObject({ tabId: 1 });
+  for (const tabId of [3, 4])
+    await expect(h["tabs.resolve"]({ tabId, __crotTabPolicy: both })).rejects.toMatchObject({
+      code: "BROWSER_PAGE_RESTRICTED",
+    });
+  const targetOnly = { ...both, activeTab: undefined };
+  await expect(h["tabs.resolve"]({ tabId: 1, __crotTabPolicy: targetOnly })).rejects.toMatchObject({
+    code: "BROWSER_PAGE_RESTRICTED",
+  });
+});
+
+it("automation off: no clicks or form input, reading and navigation stay available", async () => {
+  const fake = new FakeChrome();
+  fake.addTab({ id: 1, windowId: 1, active: true, url: "https://example.com" });
+  const h = createCommandHandlers(fake.api);
+  const off = parseTabPolicy({ ...policy, automation: false });
+  expect(off).toEqual({ ...policy, automation: false });
+  expect(parseTabPolicy({ ...policy, automation: true })).toEqual(policy);
+  expect(() => parseTabPolicy({ ...policy, automation: "no" })).toThrow("Invalid browser policy");
+  for (const [command, params] of [
+    ["page.click", { tabId: 1, selector: "button" }],
+    ["page.type", { tabId: 1, selector: "input", text: "x" }],
+    ["page.select_option", { tabId: 1, selector: "select", values: ["a"] }],
+    ["dialog.handle", { tabId: 1, accept: true }],
+  ] as const)
+    await expect(h[command]({ ...params, __crotTabPolicy: off })).rejects.toMatchObject({
+      code: "BROWSER_PAGE_RESTRICTED",
+      message: "Clicks and form input are turned off by the owner browser policy",
+    });
+  expect(fake.injections).toHaveLength(0);
+  expect(tabPolicyAllowsAutomation(off, "page.read")).toBe(true);
+  expect(tabPolicyAllowsAutomation(off, "tabs.navigate")).toBe(true);
+  expect(tabPolicyAllowsAutomation(parseTabPolicy(policy), "page.click")).toBe(true);
+  expect(tabPolicyAllowsAutomation(undefined, "page.click")).toBe(true);
+  for (const command of AUTOMATION_COMMANDS) expect(tabPolicyAllowsAutomation(off, command)).toBe(false);
+  await expect(h["tabs.resolve"]({ tabId: 1, __crotTabPolicy: off })).resolves.toMatchObject({ tabId: 1 });
 });

@@ -626,3 +626,40 @@ it("system publication guard refuses a permissive Full Control browser and recor
     ]),
   );
 });
+
+describe("owner tab policy v2 (Desktop Browser screen)", () => {
+  const policy = { mode: "targeted" as const, domains: ["example.com"], blockedDomains: [], sensitivePreset: false };
+
+  it("refuses clicks and typing before they reach the browser while automation is off", async () => {
+    const { service, fake, audit } = setup({ mode: "full_control" });
+    service.setTabPolicy({ ...policy, automation: false });
+    for (const run of [
+      () => service.click(ctx, { tabId: 1, selector: "#go" }),
+      () => service.type(ctx, { tabId: 1, selector: "#q", text: "hello" }),
+      () => service.handleDialog(ctx, { tabId: 1, accept: true }),
+    ])
+      await expect(run()).rejects.toMatchObject({
+        code: "PERMISSION_DENIED",
+        message: "Clicks and form filling are turned off by the owner (CROT → Browser → Data & automation).",
+      });
+    expect(
+      fake.calls.filter((c) => ["page.click", "page.type", "dialog.handle"].includes(c.command)).map((c) => c.command),
+    ).toEqual([]);
+    // Refused before the guard: the owner is never asked to approve an action the policy forbids.
+    expect(audit.events).toEqual([]);
+    // Reading and navigation stay available.
+    await expect(service.readPage(ctx, { tabId: 1 })).resolves.toMatchObject({ content: "hello" });
+    await expect(service.navigate(ctx, { tabId: 1, url: "https://example.com/next" })).resolves.toBeDefined();
+  });
+
+  it("sends activeTab and automation only to an extension that announced tab-policy-v2", async () => {
+    const { service, fake } = setup({ mode: "full_control" });
+    const v2 = { ...policy, activeTab: true };
+    service.setTabPolicy(v2);
+    await service.listTabs(ctx);
+    expect(fake.calls.at(-1)?.params.__crotTabPolicy).toEqual(policy);
+    fake.current = { ...fake.current, features: ["tab-policy-v2"] } as typeof fake.current;
+    await service.listTabs(ctx);
+    expect(fake.calls.at(-1)?.params.__crotTabPolicy).toEqual(v2);
+  });
+});
