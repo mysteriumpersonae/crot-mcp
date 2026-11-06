@@ -336,7 +336,19 @@ describe("browser extension chain (built crot-mcp + crot-browser-relay)", () => 
       );
       expect(rejected).toBe(true);
 
-      expect(extension.requests.map((r) => [r.command, r.params])).toEqual([
+      expect(
+        extension.requests.every(
+          (r) =>
+            JSON.stringify(r.params.__crotTabPolicy) ===
+            JSON.stringify({ mode: "background", domains: [], blockedDomains: [], sensitivePreset: false }),
+        ),
+      ).toBe(true);
+      expect(
+        extension.requests.map((r) => {
+          const { __crotTabPolicy: _policy, ...params } = r.params;
+          return [r.command, params];
+        }),
+      ).toEqual([
         ["tabs.list", {}],
         ["tabs.open", { url: "https://example.com/docs", active: true }],
         ["tabs.resolve", {}],
@@ -367,34 +379,20 @@ describe("browser extension chain (built crot-mcp + crot-browser-relay)", () => 
   );
 
   it(
-    "sandbox: the PermissionEngine denies every browser tool and nothing reaches the extension",
+    "sandbox: product grants browser reads but not unrelated control operations",
     async () => {
       const crot = await serve({ mode: "sandbox" });
       const extension = startBuiltRelay();
       await extension.handshake();
-      // The bridge state needs no authorization; it carries no browser data.
       await waitFor(async () => (await crot.bridgeState()) === "connected", 10_000);
-
-      const calls: [string, Record<string, unknown>][] = [
-        ["browser_status", {}],
-        ["browser_tabs_list", {}],
-        ["browser_page_read", {}],
-        ["browser_screenshot", {}],
-        ["browser_tab_open", { url: "https://example.com/" }],
-        ["browser_navigate", { url: "https://example.com/" }],
-        ["browser_tab_activate", { tabId: 7 }],
-        ["browser_tab_close", { tabId: 7 }],
-        ["browser_click", { selector: "#go" }],
-        ["browser_type", { selector: "#q", text: "hello" }],
-      ];
-      for (const [name, args] of calls) expect(await crot.errorCode(name, args), name).toBe("PERMISSION_DENIED");
-
-      // Give a (wrongly) forwarded request time to arrive before asserting none did.
-      await new Promise((resolve) => setTimeout(resolve, 300));
-      expect(extension.requests).toEqual([]);
+      expect((await crot.call("browser_status")).isError).toBe(false);
+      expect((await crot.call("browser_tabs_list")).isError).toBe(false);
+      expect((await crot.call("browser_page_read")).isError).toBe(false);
+      expect(await crot.errorCode("browser_tab_activate", { tabId: 7 })).toBe("PERMISSION_DENIED");
+      expect(await crot.errorCode("browser_tab_close", { tabId: 7 })).toBe("PERMISSION_DENIED");
+      expect(extension.requests.map((r) => r.command)).not.toContain("tabs.activate");
+      expect(extension.requests.map((r) => r.command)).not.toContain("tabs.close");
       expect(extension.unexpected).toEqual([]);
-      // Other capabilities work normally.
-      expect((await crot.call("fs_write_file", { path: "ok.txt", content: "ok" })).isError).toBe(false);
     },
     TIMEOUT,
   );

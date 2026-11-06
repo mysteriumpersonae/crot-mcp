@@ -274,7 +274,9 @@ turn's tools; Core policy, approvals and audit apply) and sends the results back
 ```` ```crot-tool-result ```` blocks in the next message of the same session. Through local
 OpenCode the turn's tools are the read-only project tools (`fs_list_directory`,
 `fs_read_file`, `fs_stat`, `project_search_files`) and, when Browser access is
-selected, `browser_status`, `browser_tabs_list`, and `browser_page_read`.
+selected, `browser_status`, `browser_list_tabs`, `browser_read_page`, `browser_snapshot`,
+and, when enabled by the owner, `browser_open_tab`, `browser_navigate`,
+`browser_click`, and `browser_fill`.
 These remain subject to Core policy and approval; page content returned to a
 model is untrusted. Other CROT tools (`local_read_only_tools`) and images
 (`local_text_only`) need a paid model with a Zen key. While a turn is pending
@@ -287,7 +289,7 @@ OpenCode 2 keeps no conversation for CROT: every request is one stateless genera
 at most 120 s) whose prompt carries the `system` text above, `Conversation so far:` (the
 remembered thread, then this turn's answers and tool results; beyond 400,000 characters
 older tool results of the turn are replaced by a short note) and `New message:`. The tool
-protocol, Core and the read-only tools are the same. A refused generation comes back as HTTP
+protocol, Core and the available tools are the same. A refused generation comes back as HTTP
 502 `ProviderRequestError` with the provider's own `status` (429 for a rate limit), and that
 status is the one reported.
 

@@ -57,7 +57,7 @@ const fixture = {
     { title: "Cloud tunnel", value: "Local mode", ready: false },
   ],
 };
-const shim = `window.fixture=${JSON.stringify(fixture)};window.actions=[];window.browserPolicy={mode:'targeted',domains:['reddit.com'],blockedDomains:['bank.com','binance.com'],sensitivePreset:false,activeTab:true};window.browserLink={state:'connected',browser:{name:'Google Chrome',version:'140',extensionVersion:'1.0.0'},transport:'native',cdp:true,manage:true,tabsRevision:1,loopback:{port:43115,conflicts:[],pending:[],pairings:[]}};window.crot={${authentication.shim}product:async(name,input={})=>{window.actions.push([name,input]);const p={id:'fixture-project',name:'project',path:'/workspace/project',favorite:false,tools:[],agents:[],connectors:[]};return {ok:true,...(name==='accounts.list'?{accounts:['youtube','tiktok','x','github','notion'].map(provider=>({provider,state:'disconnected'})),pending:[]}:name==='projects.list'?{projects:[p],active:p.id}:name==='connectors.list'?{connectors:[]}:name==='mcpServers.list'?{servers:[]}:name==='agents.list'?{agents:[],calls:[]}:name==='tasks.list'?{tasks:[]}:name==='monitoring.queryAudit'?{events:[]}:name==='monitoring.metrics'?{tasks:{running:0,total:0},workspace:p.id,connectedServers:0}:name==='browser.policy.get'?{policy:window.browserPolicy}:name==='browser.policy.set'?(window.browserPolicy=input,{policy:input}):name==='browser.link.status'||name==='browser.link.approve'||name==='browser.link.reject'?{link:window.browserLink}:{})}},tool:async(name,input)=>{window.actions.push([name,input]);return {content:[{type:"text",text:JSON.stringify(name==="fs_list_directory"?{entries:[{path:"README.md",type:"file"}]}:name==="fs_stat"?{exists:true,type:"directory"}:name==="fs_read_file"?{content:"# Test project"}:name==="browser_tabs_list"?{tabs:[{tabId:42,windowId:1,title:"Test tab",url:"https://example.test/",active:true,groupedByCrot:false},{tabId:43,windowId:1,title:"CROT research",url:"https://reddit.com/r/programming",active:false,groupedByCrot:true}]}:{ok:true})}]}},repairL1:async()=>{window.actions.push(["repair-l1"]);return {ok:true,available:false}},onView(fn){window.render=fn},ready(){window.render(window.fixture)},decide:async(...args)=>{window.actions.push(args);return true},action:async(...args)=>{window.actions.push(args);return true}};window.chrome={runtime:{getURL:p=>'/extension/'+p,sendMessage:async(m)=>{window.actions.push(['extension',m.type]);return m.type==='crot.ui.openApp'?{ok:true}:{connection:'disconnected'}}},tabs:{create:async(o)=>{window.actions.push(['tab',o.url]);return o},query:async()=>[{status:'complete',windowId:1,groupId:-1}]},tabGroups:{query:async()=>[]}};`;
+const shim = `window.fixture=${JSON.stringify(fixture)};window.actions=[];window.browserAccess={read:true,navigation:true};window.browserPolicy={mode:'targeted',domains:['reddit.com'],blockedDomains:['bank.com','binance.com'],sensitivePreset:false,activeTab:true};window.browserLink={state:'connected',browser:{name:'Google Chrome',version:'140',extensionVersion:'1.0.0'},transport:'native',cdp:true,manage:true,tabsRevision:1,loopback:{port:43115,conflicts:[],pending:[],pairings:[]}};window.crot={${authentication.shim}product:async(name,input={})=>{window.actions.push([name,input]);const p={id:'fixture-project',name:'project',path:'/workspace/project',favorite:false,tools:[],agents:[],connectors:[]};return {ok:true,...(name==='accounts.list'?{accounts:['youtube','tiktok','x','github','notion'].map(provider=>({provider,state:'disconnected'})),pending:[]}:name==='projects.list'?{projects:[p],active:p.id}:name==='connectors.list'?{connectors:[]}:name==='mcpServers.list'?{servers:[]}:name==='agents.list'?{agents:[],calls:[]}:name==='tasks.list'?{tasks:[]}:name==='monitoring.queryAudit'?{events:[]}:name==='monitoring.metrics'?{tasks:{running:0,total:0},workspace:p.id,connectedServers:0}:name==='browser.policy.get'?{policy:window.browserPolicy,access:window.browserAccess}:name==='browser.access.set'?(window.browserAccess=input,{access:input}):name==='browser.policy.set'?(window.browserPolicy=input,{policy:input,access:window.browserAccess}):name==='browser.link.status'||name==='browser.link.approve'||name==='browser.link.reject'?{link:window.browserLink}:{})}},tool:async(name,input)=>{window.actions.push([name,input]);return {content:[{type:"text",text:JSON.stringify(name==="fs_list_directory"?{entries:[{path:"README.md",type:"file"}]}:name==="fs_stat"?{exists:true,type:"directory"}:name==="fs_read_file"?{content:"# Test project"}:name==="browser_tabs_list"?{tabs:[{tabId:42,windowId:1,title:"Test tab",url:"https://example.test/",active:true,groupedByCrot:false},{tabId:43,windowId:1,title:"CROT research",url:"https://reddit.com/r/programming",active:false,groupedByCrot:true}]}:{ok:true})}]}},repairL1:async()=>{window.actions.push(["repair-l1"]);return {ok:true,available:false}},onView(fn){window.render=fn},ready(){window.render(window.fixture)},decide:async(...args)=>{window.actions.push(args);return true},action:async(...args)=>{window.actions.push(args);return true}};window.chrome={runtime:{getURL:p=>'/extension/'+p,sendMessage:async(m)=>{window.actions.push(['extension',m.type]);return m.type==='crot.ui.openApp'?{ok:true}:{connection:'disconnected'}}},tabs:{create:async(o)=>{window.actions.push(['tab',o.url]);return o},query:async()=>[{status:'complete',windowId:1,groupId:-1}]},tabGroups:{query:async()=>[]}};`;
 const inject = (html) => html.replace("<head>", '<head><script src="/ui-fixture.js"></script>');
 let origin;
 const downloads = new ReleaseDownloads({ origin: "https://relay-staging.crot.network" });
@@ -346,7 +346,7 @@ try {
           );
           assert(
             await evaluate(
-              "JSON.stringify([...document.querySelectorAll('#browser-page input[role=switch]')].map(i=>[i.dataset.switch,i.checked]))===JSON.stringify([['active',true],['background',false],['targeted',true],['sessions',true],['automation',true]])",
+              "JSON.stringify([...document.querySelectorAll('#browser-page input[role=switch]')].map(i=>[i.dataset.switch,i.checked]))===JSON.stringify([['active',true],['background',false],['targeted',true],['access',true],['sessions',true],['automation',true]])",
             ),
             "browser switches must reflect the saved policy",
           );
@@ -438,6 +438,24 @@ try {
     await until("document.getElementById('browser-status').dataset.state==='connected'");
     const browserSwitch = (key) => evaluate(`document.querySelector('#browser-page [data-switch=${key}]').click()`);
     const lastPolicy = "actions.filter(a=>a[0]==='browser.policy.set').at(-1)?.[1]";
+    // The Browser and Permissions screens edit the same owner policy.
+    await browserSwitch("access");
+    await until("window.browserAccess.read===false");
+    await route("Permissions");
+    const permissionInput = (label) =>
+      `([...document.querySelectorAll('#browser-permissions label')].find(l=>l.querySelector('span')?.textContent===${JSON.stringify(label)})?.querySelector('input'))`;
+    await until(`${permissionInput("Browser access")} && !${permissionInput("Browser access")}.checked`);
+    await evaluate(`${permissionInput("Browser access")}.click()`);
+    await until(`window.browserAccess.read===true && ${permissionInput("Browser access")}?.checked`);
+    await evaluate(`${permissionInput("Allow auto-clicks and form filling")}.click()`);
+    await until("window.browserPolicy.automation===false");
+    await route("Browser");
+    await until(
+      "document.querySelector('[data-switch=access]')?.checked && !document.querySelector('[data-switch=automation]')?.disabled && !document.querySelector('[data-switch=automation]')?.checked",
+    );
+    await browserSwitch("automation");
+    await until("window.browserPolicy.automation!==false");
+
     await browserSwitch("background");
     await until(`${lastPolicy}?.mode==='background'`);
     assert(

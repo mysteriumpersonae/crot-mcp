@@ -69,6 +69,7 @@ export const PRODUCT_SCHEMAS = {
   "skills.test": z.object({ id }).strict(),
   "skills.run": z.object({ id, values: z.record(z.string(), z.string().max(4096)).default({}) }).strict(),
   "browser.policy.get": z.object({}).strict(),
+  "browser.access.set": z.object({ read: z.boolean(), navigation: z.boolean() }).strict(),
   "browser.policy.set": z
     .object({
       mode: z.enum(["active", "targeted", "background"]),

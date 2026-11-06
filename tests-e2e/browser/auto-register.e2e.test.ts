@@ -11,6 +11,7 @@ import * as h from "./harness.js";
 describe.runIf(process.platform === "linux")("service auto-registration with a real Chromium extension", () => {
   let sb: h.Sandbox | undefined;
   let session: h.CrotSession | undefined;
+  let actionSession: h.CrotSession | undefined;
   let chrome: h.ChromeInstance | undefined;
   let control: ControlClient | undefined;
   let provider: http.Server | undefined;
@@ -31,6 +32,13 @@ describe.runIf(process.platform === "linux")("service auto-registration with a r
       tools?: Array<{ function?: { name: string } }>;
     }> = [];
     provider = http.createServer((req, res) => {
+      if (req.method === "GET") {
+        res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+        res.end(
+          '<!doctype html><title>CROT test tab</title><p id="result">Real browser fixture</p><input id="field"><button id="button" onclick="document.querySelector(\'#result\').textContent=document.querySelector(\'#field\').value">Apply</button>',
+        );
+        return;
+      }
       const chunks: Buffer[] = [];
       req.on("data", (chunk: Buffer) => chunks.push(chunk));
       req.on("end", () => {
@@ -38,9 +46,12 @@ describe.runIf(process.platform === "linux")("service auto-registration with a r
         requests.push(body);
         res.writeHead(200, { "content-type": "text/event-stream" });
         const hasToolResult = body.messages.some((message) => message.role === "tool");
+        const toolMessage = body.messages.find((message) => message.role === "tool");
+        const toolResult = toolMessage ? JSON.parse(String(toolMessage.content)) : undefined;
+        const tabs = toolResult?.content?.[0]?.text ? JSON.parse(toolResult.content[0].text).tabs : [];
         const delta = hasToolResult
-          ? { content: "Fixture received browser tabs." }
-          : { tool_calls: [{ index: 0, id: "call_tabs", function: { name: "browser_tabs_list", arguments: "{}" } }] };
+          ? { content: `Открытые вкладки: ${(tabs as Array<{ title: string }>).map((tab) => tab.title).join(", ")}` }
+          : { tool_calls: [{ index: 0, id: "call_tabs", function: { name: "browser_list_tabs", arguments: "{}" } }] };
         res.end(`data: ${JSON.stringify({ choices: [{ delta }] })}\n\ndata: [DONE]\n\n`);
       });
     });
@@ -52,12 +63,6 @@ describe.runIf(process.platform === "linux")("service auto-registration with a r
       JSON.stringify({
         version: 1,
         workspace: { root: sb.workspace },
-        permissions: {
-          mode: "sandbox",
-          capabilities: ["browser.read", "network.access"],
-          network: { allow: [`127.0.0.1:${port}`] },
-        },
-        browser: { enabled: true },
       }),
     );
     session = await h.startCrot(sb, config, path.join(sb.base, "audit.jsonl"));
@@ -67,7 +72,7 @@ describe.runIf(process.platform === "linux")("service auto-registration with a r
       15_000,
       "startup host registration",
     );
-    chrome = h.launchChrome(h.chromeExecutable(), sb);
+    chrome = h.launchChrome(h.chromeExecutable(), sb, { startUrl: `http://127.0.0.1:${port}/fixture` });
     try {
       await h.waitFor(
         async () =>
@@ -86,14 +91,14 @@ describe.runIf(process.platform === "linux")("service auto-registration with a r
       const started = (await control!.request("chat.start", {
         provider: "Local HTTP",
         model: "fixture",
-        message: "Can you see my browser?",
+        message: "Какие вкладки у меня сейчас открыты в браузере?",
         browserTools: true,
       })) as { id: string };
       const result = await h.waitFor(
         async () => {
           const value = (await control!.request("chat.poll", { id: started.id })) as {
             state: string;
-            blocks: Array<{ type: string; name?: string; status?: string }>;
+            blocks: Array<{ type: string; name?: string; status?: string; text?: string }>;
           };
           return value.state === "running" ? undefined : value;
         },
@@ -103,12 +108,54 @@ describe.runIf(process.platform === "linux")("service auto-registration with a r
       expect(result.state).toBe("completed");
       expect(result.blocks).toEqual(
         expect.arrayContaining([
-          expect.objectContaining({ type: "tool", name: "browser_tabs_list", status: "completed" }),
+          expect.objectContaining({ type: "tool", name: "browser_list_tabs", status: "completed" }),
+          expect.objectContaining({ type: "assistant", text: expect.stringContaining("CROT test tab") }),
         ]),
       );
-      expect(requests[0]!.tools?.map((tool) => tool.function?.name)).toContain("browser_tabs_list");
+      expect(requests[0]!.tools?.map((tool) => tool.function?.name)).toContain("browser_list_tabs");
       const toolResult = requests[1]!.messages.find((message) => message.role === "tool");
       expect(JSON.stringify(toolResult?.content)).toContain("tabId");
+      // Exercise the same guarded operations backing the chat aliases, without any manual grant.
+      actionSession = await h.startCrot(sb, config, path.join(sb.base, "audit.jsonl"));
+      const opened = await h.ok<{ tabId: number }>(actionSession.client, "browser_tab_open", {
+        url: `http://127.0.0.1:${port}/fixture`,
+        waitUntil: "load",
+      });
+      await h.ok(actionSession.client, "browser_navigate", {
+        tabId: opened.tabId,
+        url: `http://127.0.0.1:${port}/fixture?second=1`,
+        waitUntil: "load",
+      });
+      await h.ok(actionSession.client, "browser_type", {
+        tabId: opened.tabId,
+        selector: "#field",
+        text: "CROT_ACTION_OK",
+      });
+      await h.ok(actionSession.client, "browser_click", { tabId: opened.tabId, selector: "#button" });
+      const page = await h.ok<{ content: string }>(actionSession.client, "browser_page_read", { tabId: opened.tabId });
+      expect(page.content).toContain("CROT_ACTION_OK");
+      const initial = (await control!.request("browser.policy.get", {})) as {
+        policy: { mode: string; domains: string[]; blockedDomains: string[]; sensitivePreset: boolean };
+        access: { read: boolean; navigation: boolean };
+      };
+      expect(initial.access).toMatchObject({ read: true, navigation: true });
+      await control!.request("browser.access.set", { read: false, navigation: true });
+      expect((await h.fails(session.client, "browser_tabs_list")).code).toBe("PERMISSION_DENIED");
+      await control!.request("browser.access.set", { read: true, navigation: true });
+      expect((await h.ok<{ tabs: unknown[] }>(session.client, "browser_tabs_list")).tabs.length).toBeGreaterThan(0);
+      await control!.request("browser.policy.set", { ...initial.policy, sensitivePreset: true });
+      expect((await h.fails(session.client, "browser_page_read")).code).toBe("PERMISSION_DENIED");
+      await control!.request("browser.policy.set", { ...initial.policy, automation: false });
+      expect(await h.fails(session.client, "browser_click", { selector: "p" })).toMatchObject({
+        code: "PERMISSION_DENIED",
+        message: expect.stringContaining("turned off"),
+      });
+      expect(await h.fails(session.client, "browser_type", { selector: "p", text: "test" })).toMatchObject({
+        code: "PERMISSION_DENIED",
+        message: expect.stringContaining("turned off"),
+      });
+      await control!.request("browser.policy.set", { ...initial.policy, blockedDomains: ["127.0.0.1"] });
+      expect((await h.fails(session.client, "browser_page_read")).code).toBe("BROWSER_PAGE_RESTRICTED");
     } catch (error) {
       throw new Error(
         `${String(error)}\nChromium: ${chrome.output().slice(-6000)}\nCROT: ${session.stderr().slice(-6000)}`,
@@ -117,6 +164,7 @@ describe.runIf(process.platform === "linux")("service auto-registration with a r
   });
   afterAll(async () => {
     control?.close();
+    await actionSession?.close().catch(() => undefined);
     await session?.close().catch(() => undefined);
     await chrome?.stop().catch(() => undefined);
     provider?.closeAllConnections();
