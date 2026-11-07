@@ -282,7 +282,6 @@ export const CONTROL_CENTER_RENDERER =
     const transcript=node('div',undefined,'chat-transcript');transcript.setAttribute('role','log');transcript.setAttribute('aria-label',t('Conversation'));transcript.hidden=true;
     const inline=node('div',undefined,'chat-approvals');inline.dataset.chatApprovals='';stage.append(welcome,transcript,inline);
     const selectors=node('div',undefined,'chat-selectors'),compose=node('div',undefined,'chat-compose'),message=node('textarea'),attachmentList=node('div',undefined,'chat-attachments');
-    selectors.hidden=true;selectors.style.display='none';// Hidden: replaced by inline model chip + flat provider pills
     message.placeholder=t('Ask');message.setAttribute('aria-label',t('Message'));message.value=chatDraft;message.oninput=()=>{chatDraft=message.value;};
     let running=false,starting=false;
     // Technical notices (errors, stops, validation) are thread messages from CROT, never text under the composer.
