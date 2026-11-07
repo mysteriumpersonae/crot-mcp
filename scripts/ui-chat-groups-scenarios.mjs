@@ -67,13 +67,13 @@ export async function runChatGroupScenarios({
   await open("skills");
   assert(
     await evaluate(
-      "(()=>{const p=document.querySelector('#chat-menu-skills');return p.textContent.includes('FFmpeg')&&p.textContent.includes('Remotion')&&p.textContent.includes('ElevenLabs')&&p.textContent.includes('Add skill')&&!p.textContent.includes('Add connection')&&!p.querySelector('[data-connection-id=\\\\\\\"mcp:notion-mcp\\\\\\\"]')&&[...p.querySelectorAll('img')].every(i=>![PRODUCT.brands.notion,PRODUCT.brands.youtube].includes(i.getAttribute('src')));;})()",
+      "(()=>{const p=document.querySelector('#chat-menu-skills');return p.textContent.includes('FFmpeg')&&p.textContent.includes('Remotion')&&p.textContent.includes('ElevenLabs')&&p.textContent.includes('Add skill')&&!p.textContent.includes('Add connection')&&!p.querySelector(\"[data-connection-id='mcp:notion-mcp']\")&&[...p.querySelectorAll('img')].every(i=>![PRODUCT.brands.notion,PRODUCT.brands.youtube].includes(i.getAttribute('src')));;})()",
     ),
     "Skills contain remote platforms or unrelated footer logos",
   );
   await screenshot("chat-groups-skills");
   await evaluate(
-    "document.querySelector('#chat-menu-skills [data-connection-id=\\\\\\\"connector:ElevenLabs\\\\\\\"]').click()",
+    "document.querySelector(\"#chat-menu-skills [data-connection-id='connector:ElevenLabs']\").click()",
   );
   await open("web");
   assert(
@@ -84,7 +84,7 @@ export async function runChatGroupScenarios({
   );
   await screenshot("chat-groups-platforms");
   await evaluate(
-    "document.querySelector('#chat-menu-web [data-connection-id=\\\\\\\"mcp:notion-mcp\\\\\\\"]').click()",
+    "document.querySelector(\"#chat-menu-web [data-connection-id='mcp:notion-mcp']\").click()",
   );
   assert(
     await evaluate(

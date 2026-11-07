@@ -104,7 +104,7 @@ export const CHAT_CSS = String.raw`
 
 /* Flat pills — сохраняем оригинальные размеры (12px, 14px icons) для совместимости с E2E */
 /* Только убираем рамки/фон для flat-стиля по ТЗ */
-.chat-agent-pill{border:0;background:transparent;padding:0 8px;border-radius:0;transition:color .12s}
+.chat-agent-pill{border:0;background:transparent;padding:0 8px;border-radius:0;transition:color .12s;font-size:12px;height:28px}
 .chat-agent-pill:hover{border-color:transparent;background:transparent;color:#111827}
 .chat-agent-pill[aria-pressed=true]{border-color:transparent;background:transparent;color:#111827}
 
