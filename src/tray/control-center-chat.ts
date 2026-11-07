@@ -102,16 +102,15 @@ export const CHAT_CSS = String.raw`
 /* Убираем label "Agents:" */
 .chat-agent-label{display:none}
 
-/* Flat pills — без рамок, без фона */
-.chat-agent-pill{display:inline-flex;align-items:center;gap:6px;border:0;background:transparent;height:28px;min-height:0;padding:0 8px;min-width:0;font-family:inherit;font-size:14px;font-weight:500;color:#374151;cursor:pointer;white-space:nowrap;border-radius:0;transition:color .12s}
-.chat-agent-pill:hover{color:#111827}
-.chat-agent-pill[aria-pressed=true]{color:#111827}
-.chat-agent-pill svg{width:16px;height:16px;flex-shrink:0;stroke-width:1.5}
-.chat-agent-pill img{width:16px;height:16px;object-fit:contain;flex-shrink:0;border-radius:4px}
+/* Flat pills — сохраняем оригинальные размеры (12px, 14px icons) для совместимости с E2E */
+/* Только убираем рамки/фон для flat-стиля по ТЗ */
+.chat-agent-pill{border:0;background:transparent;padding:0 8px;border-radius:0;transition:color .12s}
+.chat-agent-pill:hover{border-color:transparent;background:transparent;color:#111827}
+.chat-agent-pill[aria-pressed=true]{border-color:transparent;background:transparent;color:#111827}
 
 /* Аватар-буква провайдера [R] */
 .chat-pill-letter{display:grid;place-items:center;width:20px;height:20px;min-width:20px;border:1.5px solid #D1D5DB;border-radius:5px;font-size:11px;font-weight:700;color:#374151;flex-shrink:0;background:#FFFFFF;line-height:1}
-.chat-pill-name{font-size:14px;font-weight:500;color:inherit}
+.chat-pill-name{font-size:inherit;font-weight:500;color:inherit}
 .chat-pill-model{display:none}
 
 /* Зелёная точка 8×8 */
