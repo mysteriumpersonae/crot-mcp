@@ -37,16 +37,110 @@ export const CHAT_CSS = String.raw`
 .chat-transcript{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;padding:24px clamp(20px,5vw,72px);display:flex;flex-direction:column;gap:20px}.chat-message{max-width:88%;min-width:0;flex-shrink:0}.chat-user{align-self:flex-end;background:#ecf2ff;border:1px solid #e1e8fc;border-radius:18px 18px 4px 18px;padding:14px 18px}.chat-assistant{align-self:flex-start;padding:4px 0}.chat-message-author{display:block;font-size:12px;font-weight:600;color:#607298;margin-bottom:6px}.chat-message-text{white-space:pre-wrap;overflow-wrap:anywhere;font-size:var(--ui-body-size);line-height:1.55}.chat-tool{align-self:flex-start;border:1px solid #e3e8f1;border-radius:12px;padding:8px 14px;background:#fff;width:100%}.chat-tool summary{cursor:pointer;display:flex;gap:10px;align-items:center;min-height:30px}.chat-tool .badge{margin-left:auto}.chat-tool pre{max-height:180px}.chat-approvals{padding:0 20px 12px;max-height:65%;overflow:auto}.chat-approvals .card{padding:12px 14px}.chat-approvals .card h3{font-size:14px}.chat-approvals .card .banner{padding:7px 10px;font-size:12px;line-height:1.4}.chat-approvals .card dl{max-height:70px;overflow:auto;margin:8px 0;gap:4px 12px;font-size:12px}.chat-approvals .card .actions{margin-top:8px}.chat-approvals .card button{min-height:36px;padding:6px 12px;font-size:13px}.chat-approvals:has(>.empty){display:none}
 @media(max-height:800px){.chat-welcome{padding:16px}.chat-glow{width:84px;height:84px;min-height:84px;margin-bottom:12px}.chat-glow svg{width:40px;height:40px}.chat-welcome h1{font-size:26px}.chat-intro{font-size:16px;margin-bottom:22px}.chat-starter{min-height:52px}.chat-workspace{gap:10px}.chat-stage{margin-bottom:-10px}}
 @media(max-width:760px){.chat-active main.content{padding:12px;overflow:auto}.chat-active #page{height:auto;min-height:100%}.chat-workspace{height:auto;min-height:100%}.chat-stage{flex:1 0 auto;min-height:350px}.chat-welcome{flex:1 0 auto;min-height:350px}.chat-transcript{max-height:60dvh}.chat-intro{font-size:14px;margin-bottom:16px}.chat-welcome{padding:12px}.chat-glow{width:72px;height:72px;min-height:72px}.chat-starters{gap:8px}.chat-starter{font-size:12px;padding:10px;gap:8px}.chat-starter svg{width:18px}.chat-selectors{padding:8px;gap:8px;flex-wrap:wrap}.chat-thread{order:3;width:100%;justify-content:space-between}.chat-dropdown{max-width:100%}.chat-selectors>.chat-dropdown{width:calc(50% - 4px)}.chat-selector{min-width:0;width:100%;padding:8px;font-size:12px;gap:6px}.chat-compose{padding:12px}.chat-shortcut{display:none}.chat-agents{gap:6px;padding:2px;min-height:38px}.chat-agent-label{font-size:11px}.chat-agent-pills{gap:5px;flex-wrap:nowrap;justify-content:flex-start;overflow-x:auto}.chat-agent-pill{flex-shrink:0;height:28px;font-size:12px}.chat-message{max-width:96%}}
-/* ── Plus button (Notion-style "+" attach menu) ───────────────────────── */
-.chat-plus-btn{display:grid;place-items:center;width:30px;min-width:30px;height:30px;min-height:30px;border:1px solid var(--border,#e4e7eb);border-radius:8px;background:var(--bg-surface,#fff);color:var(--text-muted,#56678e);cursor:pointer;padding:0;transition:border-color .12s,background .12s}.chat-plus-btn svg{width:18px;height:18px}.chat-plus-btn:hover{border-color:#aeb6c2;background:#f8faff}.chat-plus-btn:focus-visible{outline:2px solid var(--primary,#1a6bff);outline-offset:2px}
-/* Plus popover */
-.chat-plus-pop{position:fixed;inset:auto;margin:0;width:220px;padding:6px;border:1px solid #e3e6eb;border-radius:14px;box-shadow:0 14px 48px #172c5426,0 3px 12px #172c5410;background:#fff;color:#202a3b}.chat-plus-row{display:flex;align-items:center;gap:10px;padding:9px 11px;border-radius:8px;cursor:pointer;border:0;background:transparent;width:100%;font-size:14px;color:#202a3b;text-align:left}.chat-plus-row:hover{background:#f3f5f9}.chat-plus-row svg{width:18px;height:18px;color:#56678e;flex-shrink:0}.chat-plus-beta{margin-left:auto;font-size:11px;padding:1px 6px;flex-shrink:0}.chat-plus-count{margin-left:auto;font-size:12px;color:#8099c4;min-width:16px;text-align:right;flex-shrink:0}
-/* Browser row in plus menu */
+/* ════════════════════════════════════════════════════════
+   CHAT REDESIGN OVERRIDES — only changed properties
+   ════════════════════════════════════════════════════════ */
+
+/* Compose box — точные значения по ТЗ */
+.chat-compose{border:1px solid #E5E7EB;border-radius:16px;padding:16px 20px 12px 20px;box-shadow:0 1px 3px rgba(0,0,0,.06),0 1px 2px rgba(0,0,0,.04);transition:border-color .2s ease,box-shadow .2s ease}
+.chat-compose:hover{border-color:#E5E7EB}
+.chat-compose:focus-within{border-color:#D1D5DB;box-shadow:0 2px 8px rgba(0,0,0,.08)}
+
+/* Textarea — min-height 24px (одна строка), font 16px */
+.chat-compose textarea{min-height:24px;height:24px;max-height:200px;font-size:16px;font-weight:400;color:#111827;padding:0;margin-bottom:12px}
+.chat-compose textarea::placeholder{color:#9CA3AF;font-weight:400}
+
+/* Compose actions bar */
+.chat-compose-actions{justify-content:space-between;gap:4px}
+.chat-compose-left{gap:4px}
+.chat-send-actions{gap:8px}
+
+/* Plus button — 32×32, без рамки */
+.chat-plus-btn{width:32px;min-width:32px;height:32px;min-height:32px;border:0;border-radius:8px;background:transparent;color:#6B7280;cursor:pointer;padding:0;flex-shrink:0;display:grid;place-items:center;transition:background .15s,color .15s}
+.chat-plus-btn svg{width:20px;height:20px;stroke-width:1.75}
+.chat-plus-btn:hover{background:#F3F4F6;color:#374151}
+.chat-plus-btn:focus-visible{outline:2px solid #374151;outline-offset:2px}
+
+/* "Review for me" текстовая кнопка */
+.chat-review-btn{border:0;border-radius:8px;background:transparent;cursor:pointer;font-family:inherit;font-size:14px;font-weight:500;color:#6B7280;padding:6px 12px;transition:background .15s,color .15s;white-space:nowrap}
+.chat-review-btn:hover{background:#F3F4F6;color:#374151}
+
+/* "Auto ↓" модель chip */
+.chat-model-chip{display:inline-flex;align-items:center;gap:4px;border:0;border-radius:8px;background:transparent;cursor:pointer;font-family:inherit;font-size:14px;font-weight:500;color:#374151;padding:6px 12px;transition:background .15s;white-space:nowrap}
+.chat-model-chip:hover{background:#F3F4F6}
+.chat-model-chip svg{flex-shrink:0;color:#9CA3AF;width:12px;height:12px}
+.chat-model-chip span{max-width:120px;overflow:hidden;text-overflow:ellipsis}
+
+/* Send button — 32×32 круг, серый→тёмный (#111827) при наличии текста */
+.chat-send{width:32px;height:32px;min-width:32px;min-height:32px;max-width:32px;flex:0 0 32px;aspect-ratio:1;padding:0;border:0;border-radius:50%;background:#E5E7EB;color:#9CA3AF;display:grid;place-items:center;transition:background .2s ease,color .2s ease;cursor:default}
+.chat-send svg{width:16px;height:16px;stroke-width:2.5}
+.chat-send.chat-send-ready{background:#111827;color:#FFFFFF;cursor:pointer}
+.chat-send.chat-send-ready:hover{background:#000000}
+.chat-send[data-running=true]{background:#111827;color:#FFFFFF;cursor:pointer}
+.chat-send[data-running=true]:hover{background:#000000}
+
+/* Shortcut hint — скрыт */
+.chat-shortcut{display:none}
+
+/* Plus popover — позиционируется JS */
+.chat-plus-pop{width:230px;padding:5px;border:1px solid #E5E7EB;border-radius:14px;box-shadow:0 8px 28px rgba(13,26,50,.08),0 2px 6px rgba(13,26,50,.06);background:#FFFFFF;color:#111827}
+.chat-plus-row{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;cursor:pointer;border:0;background:transparent;width:100%;font-family:inherit;font-size:13.5px;color:#374151;text-align:left;transition:background .12s}
+.chat-plus-row:hover{background:#F9FAFB}
+.chat-plus-row svg{width:16px;height:16px;color:#6B7280;flex-shrink:0}
+.chat-plus-row:hover svg{color:#374151}
+.chat-plus-beta{margin-left:auto;font-size:10px;padding:1px 5px;border-radius:4px;background:#DCFCE7;color:#15803D;font-weight:600;flex-shrink:0}
+.chat-plus-count{margin-left:auto;font-size:12px;color:#9CA3AF;flex-shrink:0}
 .chat-plus-browser-row{cursor:default}
-/* Browser toggle pill (switch) inside plus menu */
-.chat-browser-toggle-pill{width:36px;height:20px;min-width:36px;border-radius:10px;background:#d1d5db;border:0;padding:0;cursor:pointer;position:relative;transition:background .15s;margin-left:auto;flex-shrink:0}.chat-browser-toggle-pill .chat-toggle-thumb{position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:0 1px 3px #0002;transition:left .15s}.chat-browser-toggle-pill.on{background:#1a6bff}.chat-browser-toggle-pill.on .chat-toggle-thumb{left:18px}
-/* Copy button on messages */
-.chat-message-head{display:flex;align-items:center;gap:8px;margin-bottom:5px}.chat-copy-btn{border:0;background:transparent;padding:2px 7px;border-radius:6px;font-size:11.5px;color:#8099c4;cursor:pointer;opacity:0;transition:opacity .15s,background .12s;white-space:nowrap;margin-left:auto}.chat-message:hover .chat-copy-btn{opacity:1}.chat-copy-btn:hover{background:#f0f4ff;color:#1a6bff}.chat-user .chat-copy-btn{color:#6a7fa8}.chat-user .chat-copy-btn:hover{background:#dce8ff}
-/* Thinking / Generating indicator */
-.chat-thinking-indicator{display:flex;align-items:center;padding:4px 0}.chat-thinking-text{font-size:14px;color:#8099c4;animation:chat-pulse 1.4s ease-in-out infinite}@keyframes chat-pulse{0%,100%{opacity:.4}50%{opacity:1}}
+
+/* Browser toggle pill 32×18 */
+.chat-browser-toggle-pill{width:32px;height:18px;min-width:32px;border-radius:9px;background:#D1D5DB;border:0;padding:0;cursor:pointer;position:relative;transition:background .15s;margin-left:auto;flex-shrink:0}
+.chat-browser-toggle-pill .chat-toggle-thumb{position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:#FFFFFF;box-shadow:0 1px 2px rgba(0,0,0,.2);transition:left .12s}
+.chat-browser-toggle-pill.on{background:#1A6BFF}
+.chat-browser-toggle-pill.on .chat-toggle-thumb{left:16px}
+
+/* ── Статус-бар провайдеров (вне compose box) ── */
+/* Убираем label "Agents:" */
+.chat-agent-label{display:none}
+
+/* Flat pills — сохраняем оригинальные размеры (12px, 14px icons) для совместимости с E2E */
+/* Только убираем рамки/фон для flat-стиля по ТЗ */
+.chat-agent-pill{border:0;background:transparent;padding:0 8px;border-radius:0;transition:color .12s;font-size:12px;height:28px}
+.chat-agent-pill:hover{border-color:transparent;background:transparent;color:#111827}
+.chat-agent-pill[aria-pressed=true]{border-color:transparent;background:transparent;color:#111827}
+
+/* Аватар-буква провайдера [R] */
+.chat-pill-letter{display:grid;place-items:center;width:20px;height:20px;min-width:20px;border:1.5px solid #D1D5DB;border-radius:5px;font-size:11px;font-weight:700;color:#374151;flex-shrink:0;background:#FFFFFF;line-height:1}
+.chat-pill-name{font-size:inherit;font-weight:500;color:inherit}
+.chat-pill-model{display:none}
+
+/* Зелёная точка 8×8 */
+.chat-online{width:8px;height:8px;min-width:8px;border-radius:50%;background:#22C55E;flex-shrink:0}
+
+/* Вертикальный разделитель между провайдерами */
+.chat-pill-sep{display:inline-block;width:1px;height:16px;background:#E5E7EB;margin:0 8px;flex-shrink:0}
+
+/* Agents row */
+.chat-agents{padding:8px 2px 2px;min-height:36px}
+.chat-agent-pills{padding:0}
+
+/* Model popover */
+.chat-model-pop{position:absolute;top:auto;bottom:calc(100% + 8px);left:0;z-index:30;max-height:260px;overflow-y:auto;min-width:200px;padding:5px;border:1px solid #E5E7EB;border-radius:12px;box-shadow:0 8px 24px rgba(13,26,50,.1);background:#FFFFFF}
+.chat-model-pop .chat-menu-item{padding:7px 10px;font-size:13px;border-radius:7px;color:#374151}
+.chat-model-pop-disconnect{width:100%;text-align:left;border:0;border-top:1px solid #F3F4F6;border-radius:0 0 7px 7px;margin-top:4px;padding:7px 10px;background:transparent;font-family:inherit;font-size:13px;color:#EF4444;cursor:pointer}
+.chat-model-pop-disconnect:hover{background:#FFF5F5}
+
+/* Copy button */
+.chat-message-head{display:flex;align-items:center;gap:6px;margin-bottom:4px}
+.chat-copy-btn{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;min-width:22px;border:0;background:transparent;border-radius:5px;color:#C8D0DE;cursor:pointer;opacity:0;transition:opacity .12s,background .12s,color .12s;padding:0;margin-left:auto}
+.chat-message:hover .chat-copy-btn{opacity:1}
+.chat-copy-btn:hover{background:#EFF3FF;color:#1A6BFF}
+.chat-copy-btn.copied{color:#22C55E;opacity:1}
+.chat-user .chat-copy-btn{color:#A8BBD8}
+.chat-user .chat-copy-btn:hover{background:#DCE8FF;color:#1A4AB8}
+.chat-copy-btn svg{pointer-events:none}
+
+/* Thinking indicator */
+.chat-thinking-indicator{display:flex;align-items:center;padding:4px 0}
+.chat-thinking-text{font-size:13.5px;color:#9CA3AF;animation:chat-pulse 1.3s ease-in-out infinite}
+@keyframes chat-pulse{0%,100%{opacity:.3}50%{opacity:1}}
 `;
