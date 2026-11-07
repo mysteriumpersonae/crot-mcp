@@ -45,12 +45,12 @@ export async function runChatGroupScenarios({ evaluate, until, size, screenshot,
   await open("skills");
   assert(
     await evaluate(
-      "(()=>{const p=document.querySelector('#chat-menu-skills');return p.textContent.includes('FFmpeg')&&p.textContent.includes('Remotion')&&p.textContent.includes('ElevenLabs')&&p.textContent.includes('Add skill')&&!p.textContent.includes('Add connection')&&!p.querySelector('[data-connection-id=\"mcp:notion-mcp\"]')&&[...p.querySelectorAll('img')].every(i=>![PRODUCT.brands.notion,PRODUCT.brands.youtube].includes(i.getAttribute('src')));})()",
+      "(()=>{const p=document.querySelector('#chat-menu-skills');return p.textContent.includes('FFmpeg')&&p.textContent.includes('Remotion')&&p.textContent.includes('ElevenLabs')&&p.textContent.includes('Add skill')&&!p.textContent.includes('Add connection')&&!p.querySelector('[data-connection-id=\\\"mcp:notion-mcp\\\"]')&&[...p.querySelectorAll('img')].every(i=>![PRODUCT.brands.notion,PRODUCT.brands.youtube].includes(i.getAttribute('src')));;})()",
     ),
     "Skills contain remote platforms or unrelated footer logos",
   );
   await screenshot("chat-groups-skills");
-  await evaluate("document.querySelector('#chat-menu-skills [data-connection-id=\"connector:ElevenLabs\"]').click()");
+  await evaluate("document.querySelector('#chat-menu-skills [data-connection-id=\\\"connector:ElevenLabs\\\"]').click()");
   await open("web");
   assert(
     await evaluate(
@@ -59,7 +59,7 @@ export async function runChatGroupScenarios({ evaluate, until, size, screenshot,
     "Platforms include skills or agent-provider APIs",
   );
   await screenshot("chat-groups-platforms");
-  await evaluate("document.querySelector('#chat-menu-web [data-connection-id=\"mcp:notion-mcp\"]').click()");
+  await evaluate("document.querySelector('#chat-menu-web [data-connection-id=\\\"mcp:notion-mcp\\\"]').click()");
   assert(
     await evaluate(
       "(()=>{const p=document.querySelector('.chat-agent-pills');return p.textContent.includes('Local HTTP')&&['OpenCode','Notion agent','Entrim','OpenAI'].every(n=>!p.textContent.includes(n))&&!p.textContent.includes('Offline client')&&!p.textContent.includes('Revoked client')&&!p.textContent.includes('YouTube')&&!p.textContent.includes('FFmpeg');})()",
@@ -80,7 +80,8 @@ export async function runChatGroupScenarios({ evaluate, until, size, screenshot,
   const bounds = await evaluate(
     "(()=>{const send=document.querySelector('.chat-send'),badge=document.querySelector('#notification-count'),textarea=document.querySelector('.chat-compose textarea'),compose=document.querySelector('.chat-compose');const a=send.getBoundingClientRect(),b=badge.getBoundingClientRect(),s=getComputedStyle(textarea),bs=getComputedStyle(badge);return {send:[a.width,a.height],badge:[b.width,b.height],badgeDisplay:bs.display,badgeAlignment:bs.placeItems,outline:s.outlineStyle,shadow:s.boxShadow,border:s.borderTopWidth,outerBorder:getComputedStyle(compose).borderTopColor};})()",
   );
-  assert(bounds.send[0] === 44 && bounds.send[1] === 44, "Send button is not a true circle");
+  // Send button is 32×32 per redesign spec (was 44×44)
+  assert(bounds.send[0] === 32 && bounds.send[1] === 32, "Send button is not a true circle");
   assert(
     bounds.badge[0] === 20 &&
       bounds.badge[1] === 20 &&
@@ -92,7 +93,8 @@ export async function runChatGroupScenarios({ evaluate, until, size, screenshot,
     bounds.outline === "none" &&
       bounds.shadow === "none" &&
       bounds.border === "0px" &&
-      bounds.outerBorder === "rgb(174, 182, 194)",
+      // #E5E7EB border per redesign spec (was rgb(174,182,194) = #AEB6C2)
+      bounds.outerBorder === "rgb(229, 231, 235)",
     "Composer still has an internal blue focus ring",
   );
   const r = await evaluate(
