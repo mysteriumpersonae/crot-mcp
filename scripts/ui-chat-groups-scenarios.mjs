@@ -2,28 +2,15 @@
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import { TRAY_ASSETS } from "../dist/tray/assets.js";
-export async function runChatGroupScenarios({
-  evaluate,
-  until,
-  size,
-  screenshot,
-  navigate,
-  call,
-  artifacts,
-  assert,
-}) {
+export async function runChatGroupScenarios({ evaluate, until, size, screenshot, navigate, call, artifacts, assert }) {
   await size(1584, 960);
   await navigate("/control-center");
-  await until(
-    "document.getElementById('auth-gate')&&!document.getElementById('auth-gate').hidden",
-  );
+  await until("document.getElementById('auth-gate')&&!document.getElementById('auth-gate').hidden");
   await evaluate(
     "document.getElementById('login').click();document.getElementById('auth-username').value='fixture_user';document.getElementById('auth-password').value='fixture-password-123';document.getElementById('auth-form').requestSubmit()",
   );
   await until("!document.getElementById('plan-gate').hidden");
-  await evaluate(
-    "[...document.querySelectorAll('button')].find(b=>b.textContent==='Choose Free').click()",
-  );
+  await evaluate("[...document.querySelectorAll('button')].find(b=>b.textContent==='Choose Free').click()");
   await until("!document.getElementById('app').hidden");
   await evaluate(`(()=>{
     const original=window.crot.product;
@@ -47,23 +34,14 @@ export async function runChatGroupScenarios({
   })()`);
   await until("document.querySelector('.chat-agent-pill[aria-pressed=true]')");
   assert(
-    await evaluate(
-      "document.querySelector('.chat-browser-toggle').getAttribute('aria-pressed')==='true'",
-    ),
+    await evaluate("document.querySelector('.chat-browser-toggle').getAttribute('aria-pressed')==='true'"),
     "Browser access must be visible and enabled for direct chat",
   );
   const open = async (group) => {
-    await evaluate(
-      `document.querySelector('.chat-dropdown.${group} .chat-selector').click()`,
-    );
-    await until(
-      `document.querySelector('.chat-dropdown.${group} .chat-popover:popover-open')`,
-    );
+    await evaluate(`document.querySelector('.chat-dropdown.${group} .chat-selector').click()`);
+    await until(`document.querySelector('.chat-dropdown.${group} .chat-popover:popover-open')`);
   };
-  const close = () =>
-    evaluate(
-      "document.querySelector('.chat-popover:popover-open')?.hidePopover()",
-    );
+  const close = () => evaluate("document.querySelector('.chat-popover:popover-open')?.hidePopover()");
   await open("skills");
   assert(
     await evaluate(
@@ -72,9 +50,7 @@ export async function runChatGroupScenarios({
     "Skills contain remote platforms or unrelated footer logos",
   );
   await screenshot("chat-groups-skills");
-  await evaluate(
-    "document.querySelector(\"#chat-menu-skills [data-connection-id='connector:ElevenLabs']\").click()",
-  );
+  await evaluate("document.querySelector(\"#chat-menu-skills [data-connection-id='connector:ElevenLabs']\").click()");
   await open("web");
   assert(
     await evaluate(
@@ -83,9 +59,7 @@ export async function runChatGroupScenarios({
     "Platforms include skills or agent-provider APIs",
   );
   await screenshot("chat-groups-platforms");
-  await evaluate(
-    "document.querySelector(\"#chat-menu-web [data-connection-id='mcp:notion-mcp']\").click()",
-  );
+  await evaluate("document.querySelector(\"#chat-menu-web [data-connection-id='mcp:notion-mcp']\").click()");
   assert(
     await evaluate(
       "(()=>{const p=document.querySelector('.chat-agent-pills');return p.textContent.includes('Local HTTP')&&['OpenCode','Notion agent','Entrim','OpenAI'].every(n=>!p.textContent.includes(n))&&!p.textContent.includes('Offline client')&&!p.textContent.includes('Revoked client')&&!p.textContent.includes('YouTube')&&!p.textContent.includes('FFmpeg');})()",
@@ -107,10 +81,7 @@ export async function runChatGroupScenarios({
     "(()=>{const send=document.querySelector('.chat-send'),badge=document.querySelector('#notification-count'),textarea=document.querySelector('.chat-compose textarea'),compose=document.querySelector('.chat-compose');const a=send.getBoundingClientRect(),b=badge.getBoundingClientRect(),s=getComputedStyle(textarea),bs=getComputedStyle(badge);return {send:[a.width,a.height],badge:[b.width,b.height],badgeDisplay:bs.display,badgeAlignment:bs.placeItems,outline:s.outlineStyle,shadow:s.boxShadow,border:s.borderTopWidth,outerBorder:getComputedStyle(compose).borderTopColor};})()",
   );
   // Send button is 32×32 per redesign spec (was 44×44)
-  assert(
-    bounds.send[0] === 32 && bounds.send[1] === 32,
-    "Send button is not a true circle",
-  );
+  assert(bounds.send[0] === 32 && bounds.send[1] === 32, "Send button is not a true circle");
   assert(
     bounds.badge[0] === 20 &&
       bounds.badge[1] === 20 &&
@@ -135,9 +106,7 @@ export async function runChatGroupScenarios({
     path.join(artifacts, "chat-groups-preview.html"),
     (await evaluate("document.documentElement.outerHTML")).replace(
       /<head>[\s\S]*?<\/head>/,
-      '<head><meta charset="utf-8"><style>' +
-        TRAY_ASSETS["/app.css"].body +
-        "</style></head>",
+      '<head><meta charset="utf-8"><style>' + TRAY_ASSETS["/app.css"].body + "</style></head>",
     ),
   );
   await size(390, 844);
@@ -165,13 +134,9 @@ export async function runChatGroupScenarios({
   await evaluate(
     "window.groupFailure=true;document.querySelector('.chat-browser-toggle').click();(()=>{const m=document.querySelector('.chat-compose textarea');m.value='Failure fixture';m.dispatchEvent(new Event('input'));document.querySelector('.chat-send').click();})()",
   );
-  await until(
-    "document.querySelector('.chat-transcript .chat-system[data-chat-notice=error]')",
-  );
+  await until("document.querySelector('.chat-transcript .chat-system[data-chat-notice=error]')");
   assert(
-    await evaluate(
-      "chatGroupCalls.filter(c=>c[0]==='chat.start').at(-1)[1].browserTools===false",
-    ),
+    await evaluate("chatGroupCalls.filter(c=>c[0]==='chat.start').at(-1)[1].browserTools===false"),
     "Browser access toggle must reach the service",
   );
   assert(
@@ -183,20 +148,15 @@ export async function runChatGroupScenarios({
   await screenshot("chat-system-notice");
   await evaluate("window.groupFailure=false");
   await open("skills");
-  await evaluate(
-    "document.querySelector('#chat-menu-skills .chat-add').click()",
-  );
-  await until(
-    "document.querySelector('#action-dialog[open]')?.textContent.includes('Skill name')",
-  );
+  await evaluate("document.querySelector('#chat-menu-skills .chat-add').click()");
+  await until("document.querySelector('#action-dialog[open]')?.textContent.includes('Skill name')");
   await evaluate("document.querySelector('#action-dialog').close()");
   await writeFile(
     path.join(artifacts, "chat-groups-verification.json"),
     JSON.stringify(
       {
         status: "passed",
-        scope:
-          "Shipped Chromium assets with explicit connection/agent presentation fixtures; not live vendor access",
+        scope: "Shipped Chromium assets with explicit connection/agent presentation fixtures; not live vendor access",
         bounds,
       },
       null,
